@@ -5,6 +5,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+rdf-star = [ "oxrdf/rdf-star" ]
+
 [dependencies]
 chrono = "0.4"
 oxrdf = { git = "https://github.com/oxigraph/oxigraph.git", rev = "922023b" }            # to be fixed once Oxigraph v0.4 is released

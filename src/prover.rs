@@ -419,6 +419,8 @@ fn deanonymize_subject(
                 }
             }
         }
+        #[cfg(feature = "rdf-star")]
+        Subject::Triple(_) => return Err(DeriveProofError::DeAnonymizationError),
     };
     Ok(())
 }
@@ -456,6 +458,8 @@ fn deanonymize_term(
             }
         }
         Term::Literal(_) => (),
+        #[cfg(feature = "rdf-star")]
+        Term::Triple(_) => return Err(DeriveProofError::DeAnonymizationError),
     };
     Ok(())
 }
@@ -1006,6 +1010,8 @@ fn get_disclosed_and_undisclosed_terms<'a>(
                     Subject::NamedNode(_) => {
                         disclosed_terms.insert(subject_index, original.subject.into());
                     }
+                    #[cfg(feature = "rdf-star")]
+                    Subject::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
                 };
 
                 if is_nym(&triple.predicate) {
@@ -1036,6 +1042,8 @@ fn get_disclosed_and_undisclosed_terms<'a>(
                     Term::NamedNode(_) | Term::Literal(_) => {
                         disclosed_terms.insert(object_index, original.object.into());
                     }
+                    #[cfg(feature = "rdf-star")]
+                    Term::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
                 };
             }
 
