@@ -4,6 +4,10 @@ use crate::context::{
     PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE,
 };
 use crate::error::DeriveProofError;
+use crate::vc::{
+    CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VerifiableCredential,
+    VerifiableCredentialTriples, VerifiableCredentialView,
+};
 
 use chrono::offset::Utc;
 use oxrdf::{
@@ -18,113 +22,6 @@ use proof_system::{
 };
 use rdf_canon::{issue, relabel, serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-
-pub struct VerifiableCredential {
-    document: Graph,
-    proof: Graph,
-}
-
-impl VerifiableCredential {
-    pub fn new(document: Graph, proof: Graph) -> Self {
-        Self { document, proof }
-    }
-}
-
-pub struct VerifiableCredentialView<'a> {
-    document: GraphView<'a>,
-    proof: GraphView<'a>,
-}
-
-impl<'a> VerifiableCredentialView<'a> {
-    pub fn new(document: GraphView<'a>, proof: GraphView<'a>) -> Self {
-        Self { document, proof }
-    }
-}
-
-#[derive(Clone)]
-pub struct VerifiableCredentialTriples {
-    document: Vec<Triple>,
-    proof: Vec<Triple>,
-}
-
-impl From<VerifiableCredentialView<'_>> for VerifiableCredentialTriples {
-    fn from(view: VerifiableCredentialView) -> Self {
-        let mut document = view
-            .document
-            .iter()
-            .filter(|t| t.predicate != PROOF) // filter out `proof`
-            .map(|t| t.into_owned())
-            .collect::<Vec<_>>();
-        document.sort_by_cached_key(|t| t.to_string());
-        let mut proof = view
-            .proof
-            .iter()
-            .map(|t| t.into_owned())
-            .collect::<Vec<_>>();
-        proof.sort_by_cached_key(|t| t.to_string());
-        Self { document, proof }
-    }
-}
-
-impl From<&VerifiableCredential> for VerifiableCredentialTriples {
-    fn from(view: &VerifiableCredential) -> Self {
-        let mut document = view
-            .document
-            .iter()
-            .filter(|t| t.predicate != PROOF) // filter out `proof`
-            .map(|t| t.into_owned())
-            .collect::<Vec<_>>();
-        document.sort_by_cached_key(|t| t.to_string());
-        let mut proof = view
-            .proof
-            .iter()
-            .map(|t| t.into_owned())
-            .collect::<Vec<_>>();
-        proof.sort_by_cached_key(|t| t.to_string());
-        Self { document, proof }
-    }
-}
-
-impl From<&CanonicalVerifiableCredentialTriples> for VerifiableCredentialTriples {
-    fn from(view: &CanonicalVerifiableCredentialTriples) -> Self {
-        let mut document = view.document.iter().map(|t| t.clone()).collect::<Vec<_>>();
-        document.sort_by_cached_key(|t| t.to_string());
-        let mut proof = view.proof.iter().map(|t| t.clone()).collect::<Vec<_>>();
-        proof.sort_by_cached_key(|t| t.to_string());
-        Self { document, proof }
-    }
-}
-
-pub struct CanonicalVerifiableCredentialTriples {
-    document: Vec<Triple>,
-    document_issued_identifiers_map: HashMap<String, String>,
-    proof: Vec<Triple>,
-    proof_issued_identifiers_map: HashMap<String, String>,
-}
-
-impl CanonicalVerifiableCredentialTriples {
-    pub fn new(
-        mut document: Vec<Triple>,
-        document_issued_identifiers_map: HashMap<String, String>,
-        mut proof: Vec<Triple>,
-        proof_issued_identifiers_map: HashMap<String, String>,
-    ) -> Self {
-        document.sort_by_cached_key(|t| t.to_string());
-        proof.sort_by_cached_key(|t| t.to_string());
-        Self {
-            document,
-            document_issued_identifiers_map,
-            proof,
-            proof_issued_identifiers_map,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct DisclosedVerifiableCredential {
-    document: BTreeMap<usize, Option<Triple>>,
-    proof: BTreeMap<usize, Option<Triple>>,
-}
 
 pub struct VcWithDisclosed {
     vc: VerifiableCredential,
@@ -522,7 +419,6 @@ fn deanonymize_subject(
                 }
             }
         }
-        _ => return Err(DeriveProofError::DeAnonymizationError),
     };
     Ok(())
 }
@@ -547,10 +443,7 @@ fn deanonymize_term(
     match term {
         Term::BlankNode(bnode) => {
             if let Some(v) = deanon_map.get(&NamedOrBlankNode::BlankNode(bnode.clone())) {
-                match v {
-                    Term::NamedNode(_) | Term::BlankNode(_) | Term::Literal(_) => *term = v.clone(),
-                    _ => return Err(DeriveProofError::DeAnonymizationError),
-                }
+                *term = v.clone();
             }
         }
         Term::NamedNode(node) => {
@@ -563,7 +456,6 @@ fn deanonymize_term(
             }
         }
         Term::Literal(_) => (),
-        _ => return Err(DeriveProofError::DeAnonymizationError),
     };
     Ok(())
 }
@@ -1114,7 +1006,6 @@ fn get_disclosed_and_undisclosed_terms<'a>(
                     Subject::NamedNode(_) => {
                         disclosed_terms.insert(subject_index, original.subject.into());
                     }
-                    _ => return Err(DeriveProofError::DeriveProofValueError),
                 };
 
                 if is_nym(&triple.predicate) {
@@ -1145,7 +1036,6 @@ fn get_disclosed_and_undisclosed_terms<'a>(
                     Term::NamedNode(_) | Term::Literal(_) => {
                         disclosed_terms.insert(object_index, original.object.into());
                     }
-                    _ => return Err(DeriveProofError::DeriveProofValueError),
                 };
             }
 
