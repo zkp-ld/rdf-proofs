@@ -1,5 +1,6 @@
 pub mod context;
 pub mod error;
+pub mod issuer;
 pub mod prover;
 pub mod vc;
 

@@ -46,3 +46,6 @@ impl From<BlankNodeIdParseError> for DeriveProofError {
         Self::BlankNodeIdParseError(e)
     }
 }
+
+#[derive(Debug)]
+pub enum SignError {}
