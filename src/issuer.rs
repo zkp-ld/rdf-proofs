@@ -7,21 +7,26 @@ pub fn sign(
 ) -> Result<VerifiableCredential, SignError> {
     let VerifiableCredential { document, proof } = unsecured_credential;
     let transformed_document = transform(document)?;
-    let canonical_proof_config = configure_proof(proof);
+    let canonical_proof_config = configure_proof(proof)?;
     let hash_data = hash(transformed_document, canonical_proof_config);
     let proof_value = serialize_proof(hash_data, proof);
     Ok(add_proof_value(unsecured_credential, proof_value))
 }
 
 fn transform(unsecured_document: &Graph) -> Result<Vec<Term>, SignError> {
-    let canonicalized = relabel_graph(unsecured_document, &issue_graph(unsecured_document)?)?;
-    let canonicalized_triples = sort_graph(&canonicalized);
-
-    todo!();
+    let issued_identifiers_map = &issue_graph(unsecured_document)?;
+    let canonicalized_graph = relabel_graph(unsecured_document, issued_identifiers_map)?;
+    let canonicalized_triples = sort_graph(&canonicalized_graph);
+    Ok(canonicalized_triples
+        .into_iter()
+        .flat_map(|t| vec![t.subject.into(), t.predicate.into(), t.object])
+        .collect())
 }
 
-fn configure_proof(proof_options: &Graph) -> Vec<Term> {
-    todo!();
+fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, SignError> {
+    // TODO: validate options
+
+    transform(proof_options)
 }
 
 fn hash(transformed_document: Vec<Term>, canonical_proof_config: Vec<Term>) -> Vec<String> {
@@ -49,11 +54,11 @@ mod tests {
     #[test]
     fn transform_simple() -> () {
         let unsecured_document_ntriples = r#"
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/a> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> .
-<http://example.org/vicred/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+_:e0 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+_:e0 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+_:e0 <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/a> .
+_:e0 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> .
+_:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
 <http://example.org/vaccine/a> <http://schema.org/name> "AwesomeVaccine" .
 <http://example.org/vaccine/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
 <http://example.org/vaccine/a> <http://schema.org/status> "active" .
