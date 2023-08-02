@@ -13,14 +13,14 @@ use chrono::offset::Utc;
 use oxrdf::{
     dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
-    BlankNode, Dataset, Graph, GraphName, GraphNameRef, LiteralRef, NamedNode, NamedNodeRef,
-    NamedOrBlankNode, NamedOrBlankNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
+    BlankNode, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode, NamedNodeRef, NamedOrBlankNode,
+    NamedOrBlankNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
     statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
     witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
 };
-use rdf_canon::{issue, relabel, serialize};
+use rdf_canon::{issue, issue_graph, relabel, relabel_graph, serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub struct VcWithDisclosed {
@@ -470,32 +470,18 @@ fn canonicalize_original_vcs(
     original_vcs
         .iter()
         .map(|VerifiableCredential { document, proof }| {
-            let document_dataset = Dataset::from_iter(
-                document
-                    .iter()
-                    .map(|t| Quad::new(t.subject, t.predicate, t.object, GraphName::DefaultGraph)),
-            );
-            let proof_dataset = Dataset::from_iter(
-                proof
-                    .iter()
-                    .map(|t| Quad::new(t.subject, t.predicate, t.object, GraphName::DefaultGraph)),
-            );
-            let document_issued_identifiers_map = issue(&document_dataset)?;
-            let proof_issued_identifiers_map = issue(&proof_dataset)?;
-
+            let document_issued_identifiers_map = issue_graph(&document)?;
+            let proof_issued_identifiers_map = issue_graph(&proof)?;
             let canonicalized_document =
-                relabel(&document_dataset, &document_issued_identifiers_map)?;
-            let canonicalized_proof = relabel(&proof_dataset, &proof_issued_identifiers_map)?;
+                relabel_graph(&document, &document_issued_identifiers_map)?;
+            let canonicalized_proof = relabel_graph(&proof, &proof_issued_identifiers_map)?;
             Ok(CanonicalVerifiableCredentialTriples::new(
                 canonicalized_document
                     .iter()
-                    .map(|q| q.into_owned().into())
+                    .map(|t| t.into_owned())
                     .collect(),
                 document_issued_identifiers_map,
-                canonicalized_proof
-                    .into_iter()
-                    .map(|q| q.into_owned().into())
-                    .collect(),
+                canonicalized_proof.iter().map(|t| t.into_owned()).collect(),
                 proof_issued_identifiers_map,
             ))
         })

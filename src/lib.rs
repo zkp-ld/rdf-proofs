@@ -57,6 +57,7 @@ _:e92155627f791bae2e99100af704bd50 <https://w3id.org/security#proofPurpose> <htt
 _:e92155627f791bae2e99100af704bd50 <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" .
 _:e92155627f791bae2e99100af704bd50 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> .
 "#;
+
         let vc_doc = Graph::from_iter(
             NTriplesParser::new()
                 .parse_from_read(Cursor::new(vc_ntriples))
@@ -97,7 +98,7 @@ _:e92155627f791bae2e99100af704bd50 <https://w3id.org/security#verificationMethod
 
         let vc_with_disclosed = VcWithDisclosed::new(vc, disclosed);
         let vcs = vec![vc_with_disclosed];
-        let derived_proof = derive_proof(&vcs, &deanon_map)?;
+        let derived_proof = derive_proof(&vcs, &deanon_map);
 
         Ok(())
     }

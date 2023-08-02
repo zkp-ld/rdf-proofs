@@ -2,6 +2,17 @@ use oxiri::IriParseError;
 use oxrdf::BlankNodeIdParseError;
 use rdf_canon::CanonicalizationError;
 
+#[derive(Debug)]
+pub enum SignError {
+    CanonicalizationError(CanonicalizationError),
+}
+
+impl From<CanonicalizationError> for SignError {
+    fn from(e: CanonicalizationError) -> Self {
+        Self::CanonicalizationError(e)
+    }
+}
+
 // TODO: fix name
 #[derive(Debug)]
 pub enum DeriveProofError {
@@ -46,6 +57,3 @@ impl From<BlankNodeIdParseError> for DeriveProofError {
         Self::BlankNodeIdParseError(e)
     }
 }
-
-#[derive(Debug)]
-pub enum SignError {}

@@ -1,18 +1,21 @@
 use crate::{error::SignError, vc::VerifiableCredential};
 use oxrdf::{Graph, Term};
+use rdf_canon::{issue_graph, relabel_graph};
 
 pub fn sign(
     unsecured_credential: &VerifiableCredential,
 ) -> Result<VerifiableCredential, SignError> {
     let VerifiableCredential { document, proof } = unsecured_credential;
-    let transformed_document = transform(document);
+    let transformed_document = transform(document)?;
     let canonical_proof_config = configure_proof(proof);
     let hash_data = hash(transformed_document, canonical_proof_config);
     let proof_value = serialize_proof(hash_data, proof);
     Ok(add_proof_value(unsecured_credential, proof_value))
 }
 
-fn transform(unsecured_document: &Graph) -> Vec<Term> {
+fn transform(unsecured_document: &Graph) -> Result<Vec<Term>, SignError> {
+    let canonicalized_document =
+        relabel_graph(unsecured_document, &issue_graph(unsecured_document)?);
     todo!();
 }
 
