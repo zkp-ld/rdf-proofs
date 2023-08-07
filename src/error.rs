@@ -1,3 +1,4 @@
+use bbs_plus::prelude::BBSPlusError;
 use oxiri::IriParseError;
 use oxrdf::BlankNodeIdParseError;
 use rdf_canon::CanonicalizationError;
@@ -5,11 +6,19 @@ use rdf_canon::CanonicalizationError;
 #[derive(Debug)]
 pub enum SignError {
     CanonicalizationError(CanonicalizationError),
+    BBSPlusError(BBSPlusError),
+    HashToFieldError,
 }
 
 impl From<CanonicalizationError> for SignError {
     fn from(e: CanonicalizationError) -> Self {
         Self::CanonicalizationError(e)
+    }
+}
+
+impl From<BBSPlusError> for SignError {
+    fn from(e: BBSPlusError) -> Self {
+        Self::BBSPlusError(e)
     }
 }
 
