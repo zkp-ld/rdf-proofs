@@ -1,3 +1,4 @@
+use ark_serialize::SerializationError;
 use bbs_plus::prelude::BBSPlusError;
 use oxiri::IriParseError;
 use oxrdf::BlankNodeIdParseError;
@@ -8,6 +9,8 @@ pub enum SignError {
     CanonicalizationError(CanonicalizationError),
     BBSPlusError(BBSPlusError),
     HashToFieldError,
+    SerializationError(SerializationError),
+    InvalidProofOptionsError,
 }
 
 impl From<CanonicalizationError> for SignError {
@@ -19,6 +22,12 @@ impl From<CanonicalizationError> for SignError {
 impl From<BBSPlusError> for SignError {
     fn from(e: BBSPlusError) -> Self {
         Self::BBSPlusError(e)
+    }
+}
+
+impl From<SerializationError> for SignError {
+    fn from(e: SerializationError) -> Self {
+        Self::SerializationError(e)
     }
 }
 

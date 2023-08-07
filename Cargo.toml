@@ -15,11 +15,13 @@ oxiri = "0.2"
 rdf-canon = { git = "https://github.com/zkp-ld/rdf-canon.git", version = "0.13.0" }
 proof_system = "0.21"
 bbs_plus = "0.15"
-ark-ff = { version = "^0.4.1", default-features = false }
-ark-ec = { version = "^0.4.1", default-features = false }
-ark-std = { version = "^0.4.0", default-features = false}
-ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "curve" ] }
+ark-ff = { version = "0.4", default-features = false }
+ark-ec = { version = "0.4", default-features = false }
+ark-std = { version = "0.4", default-features = false}
+ark-serialize = { version = "0.4", default-features = false, features = [ "derive" ] }
+ark-bls12-381 = { version = "0.4", default-features = false, features = [ "curve" ] }
 blake2 = { version = "0.10", default-features = false }
+multibase = "0.9"
 
 [dev-dependencies]
 oxttl = { git = "https://github.com/oxigraph/oxigraph.git", rev = "922023b" } # will be fixed once oxttl is published on crates.io
