@@ -124,9 +124,9 @@ fn add_proof_value(
 
 #[cfg(test)]
 mod tests {
-    use crate::{context::PROOF_VALUE, error::SignError, vc::VerifiableCredential};
-
-    use super::sign;
+    use crate::{
+        context::PROOF_VALUE, error::SignError, signature::sign, vc::VerifiableCredential,
+    };
     use ark_bls12_381::Bls12_381;
     use ark_serialize::CanonicalDeserialize;
     use bbs_plus::prelude::SignatureG1 as BBSSignatureG1;
@@ -184,7 +184,7 @@ _:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bbs
             println!("{}", t);
         }
         println!("");
-        
+
         let proof_value_triple = vc.proof.triples_for_predicate(PROOF_VALUE).next().unwrap();
         if let TermRef::Literal(v) = proof_value_triple.object {
             let proof_value = v.value();
