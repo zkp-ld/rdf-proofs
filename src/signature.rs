@@ -137,22 +137,26 @@ mod tests {
     #[test]
     fn sign_simple() -> Result<(), SignError> {
         let unsecured_document_ntriples = r#"
-_:e0 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:e0 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:e0 <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/a> .
-_:e0 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> .
-_:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vaccine/a> <http://schema.org/name> "AwesomeVaccine" .
-<http://example.org/vaccine/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
-<http://example.org/vaccine/a> <http://schema.org/status> "active" .
-<http://example.org/vaccine/a> <http://schema.org/manufacturer> <http://example.org/awesomeCompany> .
+<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+<did:example:john> <http://schema.org/name> "John Smith" .
+<did:example:john> <http://example.org/vocab/isPatientOf> _:a91b3e .
+_:a91b3e <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+_:a91b3e <http://example.org/vocab/lotNumber> "0000001" .
+_:a91b3e <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+_:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
+_:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
+<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 "#;
         let proof_config_ntriples = r#"
-_:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-_:e0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-_:e0 <http://purl.org/dc/terms/created> "2023-01-01T01:01:01Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:e0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:e0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bbs-bls-key1> .
+_:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+_:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+_:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+_:6b92db <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bbs-bls-key1> .
 "#;
         let unsecured_document = Graph::from_iter(
             NTriplesParser::new()
@@ -167,17 +171,6 @@ _:e0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bbs-bls
                 .map(|x| x.unwrap()),
         );
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-
-        println!("unsigned vc:");
-        println!("document:");
-        for t in &vc.document {
-            println!("{}", t);
-        }
-        println!("proof:");
-        for t in &vc.proof {
-            println!("{}", t);
-        }
-        println!("");
 
         sign(&mut vc)?;
 
