@@ -21,3 +21,7 @@ pub const VERIFICATION_METHOD: NamedNodeRef =
 pub const ASSERTION_METHOD: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#assertionMethod");
 pub const FILTER: NamedNodeRef = NamedNodeRef::new_unchecked("https://zkp-ld.org/security#filter");
+pub const PUBLIC_KEY_MULTIBASE: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://w3id.org/security#publicKeyMultibase");
+pub const SECRET_KEY_MULTIBASE: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://w3id.org/security#secretKeyMultibase");

@@ -1,53 +1,92 @@
-use crate::{context::PROOF_VALUE, error::SignError, vc::VerifiableCredential};
+use crate::{
+    constants::{CRYPTOSUITE_SIGN, DELIMITER, MAP_TO_SCALAR_AS_HASH_DST},
+    context::{
+        CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PROOF_VALUE, PUBLIC_KEY_MULTIBASE,
+        SECRET_KEY_MULTIBASE, VERIFICATION_METHOD,
+    },
+    error::SignError,
+    keygen::{deserialize_public_key, deserialize_secret_key, params_gen},
+    vc::VerifiableCredential,
+    Fr,
+};
 use ark_bls12_381::Bls12_381;
-use ark_ec::pairing::Pairing;
 use ark_ff::field_hashers::{DefaultFieldHasher, HashToField};
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::{prelude::StdRng, SeedableRng};
-use bbs_plus::prelude::{
-    KeypairG2 as BBSKeyPairG2, PublicKeyG2 as BBSPublicKeyG2, SignatureG1 as BBSSignatureG1,
-    SignatureParamsG1 as BBSSignatureParamsG1,
-};
+use bbs_plus::prelude::SignatureG1 as BBSSignatureG1;
 use blake2::Blake2b512;
 use multibase::Base;
-use oxrdf::{vocab, Graph, Literal, Term, Triple};
-use proof_system::{
-    setup_params::SetupParams::BBSPlusSignatureParams,
-    statement::{bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, Statements},
-    witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
+use oxrdf::{
+    vocab::{self, rdf::TYPE},
+    Graph, Literal, NamedNodeRef, Term, TermRef, Triple,
 };
+use oxsdatatypes::DateTime;
 use rdf_canon::{issue_graph, relabel_graph, sort_graph};
+use std::str::FromStr;
 
-const GENERATOR_SEED: &[u8; 28] = b"BBS_*_MESSAGE_GENERATOR_SEED"; // TODO: fix it later
-const MAP_TO_SCALAR_AS_HASH_DST: &[u8; 32] = b"BBS_*_MAP_MSG_TO_SCALAR_AS_HASH_"; // TODO: fix it later
-const DELIMITER: &[u8; 13] = b"__DELIMITER__"; // TODO: fix it later
-
-type Fr = <Bls12_381 as Pairing>::ScalarField;
-
-pub fn sign(unsecured_credential: &mut VerifiableCredential) -> Result<(), SignError> {
+pub fn sign(
+    unsecured_credential: &mut VerifiableCredential,
+    document_loader: &Graph,
+) -> Result<(), SignError> {
     let VerifiableCredential { document, proof } = unsecured_credential;
-    let transformed_document = transform(document)?;
+    let transformed_data = transform(document, proof)?;
     let canonical_proof_config = configure_proof(proof)?;
-    let hash_data = hash(&transformed_document, &canonical_proof_config)?;
-    let proof_value = serialize_proof(&hash_data, proof)?;
+    let hash_data = hash(&transformed_data, &canonical_proof_config)?;
+    let proof_value = serialize_proof(&hash_data, proof, document_loader)?;
     add_proof_value(unsecured_credential, proof_value)?;
     Ok(())
 }
 
-fn transform(unsecured_document: &Graph) -> Result<Vec<Term>, SignError> {
-    let issued_identifiers_map = &issue_graph(unsecured_document)?;
-    let canonicalized_graph = relabel_graph(unsecured_document, issued_identifiers_map)?;
+fn transform(unsecured_document: &Graph, _proof_options: &Graph) -> Result<Vec<Term>, SignError> {
+    _canonicalize_into_terms(unsecured_document)
+}
+
+fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, SignError> {
+    // if `proof_options.type` is not set to `DataIntegrityProof`
+    // and `proof_options.cryptosuite` is not set to `bbs-termwise-signature-2023`
+    // then `INVALID_PROOF_CONFIGURATION_ERROR` must be raised
+    let proof_options_subject = proof_options
+        .subject_for_predicate_object(TYPE, DATA_INTEGRITY_PROOF)
+        .ok_or(SignError::InvalidProofConfigurationError)?;
+    let cryptosuite = proof_options
+        .object_for_subject_predicate(proof_options_subject, CRYPTOSUITE)
+        .ok_or(SignError::InvalidProofConfigurationError)?;
+    if let TermRef::Literal(v) = cryptosuite {
+        if v.value() != CRYPTOSUITE_SIGN {
+            return Err(SignError::InvalidProofConfigurationError);
+        }
+    } else {
+        return Err(SignError::InvalidProofConfigurationError);
+    }
+
+    // if `proof_options.created` is not a valid xsd:dateTime,
+    // `INVALID_PROOF_DATETIME_ERROR` must be raised
+    let created = proof_options
+        .object_for_subject_predicate(proof_options_subject, CREATED)
+        .ok_or(SignError::InvalidProofDatetimeError)?;
+    match created {
+        TermRef::Literal(v) => {
+            let (datetime, typ, _) = v.destruct();
+            if DateTime::from_str(datetime).is_err()
+                || !typ.is_some_and(|t| t == vocab::xsd::DATE_TIME)
+            {
+                return Err(SignError::InvalidProofDatetimeError);
+            }
+        }
+        _ => return Err(SignError::InvalidProofDatetimeError),
+    }
+
+    _canonicalize_into_terms(proof_options)
+}
+
+fn _canonicalize_into_terms(graph: &Graph) -> Result<Vec<Term>, SignError> {
+    let issued_identifiers_map = &issue_graph(graph)?;
+    let canonicalized_graph = relabel_graph(graph, issued_identifiers_map)?;
     let canonicalized_triples = sort_graph(&canonicalized_graph);
     Ok(canonicalized_triples
         .into_iter()
         .flat_map(|t| vec![t.subject.into(), t.predicate.into(), t.object])
         .collect())
-}
-
-fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, SignError> {
-    // TODO: validate options
-
-    transform(proof_options)
 }
 
 fn hash(
@@ -57,8 +96,9 @@ fn hash(
     let hasher =
         <DefaultFieldHasher<Blake2b512> as HashToField<Fr>>::new(MAP_TO_SCALAR_AS_HASH_DST);
 
-    let mut hashed_document = hash_terms_to_field(transformed_document, &hasher)?;
-    let mut hashed_proof = hash_terms_to_field(canonical_proof_config, &hasher)?;
+    let mut hashed_document = _hash_terms_to_field(transformed_document, &hasher)?;
+    let mut hashed_proof = _hash_terms_to_field(canonical_proof_config, &hasher)?;
+
     let delimiter: Fr = hasher
         .hash_to_field(DELIMITER, 1)
         .pop()
@@ -69,7 +109,7 @@ fn hash(
     Ok(hashed_document)
 }
 
-fn hash_terms_to_field(
+fn _hash_terms_to_field(
     terms: &Vec<Term>,
     hasher: &DefaultFieldHasher<Blake2b512>,
 ) -> Result<Vec<Fr>, SignError> {
@@ -84,18 +124,43 @@ fn hash_terms_to_field(
         .collect()
 }
 
-fn serialize_proof(hash_data: &Vec<Fr>, proof_options: &Graph) -> Result<String, SignError> {
+fn serialize_proof(
+    hash_data: &Vec<Fr>,
+    proof_options: &Graph,
+    document_loader: &Graph,
+) -> Result<String, SignError> {
     let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
     let message_count = hash_data.len();
 
-    // TODO: get secret key according to proof_options
-    let params =
-        BBSSignatureParamsG1::<Bls12_381>::new::<Blake2b512>(GENERATOR_SEED, message_count);
-    let keypair = BBSKeyPairG2::<Bls12_381>::generate_using_rng(&mut rng, &params);
+    let verification_method_identifier = _get_verification_method_identifier(proof_options)?;
+    let verification_method = retrieve_verification_method(
+        verification_method_identifier,
+        proof_options,
+        document_loader,
+    )?;
 
-    let signature =
-        BBSSignatureG1::<Bls12_381>::new(&mut rng, hash_data, &keypair.secret_key, &params)?;
+    let secret_key_term = verification_method
+        .object_for_subject_predicate(verification_method_identifier, SECRET_KEY_MULTIBASE)
+        .ok_or(SignError::InvalidVerificationMethodError)?;
+    let secret_key_multibase = match secret_key_term {
+        TermRef::Literal(v) => v.value(),
+        _ => return Err(SignError::InvalidVerificationMethodError),
+    };
+    let secret_key = deserialize_secret_key(secret_key_multibase)?;
+
+    let public_key_term = verification_method
+        .object_for_subject_predicate(verification_method_identifier, PUBLIC_KEY_MULTIBASE)
+        .ok_or(SignError::InvalidVerificationMethodError)?;
+    let public_key_multibase = match public_key_term {
+        TermRef::Literal(v) => v.value(),
+        _ => return Err(SignError::InvalidVerificationMethodError),
+    };
+    let public_key = deserialize_public_key(public_key_multibase)?;
+
+    let params = params_gen(message_count);
+
+    let signature = BBSSignatureG1::<Bls12_381>::new(&mut rng, hash_data, &secret_key, &params)?;
 
     let mut signature_bytes = Vec::new();
     signature.serialize_compressed(&mut signature_bytes)?;
@@ -109,17 +174,39 @@ fn add_proof_value(
     proof_value: String,
 ) -> Result<(), SignError> {
     let VerifiableCredential { proof, .. } = unsecured_credential;
-    let proof_triple = proof
-        .triples_for_predicate(vocab::rdf::TYPE)
-        .next()
-        .ok_or(SignError::InvalidProofOptionsError)?; // TODO: `?s rdf:type _:o` is sufficient to identify the proof subject (?s) in the proof graph?
-    let proof_subject = proof_triple.subject;
+    let proof_subject = proof
+        .subject_for_predicate_object(vocab::rdf::TYPE, DATA_INTEGRITY_PROOF)
+        .ok_or(SignError::InvalidProofConfigurationError)?;
     proof.insert(&Triple::new(
         proof_subject,
         PROOF_VALUE,
         Literal::new_simple_literal(proof_value),
     ));
     Ok(())
+}
+
+fn _get_verification_method_identifier(proof_options: &Graph) -> Result<NamedNodeRef, SignError> {
+    let proof_options_subject = proof_options
+        .subject_for_predicate_object(TYPE, DATA_INTEGRITY_PROOF)
+        .ok_or(SignError::InvalidProofConfigurationError)?;
+    let verification_method_identifier = proof_options
+        .object_for_subject_predicate(proof_options_subject, VERIFICATION_METHOD)
+        .ok_or(SignError::InvalidProofConfigurationError)?;
+    match verification_method_identifier {
+        TermRef::NamedNode(v) => Ok(v),
+        _ => Err(SignError::InvalidVerificationMethodURLError),
+    }
+}
+
+// TODO: add dereferencing external controller document URL
+fn retrieve_verification_method(
+    verification_method_identifier: NamedNodeRef,
+    _proof_options: &Graph,
+    document_loader: &Graph,
+) -> Result<Graph, SignError> {
+    Ok(Graph::from_iter(
+        document_loader.triples_for_subject(verification_method_identifier),
+    ))
 }
 
 #[cfg(test)]
@@ -156,8 +243,17 @@ _:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/sec
 _:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
 _:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 _:6b92db <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bbs-bls-key1> .
+_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
 "#;
+
+        let document_loader_ntriples: &str = r#"
+<did:example:issuer0> <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+<did:example:issuer0#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
+<did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer0> .
+<did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uekl-7abY7R84yTJEJ6JRqYohXxPZPDoTinJ7XCcBkmk" .
+<did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "ukiiQxfsSfV0E2QyBlnHTK2MThnd7_-Fyf6u76BUd24uxoDF4UjnXtxUo8b82iuPZBOa8BXd1NpE20x3Rfde9udcd8P8nPVLr80Xh6WLgI9SYR6piNzbHhEVIfgd_Vo9P" .
+"#;
+
         let unsecured_document = Graph::from_iter(
             NTriplesParser::new()
                 .parse_from_read(Cursor::new(unsecured_document_ntriples))
@@ -170,9 +266,15 @@ _:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bbs
                 .into_iter()
                 .map(|x| x.unwrap()),
         );
+        let document_loader = Graph::from_iter(
+            NTriplesParser::new()
+                .parse_from_read(Cursor::new(document_loader_ntriples))
+                .into_iter()
+                .map(|x| x.unwrap()),
+        );
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
 
-        sign(&mut vc)?;
+        sign(&mut vc, &document_loader)?;
 
         println!("signed vc:");
         println!("document:");

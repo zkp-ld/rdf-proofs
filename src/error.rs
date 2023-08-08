@@ -1,8 +1,27 @@
 use ark_serialize::SerializationError;
 use bbs_plus::prelude::BBSPlusError;
+use multibase;
 use oxiri::IriParseError;
 use oxrdf::BlankNodeIdParseError;
 use rdf_canon::CanonicalizationError;
+
+#[derive(Debug)]
+pub enum KeyGenError {
+    SerializationError(SerializationError),
+    MultibaseError(multibase::Error),
+}
+
+impl From<SerializationError> for KeyGenError {
+    fn from(e: SerializationError) -> Self {
+        Self::SerializationError(e)
+    }
+}
+
+impl From<multibase::Error> for KeyGenError {
+    fn from(e: multibase::Error) -> Self {
+        Self::MultibaseError(e)
+    }
+}
 
 #[derive(Debug)]
 pub enum SignError {
@@ -10,7 +29,13 @@ pub enum SignError {
     BBSPlusError(BBSPlusError),
     HashToFieldError,
     SerializationError(SerializationError),
-    InvalidProofOptionsError,
+    ProofTransformationError,
+    InvalidProofConfigurationError,
+    InvalidProofDatetimeError,
+    ProofGenerationError,
+    InvalidVerificationMethodURLError,
+    InvalidVerificationMethodError,
+    KeyGenError(KeyGenError),
 }
 
 impl From<CanonicalizationError> for SignError {
@@ -28,6 +53,12 @@ impl From<BBSPlusError> for SignError {
 impl From<SerializationError> for SignError {
     fn from(e: SerializationError) -> Self {
         Self::SerializationError(e)
+    }
+}
+
+impl From<KeyGenError> for SignError {
+    fn from(e: KeyGenError) -> Self {
+        Self::KeyGenError(e)
     }
 }
 

@@ -1,4 +1,4 @@
-use super::{CRYPTOSUITE_FOR_VP, NYM_IRI_PREFIX};
+use super::constants::{CRYPTOSUITE_PROOF, NYM_IRI_PREFIX};
 use crate::context::{
     ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, PROOF, PROOF_PURPOSE,
     PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE,
@@ -517,7 +517,7 @@ fn build_vp(
     vp.insert(QuadRef::new(
         &vp_proof_id,
         CRYPTOSUITE,
-        LiteralRef::new_simple_literal(CRYPTOSUITE_FOR_VP),
+        LiteralRef::new_simple_literal(CRYPTOSUITE_PROOF),
         &vp_proof_graph_id,
     ));
     vp.insert(QuadRef::new(
