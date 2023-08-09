@@ -5,7 +5,7 @@ use crate::{
     Fr,
 };
 use ark_bls12_381::Bls12_381;
-use bbs_plus::setup::{PublicKeyG2, SecretKey};
+use bbs_plus::setup::{PublicKeyG2 as BBSPublicKeyG2, SecretKey as BBSSecretKey};
 use oxrdf::{Graph, NamedNodeRef, TermRef, Triple};
 
 pub struct DocumentLoader {
@@ -41,7 +41,7 @@ impl DocumentLoader {
     pub fn get_secret_key(
         &self,
         verification_method_identifier: NamedNodeRef,
-    ) -> Result<SecretKey<Fr>, RDFProofsError> {
+    ) -> Result<BBSSecretKey<Fr>, RDFProofsError> {
         let verification_method =
             self.retrieve_verification_method(verification_method_identifier)?;
 
@@ -59,7 +59,7 @@ impl DocumentLoader {
     pub fn get_public_key(
         &self,
         verification_method_identifier: NamedNodeRef,
-    ) -> Result<PublicKeyG2<Bls12_381>, RDFProofsError> {
+    ) -> Result<BBSPublicKeyG2<Bls12_381>, RDFProofsError> {
         let verification_method =
             self.retrieve_verification_method(verification_method_identifier)?;
 
@@ -77,7 +77,7 @@ impl DocumentLoader {
     pub fn get_keypair(
         &self,
         verification_method_identifier: NamedNodeRef,
-    ) -> Result<(SecretKey<Fr>, PublicKeyG2<Bls12_381>), RDFProofsError> {
+    ) -> Result<(BBSSecretKey<Fr>, BBSPublicKeyG2<Bls12_381>), RDFProofsError> {
         let secret_key = self.get_secret_key(verification_method_identifier)?;
         let public_key = self.get_public_key(verification_method_identifier)?;
         Ok((secret_key, public_key))
