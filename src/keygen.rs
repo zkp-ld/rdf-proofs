@@ -1,7 +1,7 @@
-use crate::{constants::GENERATOR_SEED, error::KeyGenError, Fr};
+use crate::{constants::GENERATOR_SEED, error::RDFProofsError, Fr};
 use ark_bls12_381::Bls12_381;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::rand::rngs::StdRng;
+use ark_std::rand::RngCore;
 use bbs_plus::{
     prelude::{KeypairG2 as BBSKeyPairG2, SignatureParamsG1 as BBSSignatureParamsG1},
     setup::{PublicKeyG2, SecretKey},
@@ -14,7 +14,7 @@ pub fn params_gen(message_count: usize) -> BBSSignatureParamsG1<Bls12_381> {
     BBSSignatureParamsG1::<Bls12_381>::new::<Blake2b512>(GENERATOR_SEED, message_count)
 }
 
-pub fn key_gen(rng: &mut StdRng) -> Result<(String, String), KeyGenError> {
+pub fn key_gen<R: RngCore>(rng: &mut R) -> Result<(String, String), RDFProofsError> {
     let base_params = params_gen(1); // TODO: to be justified
 
     let keypair = BBSKeyPairG2::<Bls12_381>::generate_using_rng(rng, &base_params);
@@ -34,12 +34,12 @@ pub fn key_gen(rng: &mut StdRng) -> Result<(String, String), KeyGenError> {
     Ok((secret_key_base64url, public_key_base64url))
 }
 
-pub fn deserialize_secret_key(key: &str) -> Result<SecretKey<Fr>, KeyGenError> {
+pub fn deserialize_secret_key(key: &str) -> Result<SecretKey<Fr>, RDFProofsError> {
     let (_, key_bytes) = multibase::decode(key)?;
     Ok(SecretKey::<Fr>::deserialize_compressed(&*key_bytes)?)
 }
 
-pub fn deserialize_public_key(key: &str) -> Result<PublicKeyG2<Bls12_381>, KeyGenError> {
+pub fn deserialize_public_key(key: &str) -> Result<PublicKeyG2<Bls12_381>, RDFProofsError> {
     let (_, key_bytes) = multibase::decode(key)?;
     Ok(PublicKeyG2::<Bls12_381>::deserialize_compressed(
         &*key_bytes,
@@ -54,6 +54,7 @@ mod tests {
     #[test]
     fn key_gen_simple() -> () {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+        
         let (secret_key, public_key) = key_gen(&mut rng).unwrap();
         println!("secret_key: {}", secret_key);
         println!("public_key: {}", public_key);

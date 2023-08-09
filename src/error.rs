@@ -6,59 +6,42 @@ use oxrdf::BlankNodeIdParseError;
 use rdf_canon::CanonicalizationError;
 
 #[derive(Debug)]
-pub enum KeyGenError {
-    SerializationError(SerializationError),
-    MultibaseError(multibase::Error),
+pub enum RDFProofsError {
+    Canonicalization(CanonicalizationError),
+    BBSPlus(BBSPlusError),
+    HashToField,
+    Serialization(SerializationError),
+    ProofTransformation,
+    InvalidProofConfiguration,
+    InvalidProofDatetime,
+    ProofGeneration,
+    InvalidVerificationMethodURL,
+    InvalidVerificationMethod,
+    MalformedProof,
+    Multibase(multibase::Error),
 }
 
-impl From<SerializationError> for KeyGenError {
-    fn from(e: SerializationError) -> Self {
-        Self::SerializationError(e)
-    }
-}
-
-impl From<multibase::Error> for KeyGenError {
-    fn from(e: multibase::Error) -> Self {
-        Self::MultibaseError(e)
-    }
-}
-
-#[derive(Debug)]
-pub enum SignError {
-    CanonicalizationError(CanonicalizationError),
-    BBSPlusError(BBSPlusError),
-    HashToFieldError,
-    SerializationError(SerializationError),
-    ProofTransformationError,
-    InvalidProofConfigurationError,
-    InvalidProofDatetimeError,
-    ProofGenerationError,
-    InvalidVerificationMethodURLError,
-    InvalidVerificationMethodError,
-    KeyGenError(KeyGenError),
-}
-
-impl From<CanonicalizationError> for SignError {
+impl From<CanonicalizationError> for RDFProofsError {
     fn from(e: CanonicalizationError) -> Self {
-        Self::CanonicalizationError(e)
+        Self::Canonicalization(e)
     }
 }
 
-impl From<BBSPlusError> for SignError {
+impl From<BBSPlusError> for RDFProofsError {
     fn from(e: BBSPlusError) -> Self {
-        Self::BBSPlusError(e)
+        Self::BBSPlus(e)
     }
 }
 
-impl From<SerializationError> for SignError {
+impl From<SerializationError> for RDFProofsError {
     fn from(e: SerializationError) -> Self {
-        Self::SerializationError(e)
+        Self::Serialization(e)
     }
 }
 
-impl From<KeyGenError> for SignError {
-    fn from(e: KeyGenError) -> Self {
-        Self::KeyGenError(e)
+impl From<multibase::Error> for RDFProofsError {
+    fn from(e: multibase::Error) -> Self {
+        Self::Multibase(e)
     }
 }
 
