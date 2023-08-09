@@ -3,7 +3,7 @@ use crate::context::{
     ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, PROOF, PROOF_PURPOSE,
     PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE,
 };
-use crate::error::DeriveProofError;
+use crate::error::RDFProofsError;
 use crate::vc::{
     CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VerifiableCredential,
     VerifiableCredentialTriples, VerifiableCredentialView,
@@ -95,13 +95,13 @@ impl<'a> From<&'a OrderedGraphNameRef<'a>> for &'a GraphNameRef<'a> {
     }
 }
 impl<'a> TryFrom<TermRef<'a>> for OrderedGraphNameRef<'a> {
-    type Error = DeriveProofError;
+    type Error = RDFProofsError;
 
     fn try_from(value: TermRef<'a>) -> Result<Self, Self::Error> {
         match value {
             TermRef::NamedNode(n) => Ok(Self(n.into())),
             TermRef::BlankNode(n) => Ok(Self(n.into())),
-            _ => Err(DeriveProofError::InternalError(
+            _ => Err(RDFProofsError::Other(
                 "invalid graph name: graph name must not be literal or triple".to_string(),
             )),
         }
@@ -147,7 +147,7 @@ type OrderedVerifiableCredentialGraphViews<'a> =
 pub fn derive_proof(
     vcs: &Vec<VcWithDisclosed>,
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
-) -> Result<Dataset, DeriveProofError> {
+) -> Result<Dataset, RDFProofsError> {
     println!("*** start derive_proof ***");
 
     for vc in vcs {
@@ -157,7 +157,7 @@ pub fn derive_proof(
 
     // check: VCs must not be empty
     if vcs.is_empty() {
-        return Err(DeriveProofError::InvalidVCPairs);
+        return Err(RDFProofsError::InvalidVCPairs);
     }
 
     // TODO:
@@ -198,10 +198,10 @@ pub fn derive_proof(
             let proof_value_triple = proof
                 .iter()
                 .find(|t| t.predicate == PROOF_VALUE)
-                .ok_or(DeriveProofError::VCWithoutProofValue)?;
+                .ok_or(RDFProofsError::VCWithoutProofValue)?;
             let proof_value = match proof_value_triple.object {
                 TermRef::Literal(l) => Ok(l.value()),
-                _ => Err(DeriveProofError::VCWithInvalidProofValue),
+                _ => Err(RDFProofsError::VCWithInvalidProofValue),
             }?;
             Ok((
                 VerifiableCredential::new(
@@ -212,7 +212,7 @@ pub fn derive_proof(
                 proof_value,
             ))
         })
-        .collect::<Result<Vec<_>, DeriveProofError>>()?
+        .collect::<Result<Vec<_>, RDFProofsError>>()?
         .into_iter()
         .unzip();
 
@@ -227,14 +227,14 @@ pub fn derive_proof(
     {
         for (k, v) in document_issued_identifiers_map {
             if c14n_original_vcs_map.contains_key(k) {
-                return Err(DeriveProofError::BlankNodeCollisionError);
+                return Err(RDFProofsError::BlankNodeCollision);
             } else {
                 c14n_original_vcs_map.insert(k.to_string(), v.to_string());
             }
         }
         for (k, v) in proof_issued_identifiers_map {
             if c14n_original_vcs_map.contains_key(k) {
-                return Err(DeriveProofError::BlankNodeCollisionError);
+                return Err(RDFProofsError::BlankNodeCollision);
             } else {
                 c14n_original_vcs_map.insert(k.to_string(), v.to_string());
             }
@@ -286,7 +286,7 @@ pub fn derive_proof(
         .keys()
         .eq(c14n_disclosed_vc_graphs.keys())
     {
-        return Err(DeriveProofError::InternalError(
+        return Err(RDFProofsError::Other(
             "gen_index_map: the keys of two VC graphs must be equivalent".to_string(),
         ));
     }
@@ -362,7 +362,7 @@ fn remove_graphs<'a>(
     vp_graphs: &mut OrderedGraphViews<'a>,
     source: &GraphView<'a>,
     link: NamedNodeRef,
-) -> Result<OrderedGraphViews<'a>, DeriveProofError> {
+) -> Result<OrderedGraphViews<'a>, RDFProofsError> {
     source
         .iter()
         .filter(|triple| triple.predicate == link)
@@ -371,10 +371,10 @@ fn remove_graphs<'a>(
                 triple.object.try_into()?,
                 vp_graphs
                     .remove(&triple.object.try_into()?)
-                    .ok_or(DeriveProofError::InvalidVP)?,
+                    .ok_or(RDFProofsError::InvalidVP)?,
             ))
         })
-        .collect::<Result<OrderedGraphViews, DeriveProofError>>()
+        .collect::<Result<OrderedGraphViews, RDFProofsError>>()
 }
 
 // function to remove from the VP the single graph that is reachable from `source` via `link`
@@ -382,31 +382,31 @@ fn remove_graph<'a>(
     vp_graphs: &mut OrderedGraphViews<'a>,
     source: &GraphView<'a>,
     link: NamedNodeRef,
-) -> Result<GraphView<'a>, DeriveProofError> {
+) -> Result<GraphView<'a>, RDFProofsError> {
     let mut graphs = remove_graphs(vp_graphs, source, link)?;
     match graphs.pop_first() {
         Some((_, graph)) => {
             if graphs.is_empty() {
                 Ok(graph)
             } else {
-                Err(DeriveProofError::InvalidVP)
+                Err(RDFProofsError::InvalidVP)
             }
         }
-        None => Err(DeriveProofError::InvalidVP),
+        None => Err(RDFProofsError::InvalidVP),
     }
 }
 
 fn deanonymize_subject(
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     subject: &mut Subject,
-) -> Result<(), DeriveProofError> {
+) -> Result<(), RDFProofsError> {
     match subject {
         Subject::BlankNode(bnode) => {
             if let Some(v) = deanon_map.get(&NamedOrBlankNode::BlankNode(bnode.clone())) {
                 match v {
                     Term::NamedNode(n) => *subject = Subject::NamedNode(n.clone()),
                     Term::BlankNode(n) => *subject = Subject::BlankNode(n.clone()),
-                    _ => return Err(DeriveProofError::DeAnonymizationError),
+                    _ => return Err(RDFProofsError::DeAnonymization),
                 }
             }
         }
@@ -415,12 +415,12 @@ fn deanonymize_subject(
                 match v {
                     Term::NamedNode(n) => *subject = Subject::NamedNode(n.clone()),
                     Term::BlankNode(n) => *subject = Subject::BlankNode(n.clone()),
-                    _ => return Err(DeriveProofError::DeAnonymizationError),
+                    _ => return Err(RDFProofsError::DeAnonymization),
                 }
             }
         }
         #[cfg(feature = "rdf-star")]
-        Subject::Triple(_) => return Err(DeriveProofError::DeAnonymizationError),
+        Subject::Triple(_) => return Err(RDFProofsError::DeAnonymization),
     };
     Ok(())
 }
@@ -428,11 +428,11 @@ fn deanonymize_subject(
 fn deanonymize_named_node(
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     predicate: &mut NamedNode,
-) -> Result<(), DeriveProofError> {
+) -> Result<(), RDFProofsError> {
     if let Some(v) = deanon_map.get(&NamedOrBlankNode::NamedNode(predicate.clone())) {
         match v {
             Term::NamedNode(n) => *predicate = n.clone(),
-            _ => return Err(DeriveProofError::DeAnonymizationError),
+            _ => return Err(RDFProofsError::DeAnonymization),
         }
     }
     Ok(())
@@ -441,7 +441,7 @@ fn deanonymize_named_node(
 fn deanonymize_term(
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     term: &mut Term,
-) -> Result<(), DeriveProofError> {
+) -> Result<(), RDFProofsError> {
     match term {
         Term::BlankNode(bnode) => {
             if let Some(v) = deanon_map.get(&NamedOrBlankNode::BlankNode(bnode.clone())) {
@@ -453,20 +453,20 @@ fn deanonymize_term(
                 match v {
                     Term::NamedNode(n) => *term = Term::NamedNode(n.clone()),
                     Term::BlankNode(n) => *term = Term::BlankNode(n.clone()),
-                    _ => return Err(DeriveProofError::DeAnonymizationError),
+                    _ => return Err(RDFProofsError::DeAnonymization),
                 }
             }
         }
         Term::Literal(_) => (),
         #[cfg(feature = "rdf-star")]
-        Term::Triple(_) => return Err(DeriveProofError::DeAnonymizationError),
+        Term::Triple(_) => return Err(RDFProofsError::DeAnonymization),
     };
     Ok(())
 }
 
 fn canonicalize_original_vcs(
     original_vcs: &Vec<VerifiableCredential>,
-) -> Result<Vec<CanonicalVerifiableCredentialTriples>, DeriveProofError> {
+) -> Result<Vec<CanonicalVerifiableCredentialTriples>, RDFProofsError> {
     original_vcs
         .iter()
         .map(|VerifiableCredential { document, proof }| {
@@ -485,12 +485,12 @@ fn canonicalize_original_vcs(
                 proof_issued_identifiers_map,
             ))
         })
-        .collect::<Result<Vec<_>, DeriveProofError>>()
+        .collect::<Result<Vec<_>, RDFProofsError>>()
 }
 
 fn build_vp(
     disclosed_vcs: &Vec<VerifiableCredential>,
-) -> Result<(Dataset, Vec<BlankNode>), DeriveProofError> {
+) -> Result<(Dataset, Vec<BlankNode>), RDFProofsError> {
     let vp_id = BlankNode::default();
     let vp_proof_id = BlankNode::default();
     let vp_proof_graph_id = BlankNode::default();
@@ -545,7 +545,7 @@ fn build_vp(
 
             let document_id = document
                 .subject_for_predicate_object(TYPE, VERIFIABLE_CREDENTIAL_TYPE)
-                .ok_or(DeriveProofError::VCWithoutVCType)?;
+                .ok_or(RDFProofsError::VCWithoutVCType)?;
 
             let mut document_quads: Vec<Quad> = document
                 .iter()
@@ -568,7 +568,7 @@ fn build_vp(
 
             Ok((document_graph_name, document_quads))
         })
-        .collect::<Result<Vec<_>, DeriveProofError>>()?;
+        .collect::<Result<Vec<_>, RDFProofsError>>()?;
 
     for (vc_graph_name, vc_quad) in vc_quads {
         vp.insert(QuadRef::new(
@@ -598,7 +598,7 @@ fn extend_deanon_map(
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     issued_identifiers_map: &HashMap<String, String>,
     c14n_original_vcs_map: &HashMap<String, String>,
-) -> Result<HashMap<NamedOrBlankNode, Term>, DeriveProofError> {
+) -> Result<HashMap<NamedOrBlankNode, Term>, RDFProofsError> {
     let mut res = issued_identifiers_map
         .into_iter()
         .map(|(bnid, cnid)| {
@@ -614,7 +614,7 @@ fn extend_deanon_map(
                 Ok((cnid, bnode.into()))
             }
         })
-        .collect::<Result<HashMap<_, _>, DeriveProofError>>()?;
+        .collect::<Result<HashMap<_, _>, RDFProofsError>>()?;
     for (k, v) in deanon_map {
         if let NamedOrBlankNode::NamedNode(_) = k {
             res.insert(k.clone(), v.clone());
@@ -623,7 +623,7 @@ fn extend_deanon_map(
     Ok(res)
 }
 
-fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
+fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
     let mut vp_graphs = dataset_into_ordered_graphs(vp);
     println!("canonicalized VP graphs:");
     for g in vp_graphs.keys() {
@@ -633,7 +633,7 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
     // extract VP metadata (default graph)
     let metadata = vp_graphs
         .remove(&OrderedGraphNameRef(GraphNameRef::DefaultGraph))
-        .ok_or(DeriveProofError::InternalError(
+        .ok_or(RDFProofsError::Other(
             "VP graphs must have default graph".to_owned(),
         ))?;
 
@@ -653,11 +653,11 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
             let vc_proof = remove_graph(&mut vp_graphs, &vc, PROOF)?;
             Ok((vc_graph_name, VerifiableCredentialView::new(vc, vc_proof)))
         })
-        .collect::<Result<OrderedVerifiableCredentialGraphViews, DeriveProofError>>()?;
+        .collect::<Result<OrderedVerifiableCredentialGraphViews, RDFProofsError>>()?;
 
     // check if `vp_graphs` is empty
     if !vp_graphs.is_empty() {
-        return Err(DeriveProofError::InvalidVP);
+        return Err(RDFProofsError::InvalidVP);
     }
 
     Ok(VpGraphs {
@@ -679,7 +679,7 @@ fn reorder_vcs<'a>(
         BTreeMap<OrderedGraphNameRef<'a>, &'a CanonicalVerifiableCredentialTriples>,
         BTreeMap<OrderedGraphNameRef<'a>, &'a str>,
     ),
-    DeriveProofError,
+    RDFProofsError,
 > {
     let mut ordered_vcs = BTreeMap::new();
     let mut ordered_proof_values = BTreeMap::new();
@@ -689,30 +689,20 @@ fn reorder_vcs<'a>(
         let vc_graph_name = match vc_graph_name_c14n {
             GraphNameRef::BlankNode(n) => match extended_deanon_map.get(&(*n).into()) {
                 Some(Term::BlankNode(n)) => Ok(n),
-                _ => Err(DeriveProofError::InternalError(
-                    "invalid VC graph name".to_string(),
-                )),
+                _ => Err(RDFProofsError::Other("invalid VC graph name".to_string())),
             },
-            _ => Err(DeriveProofError::InternalError(
-                "invalid VC graph name".to_string(),
-            )),
+            _ => Err(RDFProofsError::Other("invalid VC graph name".to_string())),
         }?;
         let index = vc_graph_names
             .iter()
             .position(|v| v == vc_graph_name)
-            .ok_or(DeriveProofError::InternalError(
-                "invalid VC index".to_string(),
-            ))?;
+            .ok_or(RDFProofsError::Other("invalid VC index".to_string()))?;
         let vc = c14n_original_vcs
             .get(index)
-            .ok_or(DeriveProofError::InternalError(
-                "invalid VC index".to_string(),
-            ))?;
-        let proof_value = proof_values
-            .get(index)
-            .ok_or(DeriveProofError::InternalError(
-                "invalid proof value index".to_string(),
-            ))?;
+            .ok_or(RDFProofsError::Other("invalid VC index".to_string()))?;
+        let proof_value = proof_values.get(index).ok_or(RDFProofsError::Other(
+            "invalid proof value index".to_string(),
+        ))?;
         ordered_vcs.insert(k.clone(), vc);
         ordered_proof_values.insert(k.clone(), proof_value.to_owned());
     }
@@ -724,7 +714,7 @@ fn gen_index_map(
     c14n_original_vc_triples: &Vec<VerifiableCredentialTriples>,
     c14n_disclosed_vc_triples: &Vec<VerifiableCredentialTriples>,
     extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
-) -> Result<Vec<StatementIndexMap>, DeriveProofError> {
+) -> Result<Vec<StatementIndexMap>, RDFProofsError> {
     let mut c14n_disclosed_vc_triples_cloned = (*c14n_disclosed_vc_triples).clone();
 
     // deanonymize each disclosed VC triples, keeping their orders
@@ -781,7 +771,7 @@ fn gen_index_map(
                         original_document
                             .iter()
                             .position(|original_triple| *disclosed_triple == *original_triple)
-                            .ok_or(DeriveProofError::DisclosedVCIsNotSubsetOfOriginalVC)
+                            .ok_or(RDFProofsError::DisclosedVCIsNotSubsetOfOriginalVC)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let proof_map = disclosed_proof
@@ -790,7 +780,7 @@ fn gen_index_map(
                         original_proof
                             .iter()
                             .position(|original_triple| *disclosed_triple == *original_triple)
-                            .ok_or(DeriveProofError::DisclosedVCIsNotSubsetOfOriginalVC)
+                            .ok_or(RDFProofsError::DisclosedVCIsNotSubsetOfOriginalVC)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let document_len = original_document.len();
@@ -803,7 +793,7 @@ fn gen_index_map(
                 })
             },
         )
-        .collect::<Result<Vec<_>, DeriveProofError>>()?;
+        .collect::<Result<Vec<_>, RDFProofsError>>()?;
 
     Ok(index_map)
 }
@@ -813,7 +803,7 @@ fn derive_proof_value(
     disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
     proof_values: Vec<&str>,
     index_map: Vec<StatementIndexMap>,
-) -> Result<String, DeriveProofError> {
+) -> Result<String, RDFProofsError> {
     // TODO: extract parameters and issuer public keys
 
     // reorder disclosed VC triples according to index map
@@ -826,9 +816,7 @@ fn derive_proof_value(
                 proof_map,
                 document_len,
                 proof_len,
-            } = &index_map
-                .get(i)
-                .ok_or(DeriveProofError::DeriveProofValueError)?;
+            } = &index_map.get(i).ok_or(RDFProofsError::DeriveProofValue)?;
 
             let mut mapped_document = document
                 .iter()
@@ -836,10 +824,10 @@ fn derive_proof_value(
                 .map(|(j, triple)| {
                     let mapped_index = document_map
                         .get(j)
-                        .ok_or(DeriveProofError::DeriveProofValueError)?;
+                        .ok_or(RDFProofsError::DeriveProofValue)?;
                     Ok((*mapped_index, Some(triple.clone())))
                 })
-                .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()?;
+                .collect::<Result<BTreeMap<_, _>, RDFProofsError>>()?;
             for i in 0..*document_len {
                 mapped_document.entry(i).or_insert(None);
             }
@@ -848,12 +836,10 @@ fn derive_proof_value(
                 .iter()
                 .enumerate()
                 .map(|(j, triple)| {
-                    let mapped_index = proof_map
-                        .get(j)
-                        .ok_or(DeriveProofError::DeriveProofValueError)?;
+                    let mapped_index = proof_map.get(j).ok_or(RDFProofsError::DeriveProofValue)?;
                     Ok((*mapped_index, Some(triple.clone())))
                 })
-                .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()?;
+                .collect::<Result<BTreeMap<_, _>, RDFProofsError>>()?;
             for i in 0..*proof_len {
                 mapped_proof.entry(i).or_insert(None);
             }
@@ -863,7 +849,7 @@ fn derive_proof_value(
                 proof: mapped_proof,
             })
         })
-        .collect::<Result<Vec<_>, DeriveProofError>>()?;
+        .collect::<Result<Vec<_>, RDFProofsError>>()?;
 
     // identify disclosed and undisclosed terms
     let disclosed_and_undisclosed_terms = reordered_disclosed_vc_triples
@@ -896,7 +882,7 @@ fn derive_proof_value(
                 })
             },
         )
-        .collect::<Result<Vec<_>, DeriveProofError>>()?;
+        .collect::<Result<Vec<_>, RDFProofsError>>()?;
     println!(
         "disclosed_and_undisclosed:\n{:#?}\n",
         disclosed_and_undisclosed_terms
@@ -960,7 +946,7 @@ fn get_disclosed_and_undisclosed_terms<'a>(
         DisclosedAndUndisclosedTerms,
         HashMap<NamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
     ),
-    DeriveProofError,
+    RDFProofsError,
 > {
     let mut disclosed_terms = BTreeMap::<usize, Term>::new();
     let mut undisclosed_terms = BTreeMap::<usize, Term>::new();
@@ -973,7 +959,7 @@ fn get_disclosed_and_undisclosed_terms<'a>(
 
         let original = original_triples
             .get(*j)
-            .ok_or(DeriveProofError::DeriveProofValueError)?
+            .ok_or(RDFProofsError::DeriveProofValue)?
             .clone();
 
         match disclosed_triple {
@@ -997,7 +983,7 @@ fn get_disclosed_and_undisclosed_terms<'a>(
                         disclosed_terms.insert(subject_index, original.subject.into());
                     }
                     #[cfg(feature = "rdf-star")]
-                    Subject::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
+                    Subject::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
                 };
 
                 if is_nym(&triple.predicate) {
@@ -1029,7 +1015,7 @@ fn get_disclosed_and_undisclosed_terms<'a>(
                         disclosed_terms.insert(object_index, original.object.into());
                     }
                     #[cfg(feature = "rdf-star")]
-                    Term::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
+                    Term::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
                 };
             }
 
@@ -1061,13 +1047,13 @@ mod tests {
     use oxttl::NTriplesParser;
 
     use crate::{
-        error::DeriveProofError,
+        error::RDFProofsError,
         proof::{derive_proof, VcWithDisclosed},
         vc::VerifiableCredential,
     };
 
     #[test]
-    fn derive_proof_simple() -> Result<(), DeriveProofError> {
+    fn derive_proof_simple() -> Result<(), RDFProofsError> {
         let vc_ntriples = r#"
 <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .

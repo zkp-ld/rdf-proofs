@@ -4,6 +4,7 @@ use ark_ec::pairing::Pairing;
 pub mod context;
 pub mod error;
 pub mod keygen;
+pub mod loader;
 pub mod proof;
 pub mod signature;
 pub mod vc;

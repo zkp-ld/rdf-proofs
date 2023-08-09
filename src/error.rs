@@ -4,6 +4,7 @@ use multibase;
 use oxiri::IriParseError;
 use oxrdf::BlankNodeIdParseError;
 use rdf_canon::CanonicalizationError;
+use std::error::Error;
 
 #[derive(Debug)]
 pub enum RDFProofsError {
@@ -19,7 +20,64 @@ pub enum RDFProofsError {
     InvalidVerificationMethod,
     MalformedProof,
     Multibase(multibase::Error),
+    InvalidVCPairs,
+    IriParse(IriParseError),
+    VCWithoutProofValue,
+    VCWithInvalidProofValue,
+    VCWithoutVCType,
+    InvalidVCGraphName,
+    BlankNodeIdParse(BlankNodeIdParseError),
+    DeAnonymization,
+    InvalidVP,
+    BlankNodeCollision,
+    DisclosedVCIsNotSubsetOfOriginalVC,
+    DeriveProofValue,
+    Other(String),
 }
+
+impl std::fmt::Display for RDFProofsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RDFProofsError::Canonicalization(_) => write!(f, "canonicalization error"),
+            RDFProofsError::BBSPlus(_) => write!(f, "BBS+ error"),
+            RDFProofsError::HashToField => write!(f, "hash to field is failed"),
+            RDFProofsError::Serialization(_) => write!(f, "serialization error"),
+            RDFProofsError::ProofTransformation => write!(f, "proof transformation error"),
+            RDFProofsError::InvalidProofConfiguration => {
+                write!(f, "invalid proof configuration error")
+            }
+            RDFProofsError::InvalidProofDatetime => write!(f, "invalid proof datetime error"),
+            RDFProofsError::ProofGeneration => write!(f, "proof generation error"),
+            RDFProofsError::InvalidVerificationMethodURL => {
+                write!(f, "invalid verification method URL error")
+            }
+            RDFProofsError::InvalidVerificationMethod => {
+                write!(f, "invalid verification method error")
+            }
+            RDFProofsError::MalformedProof => write!(f, "malformed proof error"),
+            RDFProofsError::Multibase(_) => write!(f, "multibase error"),
+            RDFProofsError::InvalidVCPairs => write!(f, "invalid VC pairs error"),
+            RDFProofsError::IriParse(_) => write!(f, "IRI parse error"),
+            RDFProofsError::VCWithoutProofValue => write!(f, "VC without proof value error"),
+            RDFProofsError::VCWithInvalidProofValue => {
+                write!(f, "VC with invalid proof value error")
+            }
+            RDFProofsError::VCWithoutVCType => write!(f, "VC without VC type error"),
+            RDFProofsError::InvalidVCGraphName => write!(f, "invalid VC graph name error"),
+            RDFProofsError::BlankNodeIdParse(_) => write!(f, "blank node ID parse error"),
+            RDFProofsError::DeAnonymization => write!(f, "deanonymization error"),
+            RDFProofsError::InvalidVP => write!(f, "invalid VP error"),
+            RDFProofsError::BlankNodeCollision => write!(f, "blank node collision error"),
+            RDFProofsError::DisclosedVCIsNotSubsetOfOriginalVC => {
+                write!(f, "disclosed VC is not subset of original VC error")
+            }
+            RDFProofsError::DeriveProofValue => write!(f, "derive proof value error"),
+            RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
+        }
+    }
+}
+
+impl Error for RDFProofsError {}
 
 impl From<CanonicalizationError> for RDFProofsError {
     fn from(e: CanonicalizationError) -> Self {
@@ -45,47 +103,14 @@ impl From<multibase::Error> for RDFProofsError {
     }
 }
 
-// TODO: fix name
-#[derive(Debug)]
-pub enum DeriveProofError {
-    CanonicalizationError(CanonicalizationError),
-    InvalidVCPairs,
-    IriParseError(IriParseError),
-    VCWithoutProofValue,
-    VCWithoutVCType,
-    VCWithInvalidProofValue,
-    InvalidVCGraphName,
-    BlankNodeIdParseError(BlankNodeIdParseError),
-    DeAnonymizationError,
-    InvalidVP,
-    BlankNodeCollisionError,
-    DisclosedVCIsNotSubsetOfOriginalVC,
-    DeriveProofValueError,
-    InternalError(String),
-}
-
-// TODO: implement Error trait
-// impl Error for DeriveProofError {}
-// impl std::fmt::Display for DeriveProofError {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         todo!()
-//     }
-// }
-
-impl From<IriParseError> for DeriveProofError {
+impl From<IriParseError> for RDFProofsError {
     fn from(e: IriParseError) -> Self {
-        Self::IriParseError(e)
+        Self::IriParse(e)
     }
 }
 
-impl From<CanonicalizationError> for DeriveProofError {
-    fn from(e: CanonicalizationError) -> Self {
-        Self::CanonicalizationError(e)
-    }
-}
-
-impl From<BlankNodeIdParseError> for DeriveProofError {
+impl From<BlankNodeIdParseError> for RDFProofsError {
     fn from(e: BlankNodeIdParseError) -> Self {
-        Self::BlankNodeIdParseError(e)
+        Self::BlankNodeIdParse(e)
     }
 }
