@@ -1,8 +1,8 @@
 use crate::{
+    common::Fr,
     context::{PUBLIC_KEY_MULTIBASE, SECRET_KEY_MULTIBASE},
     error::RDFProofsError,
     keygen::{deserialize_public_key, deserialize_secret_key},
-    Fr,
 };
 use ark_bls12_381::Bls12_381;
 use bbs_plus::setup::{PublicKeyG2 as BBSPublicKeyG2, SecretKey as BBSSecretKey};

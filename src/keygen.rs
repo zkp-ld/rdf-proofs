@@ -1,4 +1,4 @@
-use crate::{constants::GENERATOR_SEED, error::RDFProofsError, Fr};
+use crate::{common::Fr, constants::GENERATOR_SEED, error::RDFProofsError};
 use ark_bls12_381::Bls12_381;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;

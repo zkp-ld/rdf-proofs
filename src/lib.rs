@@ -1,6 +1,3 @@
-use ark_bls12_381::Bls12_381;
-use ark_ec::pairing::Pairing;
-
 pub mod common;
 pub mod context;
 pub mod error;
@@ -17,8 +14,6 @@ pub mod constants {
     pub const MAP_TO_SCALAR_AS_HASH_DST: &[u8; 32] = b"BBS_*_MAP_MSG_TO_SCALAR_AS_HASH_"; // TODO: fix it later
     pub const DELIMITER: &[u8; 13] = b"__DELIMITER__"; // TODO: fix it later
 }
-
-type Fr = <Bls12_381 as Pairing>::ScalarField;
 
 #[cfg(test)]
 mod tests {

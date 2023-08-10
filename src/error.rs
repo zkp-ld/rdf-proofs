@@ -3,6 +3,7 @@ use bbs_plus::prelude::BBSPlusError;
 use multibase;
 use oxiri::IriParseError;
 use oxrdf::BlankNodeIdParseError;
+use proof_system::prelude::ProofSystemError;
 use rdf_canon::CanonicalizationError;
 use std::error::Error;
 
@@ -32,6 +33,7 @@ pub enum RDFProofsError {
     BlankNodeCollision,
     DisclosedVCIsNotSubsetOfOriginalVC,
     DeriveProofValue,
+    ProofSystem(ProofSystemError),
     Other(String),
 }
 
@@ -73,6 +75,7 @@ impl std::fmt::Display for RDFProofsError {
             }
             RDFProofsError::DeriveProofValue => write!(f, "derive proof value error"),
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
+            RDFProofsError::ProofSystem(_) => write!(f, "proof system error"),
         }
     }
 }
@@ -112,5 +115,11 @@ impl From<IriParseError> for RDFProofsError {
 impl From<BlankNodeIdParseError> for RDFProofsError {
     fn from(e: BlankNodeIdParseError) -> Self {
         Self::BlankNodeIdParse(e)
+    }
+}
+
+impl From<ProofSystemError> for RDFProofsError {
+    fn from(e: ProofSystemError) -> Self {
+        Self::ProofSystem(e)
     }
 }

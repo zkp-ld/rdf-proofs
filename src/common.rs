@@ -2,11 +2,16 @@ use crate::{
     constants::{DELIMITER, MAP_TO_SCALAR_AS_HASH_DST},
     context::{DATA_INTEGRITY_PROOF, VERIFICATION_METHOD},
     error::RDFProofsError,
-    Fr,
 };
+use ark_bls12_381::{Bls12_381, G1Affine};
+use ark_ec::pairing::Pairing;
 use ark_ff::field_hashers::{DefaultFieldHasher, HashToField};
 use blake2::Blake2b512;
 use oxrdf::{vocab::rdf::TYPE, Graph, NamedNodeRef, Term, TermRef};
+use proof_system::proof::Proof;
+
+pub type Fr = <Bls12_381 as Pairing>::ScalarField;
+pub type ProofG1 = Proof<Bls12_381, G1Affine>;
 
 pub fn get_hasher() -> DefaultFieldHasher<Blake2b512> {
     <DefaultFieldHasher<Blake2b512> as HashToField<Fr>>::new(MAP_TO_SCALAR_AS_HASH_DST)

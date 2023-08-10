@@ -1,12 +1,13 @@
 use crate::{
-    common::{get_delimiter, get_hasher, get_verification_method_identifier, hash_terms_to_field},
+    common::{
+        get_delimiter, get_hasher, get_verification_method_identifier, hash_terms_to_field, Fr,
+    },
     constants::CRYPTOSUITE_SIGN,
     context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PROOF_VALUE},
     error::RDFProofsError,
     keygen::generate_params,
     loader::DocumentLoader,
     vc::VerifiableCredential,
-    Fr,
 };
 use ark_bls12_381::Bls12_381;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

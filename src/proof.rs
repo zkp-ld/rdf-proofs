@@ -1,6 +1,6 @@
 use super::constants::{CRYPTOSUITE_PROOF, NYM_IRI_PREFIX};
 use crate::{
-    common::{get_delimiter, get_hasher, hash_term_to_field},
+    common::{get_delimiter, get_hasher, hash_term_to_field, Fr, ProofG1},
     context::{
         ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, PROOF, PROOF_PURPOSE,
         PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
@@ -13,11 +13,13 @@ use crate::{
         CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VerifiableCredential,
         VerifiableCredentialTriples, VerifiableCredentialView,
     },
-    Fr,
 };
 use ark_bls12_381::Bls12_381;
+use ark_ec::pairing::Pairing;
+use ark_serialize::CanonicalDeserialize;
 use ark_std::rand::RngCore;
-use bbs_plus::setup::PublicKeyG2 as BBSPublicKeyG2;
+use bbs_plus::prelude::{PublicKeyG2 as BBSPublicKeyG2, SignatureG1 as BBSSignatureG1};
+use blake2::Blake2b512;
 use chrono::offset::Utc;
 use oxrdf::{
     dataset::GraphView,
@@ -26,8 +28,10 @@ use oxrdf::{
     NamedOrBlankNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
-    statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
-    witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
+    prelude::{EqualWitnesses, MetaStatements},
+    proof_spec::ProofSpec,
+    statement::{bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, Statements},
+    witness::{PoKBBSSignatureG1 as PoKBBSSignatureG1Wit, Witnesses},
 };
 use rdf_canon::{issue, issue_graph, relabel, relabel_graph, serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -861,10 +865,6 @@ fn derive_proof_value<R: RngCore>(
     proof_values: Vec<&str>,
     index_map: Vec<StatementIndexMap>,
 ) -> Result<String, RDFProofsError> {
-    // TODO: extract parameters and issuer public keys
-    let message_count = original_vc_triples.len() * 3;
-    let params = generate_params(message_count);
-
     // reorder disclosed VC triples according to index map
     let reordered_disclosed_vc_triples = disclosed_vc_triples
         .iter()
@@ -930,34 +930,77 @@ fn derive_proof_value<R: RngCore>(
     );
     println!("proof values: {:?}", proof_values);
 
+    let params_and_pks = disclosed_and_undisclosed_terms
+        .iter()
+        .zip(public_keys)
+        .map(|(t, pk)| (generate_params(t.count()), pk));
+
     // identify equivalent witnesses
     let mut equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> = BTreeMap::new();
     for DisclosedAndUndisclosedTerms {
         equivs: partial_equivs,
         ..
-    } in disclosed_and_undisclosed_terms
+    } in &disclosed_and_undisclosed_terms
     {
         for (k, v) in partial_equivs {
-            equivs.entry(k.into()).or_default().extend(v.clone());
+            equivs
+                .entry(k.clone().into())
+                .or_default()
+                .extend(v.clone());
         }
     }
-    println!("equivs:\n{:#?}\n", equivs);
+    // drop single-element vecs from equivs
+    let equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> =
+        equivs.into_iter().filter(|(_, v)| v.len() > 1).collect();
 
-    // TODO: generate proofs
-    // let statement = disclosed_and_undisclosed_terms.iter().zip(public_keys).map(
-    //     |(
-    //         DisclosedAndUndisclosed {
-    //             document_terms,
-    //             proof_terms,
-    //             document_equivs,
-    //             proof_equivs,
-    //         },
-    //         public_key,
-    //     )| {
-    //         PoKBBSSignatureG1Stmt::new_statement_from_params(params, public_key, )
-    //     },
-    // );
+    // build statements
+    let mut statements = Statements::<Bls12_381, <Bls12_381 as Pairing>::G1Affine>::new();
+    for (DisclosedAndUndisclosedTerms { disclosed, .. }, (params, public_key)) in
+        disclosed_and_undisclosed_terms.iter().zip(params_and_pks)
+    {
+        statements.add(PoKBBSSignatureG1Stmt::new_statement_from_params(
+            params,
+            public_key,
+            disclosed.clone(),
+        ));
+    }
 
+    // build meta statements
+    let mut meta_statements = MetaStatements::new();
+    for (_, equiv_vec) in equivs {
+        let equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
+        meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
+    }
+
+    // TODO: build context
+    let context = None;
+    let proof_spec = ProofSpec::new(statements, meta_statements, vec![], context);
+    proof_spec.validate()?;
+    println!("proof_spec:\n{:#?}\n", proof_spec);
+
+    // build witnesses
+    let mut witnesses = Witnesses::new();
+    for (DisclosedAndUndisclosedTerms { undisclosed, .. }, proof_value) in
+        disclosed_and_undisclosed_terms.iter().zip(proof_values)
+    {
+        let (_, proof_value_bytes) = multibase::decode(proof_value)?;
+        let signature = BBSSignatureG1::<Bls12_381>::deserialize_compressed(&*proof_value_bytes)?;
+        witnesses.add(PoKBBSSignatureG1Wit::new_as_witness(
+            signature,
+            undisclosed.clone(),
+        ));
+    }
+    println!("witnesses:\n{:#?}\n", witnesses);
+
+    // TODO: build nonce
+    let nonce = None;
+
+    // build proof
+    let proof =
+        ProofG1::new::<R, Blake2b512>(rng, proof_spec, witnesses, nonce, Default::default())?;
+    println!("proof:\n{:#?}\n", proof);
+
+    // TODO: serialize proof and index_map
     todo!();
 }
 
@@ -968,10 +1011,10 @@ struct DisclosedAndUndisclosedTerms {
     equivs: HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
 }
 
-#[derive(Debug)]
-struct Equivs<'a> {
-    document: BTreeMap<OrderedNamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
-    proof: BTreeMap<OrderedNamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
+impl DisclosedAndUndisclosedTerms {
+    pub fn count(&self) -> usize {
+        self.disclosed.len() + self.undisclosed.len()
+    }
 }
 
 fn get_disclosed_and_undisclosed_terms(
@@ -1127,7 +1170,6 @@ fn is_nym(node: &NamedNode) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::RDFProofsError,
         loader::DocumentLoader,
         proof::{derive_proof, VcWithDisclosed},
         tests::{get_graph_from_ntriples_str, DOCUMENT_LOADER_NTRIPLES},
@@ -1139,7 +1181,7 @@ mod tests {
     use std::{collections::HashMap, io::Cursor};
 
     #[test]
-    fn derive_proof_simple() -> Result<(), RDFProofsError> {
+    fn derive_proof_simple() -> () {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
         let document_loader: DocumentLoader =
@@ -1233,8 +1275,8 @@ _:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls
 
         let vc_with_disclosed = VcWithDisclosed::new(vc, disclosed);
         let vcs = vec![vc_with_disclosed];
-        let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, &document_loader);
+        let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, &document_loader).unwrap();
 
-        Ok(())
+        assert!(true)
     }
 }
