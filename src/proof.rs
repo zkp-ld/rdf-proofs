@@ -16,11 +16,12 @@ use crate::{
 };
 use ark_bls12_381::Bls12_381;
 use ark_ec::pairing::Pairing;
-use ark_serialize::CanonicalDeserialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
 use bbs_plus::prelude::{PublicKeyG2 as BBSPublicKeyG2, SignatureG1 as BBSSignatureG1};
 use blake2::Blake2b512;
 use chrono::offset::Utc;
+use multibase::Base;
 use oxrdf::{
     dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
@@ -34,6 +35,7 @@ use proof_system::{
     witness::{PoKBBSSignatureG1 as PoKBBSSignatureG1Wit, Witnesses},
 };
 use rdf_canon::{issue, issue_graph, relabel, relabel_graph, serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub struct VcWithDisclosed {
@@ -80,6 +82,7 @@ impl VcWithDisclosed {
 struct VpGraphs<'a> {
     metadata: GraphView<'a>,
     proof: GraphView<'a>,
+    proof_graph_name: OrderedGraphNameRef<'a>,
     filters: OrderedGraphViews<'a>,
     disclosed_vcs: OrderedVerifiableCredentialGraphViews<'a>,
 }
@@ -164,7 +167,7 @@ impl<'a> From<NamedOrBlankNodeRef<'a>> for OrderedNamedOrBlankNodeRef<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct StatementIndexMap {
     document_map: Vec<usize>,
     document_len: usize,
@@ -307,6 +310,7 @@ pub fn derive_proof<R: RngCore>(
     let VpGraphs {
         metadata: vp_metadata,
         proof: vp_proof,
+        proof_graph_name: vp_proof_graph_name,
         filters: filters_graph,
         disclosed_vcs: c14n_disclosed_vc_graphs,
     } = decompose_vp(&canonicalized_vp)?;
@@ -412,8 +416,20 @@ pub fn derive_proof<R: RngCore>(
     )?;
 
     // TODO: add derived proof value to VP
+    let vp_proof_subject = vp_proof
+        .subject_for_predicate_object(TYPE, DATA_INTEGRITY_PROOF)
+        .ok_or(RDFProofsError::InvalidVP)?;
+    let vp_proof_value_quad = QuadRef::new(
+        vp_proof_subject,
+        PROOF_VALUE,
+        LiteralRef::new_simple_literal(&derived_proof_value),
+        vp_proof_graph_name,
+    );
 
-    Ok(canonicalized_vp)
+    let mut canonicalized_vp_quads = canonicalized_vp.into_iter().collect::<Vec<_>>();
+    canonicalized_vp_quads.push(vp_proof_value_quad);
+
+    Ok(Dataset::from_iter(canonicalized_vp_quads))
 }
 
 // function to remove from the VP the multiple graphs that are reachable from `source` via `link`
@@ -441,12 +457,12 @@ fn remove_graph<'a>(
     vp_graphs: &mut OrderedGraphViews<'a>,
     source: &GraphView<'a>,
     link: NamedNodeRef,
-) -> Result<GraphView<'a>, RDFProofsError> {
+) -> Result<(OrderedGraphNameRef<'a>, GraphView<'a>), RDFProofsError> {
     let mut graphs = remove_graphs(vp_graphs, source, link)?;
     match graphs.pop_first() {
-        Some((_, graph)) => {
+        Some((graph_name, graph)) => {
             if graphs.is_empty() {
-                Ok(graph)
+                Ok((graph_name, graph))
             } else {
                 Err(RDFProofsError::InvalidVP)
             }
@@ -697,10 +713,10 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
         ))?;
 
     // extract VP proof graph
-    let proof = remove_graph(&mut vp_graphs, &metadata, PROOF)?;
+    let (vp_proof_graph_name, vp_proof) = remove_graph(&mut vp_graphs, &metadata, PROOF)?;
 
     // extract filter graphs if any
-    let filters = remove_graphs(&mut vp_graphs, &proof, FILTER)?;
+    let filters = remove_graphs(&mut vp_graphs, &vp_proof, FILTER)?;
 
     // extract VC graphs
     let vcs = remove_graphs(&mut vp_graphs, &metadata, VERIFIABLE_CREDENTIAL)?;
@@ -709,7 +725,7 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
     let disclosed_vcs = vcs
         .into_iter()
         .map(|(vc_graph_name, vc)| {
-            let vc_proof = remove_graph(&mut vp_graphs, &vc, PROOF)?;
+            let (_, vc_proof) = remove_graph(&mut vp_graphs, &vc, PROOF)?;
             Ok((vc_graph_name, VerifiableCredentialView::new(vc, vc_proof)))
         })
         .collect::<Result<OrderedVerifiableCredentialGraphViews, RDFProofsError>>()?;
@@ -721,7 +737,8 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
 
     Ok(VpGraphs {
         metadata,
-        proof,
+        proof: vp_proof,
+        proof_graph_name: vp_proof_graph_name,
         filters,
         disclosed_vcs,
     })
@@ -997,11 +1014,18 @@ fn derive_proof_value<R: RngCore>(
 
     // build proof
     let proof =
-        ProofG1::new::<R, Blake2b512>(rng, proof_spec, witnesses, nonce, Default::default())?;
+        ProofG1::new::<R, Blake2b512>(rng, proof_spec, witnesses, nonce, Default::default())?.0;
     println!("proof:\n{:#?}\n", proof);
 
-    // TODO: serialize proof and index_map
-    todo!();
+    // serialize proof and index_map
+    // TODO: fix it later
+    let mut proof_bytes_compressed = Vec::new();
+    proof.serialize_compressed(&mut proof_bytes_compressed)?;
+    let proof_bytes_multibase = multibase::encode(Base::Base64Url, proof_bytes_compressed);
+    let index_map_multibase = multibase::encode(Base::Base64Url, serde_cbor::to_vec(&index_map)?);
+    let proof_with_index_map = (proof_bytes_multibase, index_map_multibase);
+
+    Ok(serde_json::to_string(&proof_with_index_map)?)
 }
 
 #[derive(Debug)]
@@ -1276,6 +1300,7 @@ _:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls
         let vc_with_disclosed = VcWithDisclosed::new(vc, disclosed);
         let vcs = vec![vc_with_disclosed];
         let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, &document_loader).unwrap();
+        println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
         assert!(true)
     }

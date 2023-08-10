@@ -12,7 +12,9 @@ pub enum RDFProofsError {
     Canonicalization(CanonicalizationError),
     BBSPlus(BBSPlusError),
     HashToField,
-    Serialization(SerializationError),
+    ArkSerialization(SerializationError),
+    CBORSerialization(serde_cbor::Error),
+    JSONSerialization(serde_json::Error),
     ProofTransformation,
     InvalidProofConfiguration,
     InvalidProofDatetime,
@@ -43,7 +45,9 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::Canonicalization(_) => write!(f, "canonicalization error"),
             RDFProofsError::BBSPlus(_) => write!(f, "BBS+ error"),
             RDFProofsError::HashToField => write!(f, "hash to field is failed"),
-            RDFProofsError::Serialization(_) => write!(f, "serialization error"),
+            RDFProofsError::ArkSerialization(_) => write!(f, "arkworks serialization error"),
+            RDFProofsError::CBORSerialization(_) => write!(f, "CBOR serialization error"),
+            RDFProofsError::JSONSerialization(_) => write!(f, "JSON serialization error"),
             RDFProofsError::ProofTransformation => write!(f, "proof transformation error"),
             RDFProofsError::InvalidProofConfiguration => {
                 write!(f, "invalid proof configuration error")
@@ -96,7 +100,19 @@ impl From<BBSPlusError> for RDFProofsError {
 
 impl From<SerializationError> for RDFProofsError {
     fn from(e: SerializationError) -> Self {
-        Self::Serialization(e)
+        Self::ArkSerialization(e)
+    }
+}
+
+impl From<serde_json::Error> for RDFProofsError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::JSONSerialization(e)
+    }
+}
+
+impl From<serde_cbor::Error> for RDFProofsError {
+    fn from(e: serde_cbor::Error) -> Self {
+        Self::CBORSerialization(e)
     }
 }
 
