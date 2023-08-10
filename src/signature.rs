@@ -1,6 +1,7 @@
 use crate::{
-    constants::{CRYPTOSUITE_SIGN, DELIMITER, MAP_TO_SCALAR_AS_HASH_DST},
-    context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PROOF_VALUE, VERIFICATION_METHOD},
+    common::{get_delimiter, get_hasher, get_verification_method_identifier, hash_terms_to_field},
+    constants::CRYPTOSUITE_SIGN,
+    context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PROOF_VALUE},
     error::RDFProofsError,
     keygen::generate_params,
     loader::DocumentLoader,
@@ -8,15 +9,13 @@ use crate::{
     Fr,
 };
 use ark_bls12_381::Bls12_381;
-use ark_ff::field_hashers::{DefaultFieldHasher, HashToField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
 use bbs_plus::prelude::SignatureG1 as BBSSignatureG1;
-use blake2::Blake2b512;
 use multibase::Base;
 use oxrdf::{
     vocab::{self, rdf::TYPE},
-    Graph, Literal, NamedNodeRef, Term, TermRef, Triple,
+    Graph, Literal, Term, TermRef, Triple,
 };
 use oxsdatatypes::DateTime;
 use rdf_canon::{issue_graph, relabel_graph, sort_graph};
@@ -121,35 +120,13 @@ fn hash(
     transformed_document: &Vec<Term>,
     canonical_proof_config: &Vec<Term>,
 ) -> Result<Vec<Fr>, RDFProofsError> {
-    let hasher =
-        <DefaultFieldHasher<Blake2b512> as HashToField<Fr>>::new(MAP_TO_SCALAR_AS_HASH_DST);
-
-    let mut hashed_document = _hash_terms_to_field(transformed_document, &hasher)?;
-    let mut hashed_proof = _hash_terms_to_field(canonical_proof_config, &hasher)?;
-
-    let delimiter: Fr = hasher
-        .hash_to_field(DELIMITER, 1)
-        .pop()
-        .ok_or(RDFProofsError::HashToField)?;
-
+    let hasher = get_hasher();
+    let mut hashed_document = hash_terms_to_field(transformed_document, &hasher)?;
+    let mut hashed_proof = hash_terms_to_field(canonical_proof_config, &hasher)?;
+    let delimiter = get_delimiter()?;
     hashed_document.push(delimiter);
     hashed_document.append(&mut hashed_proof);
     Ok(hashed_document)
-}
-
-fn _hash_terms_to_field(
-    terms: &Vec<Term>,
-    hasher: &DefaultFieldHasher<Blake2b512>,
-) -> Result<Vec<Fr>, RDFProofsError> {
-    terms
-        .iter()
-        .map(|term| {
-            hasher
-                .hash_to_field(term.to_string().as_bytes(), 1)
-                .pop()
-                .ok_or(RDFProofsError::HashToField)
-        })
-        .collect()
 }
 
 fn serialize_proof<R: RngCore>(
@@ -160,7 +137,7 @@ fn serialize_proof<R: RngCore>(
 ) -> Result<String, RDFProofsError> {
     let message_count = hash_data.len();
 
-    let verification_method_identifier = _get_verification_method_identifier(proof_options)?;
+    let verification_method_identifier = get_verification_method_identifier(proof_options)?;
     let (secret_key, _public_key) = document_loader.get_keypair(verification_method_identifier)?;
 
     let params = generate_params(message_count);
@@ -198,25 +175,10 @@ fn verify_base_proof(
 ) -> Result<(), RDFProofsError> {
     let (_, proof_value_bytes) = multibase::decode(proof_value)?;
     let signature = BBSSignatureG1::<Bls12_381>::deserialize_compressed(&*proof_value_bytes)?;
-    let verification_method_identifier = _get_verification_method_identifier(proof_config)?;
+    let verification_method_identifier = get_verification_method_identifier(proof_config)?;
     let pk = document_loader.get_public_key(verification_method_identifier)?;
     let params = generate_params(hash_data.len());
     Ok(signature.verify(&hash_data, pk, params)?)
-}
-
-fn _get_verification_method_identifier(
-    proof_options: &Graph,
-) -> Result<NamedNodeRef, RDFProofsError> {
-    let proof_options_subject = proof_options
-        .subject_for_predicate_object(TYPE, DATA_INTEGRITY_PROOF)
-        .ok_or(RDFProofsError::InvalidProofConfiguration)?;
-    let verification_method_identifier = proof_options
-        .object_for_subject_predicate(proof_options_subject, VERIFICATION_METHOD)
-        .ok_or(RDFProofsError::InvalidProofConfiguration)?;
-    match verification_method_identifier {
-        TermRef::NamedNode(v) => Ok(v),
-        _ => Err(RDFProofsError::InvalidVerificationMethodURL),
-    }
 }
 
 #[cfg(test)]

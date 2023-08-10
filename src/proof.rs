@@ -1,5 +1,6 @@
 use super::constants::{CRYPTOSUITE_PROOF, NYM_IRI_PREFIX};
 use crate::{
+    common::{get_delimiter, get_hasher, hash_term_to_field},
     context::{
         ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, PROOF, PROOF_PURPOSE,
         PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
@@ -12,6 +13,7 @@ use crate::{
         CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VerifiableCredential,
         VerifiableCredentialTriples, VerifiableCredentialView,
     },
+    Fr,
 };
 use ark_bls12_381::Bls12_381;
 use ark_std::rand::RngCore;
@@ -117,6 +119,25 @@ impl<'a> TryFrom<TermRef<'a>> for OrderedGraphNameRef<'a> {
 impl std::fmt::Display for OrderedGraphNameRef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+/// `oxrdf::triple::GraphName` with string-based ordering
+#[derive(Eq, PartialEq, Clone, Debug)]
+struct OrderedNamedOrBlankNode(NamedOrBlankNode);
+impl Ord for OrderedNamedOrBlankNode {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.to_string().cmp(&other.0.to_string())
+    }
+}
+impl PartialOrd for OrderedNamedOrBlankNode {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0.to_string().partial_cmp(&other.0.to_string())
+    }
+}
+impl From<NamedOrBlankNode> for OrderedNamedOrBlankNode {
+    fn from(value: NamedOrBlankNode) -> Self {
+        Self(value)
     }
 }
 
@@ -889,37 +910,19 @@ fn derive_proof_value<R: RngCore>(
         })
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
 
+    println!(
+        "reordered_disclosed_vc_triples:\n{:#?}\n",
+        reordered_disclosed_vc_triples
+    );
+
     // identify disclosed and undisclosed terms
     let disclosed_and_undisclosed_terms = reordered_disclosed_vc_triples
         .iter()
         .zip(original_vc_triples)
         .enumerate()
-        .map(
-            |(
-                i,
-                (
-                    DisclosedVerifiableCredential {
-                        document: disclosed_document,
-                        proof: disclosed_proof,
-                    },
-                    VerifiableCredentialTriples {
-                        document: original_document,
-                        proof: original_proof,
-                    },
-                ),
-            )| {
-                let (document_terms, document_equivs) =
-                    get_disclosed_and_undisclosed_terms(disclosed_document, &original_document, i)?;
-                let (proof_terms, proof_equivs) =
-                    get_disclosed_and_undisclosed_terms(disclosed_proof, &original_proof, i)?;
-                Ok(DisclosedAndUndisclosed {
-                    document_terms,
-                    proof_terms,
-                    document_equivs,
-                    proof_equivs,
-                })
-            },
-        )
+        .map(|(i, (disclosed_vc_triples, original_vc_triples))| {
+            get_disclosed_and_undisclosed_terms(disclosed_vc_triples, &original_vc_triples, i)
+        })
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
     println!(
         "disclosed_and_undisclosed:\n{:#?}\n",
@@ -928,45 +931,41 @@ fn derive_proof_value<R: RngCore>(
     println!("proof values: {:?}", proof_values);
 
     // identify equivalent witnesses
-    let mut equivs = Equivs {
-        document: BTreeMap::new(),
-        proof: BTreeMap::new(),
-    };
-    for DisclosedAndUndisclosed {
-        document_equivs,
-        proof_equivs,
+    let mut equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> = BTreeMap::new();
+    for DisclosedAndUndisclosedTerms {
+        equivs: partial_equivs,
         ..
     } in disclosed_and_undisclosed_terms
     {
-        for (k, v) in document_equivs {
-            equivs
-                .document
-                .entry(k.into())
-                .or_default()
-                .extend(v.clone());
-        }
-        for (k, v) in proof_equivs {
-            equivs.proof.entry(k.into()).or_default().extend(v.clone());
+        for (k, v) in partial_equivs {
+            equivs.entry(k.into()).or_default().extend(v.clone());
         }
     }
     println!("equivs:\n{:#?}\n", equivs);
 
     // TODO: generate proofs
+    // let statement = disclosed_and_undisclosed_terms.iter().zip(public_keys).map(
+    //     |(
+    //         DisclosedAndUndisclosed {
+    //             document_terms,
+    //             proof_terms,
+    //             document_equivs,
+    //             proof_equivs,
+    //         },
+    //         public_key,
+    //     )| {
+    //         PoKBBSSignatureG1Stmt::new_statement_from_params(params, public_key, )
+    //     },
+    // );
+
     todo!();
 }
 
 #[derive(Debug)]
 struct DisclosedAndUndisclosedTerms {
-    disclosed: BTreeMap<usize, Term>,
-    undisclosed: BTreeMap<usize, Term>,
-}
-
-#[derive(Debug)]
-struct DisclosedAndUndisclosed<'a> {
-    document_terms: DisclosedAndUndisclosedTerms,
-    proof_terms: DisclosedAndUndisclosedTerms,
-    document_equivs: HashMap<NamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
-    proof_equivs: HashMap<NamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
+    disclosed: BTreeMap<usize, Fr>,
+    undisclosed: BTreeMap<usize, Fr>,
+    equivs: HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
 }
 
 #[derive(Debug)]
@@ -975,102 +974,150 @@ struct Equivs<'a> {
     proof: BTreeMap<OrderedNamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
 }
 
-fn get_disclosed_and_undisclosed_terms<'a>(
-    disclosed_triples: &'a BTreeMap<usize, Option<Triple>>,
-    original_triples: &Vec<Triple>,
+fn get_disclosed_and_undisclosed_terms(
+    disclosed_vc_triples: &DisclosedVerifiableCredential,
+    original_vc_triples: &VerifiableCredentialTriples,
     vc_index: usize,
-) -> Result<
-    (
-        DisclosedAndUndisclosedTerms,
-        HashMap<NamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
-    ),
-    RDFProofsError,
-> {
-    let mut disclosed_terms = BTreeMap::<usize, Term>::new();
-    let mut undisclosed_terms = BTreeMap::<usize, Term>::new();
-    let mut equivs = HashMap::<NamedOrBlankNodeRef, Vec<(usize, usize)>>::new();
+) -> Result<DisclosedAndUndisclosedTerms, RDFProofsError> {
+    let mut disclosed_terms = BTreeMap::<usize, Fr>::new();
+    let mut undisclosed_terms = BTreeMap::<usize, Fr>::new();
+    let mut equivs = HashMap::<NamedOrBlankNode, Vec<(usize, usize)>>::new();
 
-    for (j, disclosed_triple) in disclosed_triples {
+    let DisclosedVerifiableCredential {
+        document: disclosed_document,
+        proof: disclosed_proof,
+    } = disclosed_vc_triples;
+    let VerifiableCredentialTriples {
+        document: original_document,
+        proof: original_proof,
+    } = original_vc_triples;
+
+    for (j, disclosed_triple) in disclosed_document {
         let subject_index = 3 * j;
-        let predicate_index = 3 * j + 1;
-        let object_index = 3 * j + 2;
-
-        let original = original_triples
+        let original = original_document
             .get(*j)
             .ok_or(RDFProofsError::DeriveProofValue)?
             .clone();
-
-        match disclosed_triple {
-            Some(triple) => {
-                match &triple.subject {
-                    Subject::BlankNode(b) => {
-                        undisclosed_terms.insert(subject_index, original.subject.into());
-                        equivs
-                            .entry(NamedOrBlankNodeRef::BlankNode(b.into()))
-                            .or_default()
-                            .push((vc_index, subject_index));
-                    }
-                    Subject::NamedNode(n) if is_nym(n) => {
-                        undisclosed_terms.insert(subject_index, original.subject.into());
-                        equivs
-                            .entry(NamedOrBlankNodeRef::NamedNode(n.into()))
-                            .or_default()
-                            .push((vc_index, subject_index));
-                    }
-                    Subject::NamedNode(_) => {
-                        disclosed_terms.insert(subject_index, original.subject.into());
-                    }
-                    #[cfg(feature = "rdf-star")]
-                    Subject::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
-                };
-
-                if is_nym(&triple.predicate) {
-                    undisclosed_terms.insert(predicate_index, original.predicate.into());
-                    equivs
-                        .entry(NamedOrBlankNodeRef::NamedNode((&triple.predicate).into()))
-                        .or_default()
-                        .push((vc_index, predicate_index));
-                } else {
-                    disclosed_terms.insert(predicate_index, original.predicate.into());
-                };
-
-                match &triple.object {
-                    Term::BlankNode(b) => {
-                        undisclosed_terms.insert(object_index, original.object.into());
-                        equivs
-                            .entry(NamedOrBlankNodeRef::BlankNode(b.into()))
-                            .or_default()
-                            .push((vc_index, object_index));
-                    }
-                    Term::NamedNode(n) if is_nym(n) => {
-                        undisclosed_terms.insert(object_index, original.object.into());
-                        equivs
-                            .entry(NamedOrBlankNodeRef::NamedNode(n.into()))
-                            .or_default()
-                            .push((vc_index, object_index));
-                    }
-                    Term::NamedNode(_) | Term::Literal(_) => {
-                        disclosed_terms.insert(object_index, original.object.into());
-                    }
-                    #[cfg(feature = "rdf-star")]
-                    Term::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
-                };
-            }
-
-            None => {
-                undisclosed_terms.insert(subject_index, original.subject.into());
-                undisclosed_terms.insert(predicate_index, original.predicate.into());
-                undisclosed_terms.insert(object_index, original.object.into());
-            }
-        }
+        build_disclosed_and_undisclosed_terms(
+            disclosed_triple,
+            subject_index,
+            vc_index,
+            &original,
+            &mut disclosed_terms,
+            &mut undisclosed_terms,
+            &mut equivs,
+        )?;
     }
-    Ok((
-        DisclosedAndUndisclosedTerms {
-            disclosed: disclosed_terms,
-            undisclosed: undisclosed_terms,
-        },
+
+    let delimiter_index = disclosed_document.len() * 3;
+    let proof_index = delimiter_index + 1;
+    let delimiter = get_delimiter()?;
+    disclosed_terms.insert(delimiter_index, delimiter);
+
+    for (j, disclosed_triple) in disclosed_proof {
+        let subject_index = 3 * j + proof_index;
+        let original = original_proof
+            .get(*j)
+            .ok_or(RDFProofsError::DeriveProofValue)?
+            .clone();
+        build_disclosed_and_undisclosed_terms(
+            disclosed_triple,
+            subject_index,
+            vc_index,
+            &original,
+            &mut disclosed_terms,
+            &mut undisclosed_terms,
+            &mut equivs,
+        )?;
+    }
+    Ok(DisclosedAndUndisclosedTerms {
+        disclosed: disclosed_terms,
+        undisclosed: undisclosed_terms,
         equivs,
-    ))
+    })
+}
+
+fn build_disclosed_and_undisclosed_terms(
+    disclosed_triple: &Option<Triple>,
+    subject_index: usize,
+    vc_index: usize,
+    original: &Triple,
+    disclosed_terms: &mut BTreeMap<usize, Fr>,
+    undisclosed_terms: &mut BTreeMap<usize, Fr>,
+    equivs: &mut HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
+) -> Result<(), RDFProofsError> {
+    let predicate_index = subject_index + 1;
+    let object_index = subject_index + 2;
+
+    let hasher = get_hasher();
+    let subject_fr = hash_term_to_field((&original.subject).into(), &hasher)?;
+    let predicate_fr = hash_term_to_field((&original.predicate).into(), &hasher)?;
+    let object_fr = hash_term_to_field((&original.object).into(), &hasher)?;
+
+    match disclosed_triple {
+        Some(triple) => {
+            match &triple.subject {
+                Subject::BlankNode(b) => {
+                    undisclosed_terms.insert(subject_index, subject_fr);
+                    equivs
+                        .entry(NamedOrBlankNode::BlankNode(b.clone().into()))
+                        .or_default()
+                        .push((vc_index, subject_index));
+                }
+                Subject::NamedNode(n) if is_nym(n) => {
+                    undisclosed_terms.insert(subject_index, subject_fr);
+                    equivs
+                        .entry(NamedOrBlankNode::NamedNode(n.clone().into()))
+                        .or_default()
+                        .push((vc_index, subject_index));
+                }
+                Subject::NamedNode(_) => {
+                    disclosed_terms.insert(subject_index, subject_fr);
+                }
+                #[cfg(feature = "rdf-star")]
+                Subject::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
+            };
+
+            if is_nym(&triple.predicate) {
+                undisclosed_terms.insert(predicate_index, predicate_fr);
+                equivs
+                    .entry(NamedOrBlankNode::NamedNode(triple.predicate.clone().into()))
+                    .or_default()
+                    .push((vc_index, predicate_index));
+            } else {
+                disclosed_terms.insert(predicate_index, predicate_fr);
+            };
+
+            match &triple.object {
+                Term::BlankNode(b) => {
+                    undisclosed_terms.insert(object_index, object_fr);
+                    equivs
+                        .entry(NamedOrBlankNode::BlankNode(b.clone().into()))
+                        .or_default()
+                        .push((vc_index, object_index));
+                }
+                Term::NamedNode(n) if is_nym(n) => {
+                    undisclosed_terms.insert(object_index, object_fr);
+                    equivs
+                        .entry(NamedOrBlankNode::NamedNode(n.clone().into()))
+                        .or_default()
+                        .push((vc_index, object_index));
+                }
+                Term::NamedNode(_) | Term::Literal(_) => {
+                    disclosed_terms.insert(object_index, object_fr);
+                }
+                #[cfg(feature = "rdf-star")]
+                Term::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
+            };
+        }
+
+        None => {
+            undisclosed_terms.insert(subject_index, subject_fr);
+            undisclosed_terms.insert(predicate_index, predicate_fr);
+            undisclosed_terms.insert(object_index, object_fr);
+        }
+    };
+    Ok(())
 }
 
 fn is_nym(node: &NamedNode) -> bool {
