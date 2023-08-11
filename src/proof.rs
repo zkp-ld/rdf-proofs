@@ -185,6 +185,58 @@ type OrderedGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
 type OrderedVerifiableCredentialGraphViews<'a> =
     BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
 
+pub fn verify_proof<R: RngCore>(
+    rng: &mut R,
+    vp: &Dataset,
+    document_loader: &DocumentLoader,
+) -> Result<(), RDFProofsError> {
+    // canonicalize VP
+    let c14n_map_for_disclosed = issue(&vp)?;
+    let canonicalized_vp = relabel(&vp, &c14n_map_for_disclosed)?;
+    println!("canonicalized VP:\n{}", serialize(&canonicalized_vp));
+
+    // TODO: check VP
+
+    // decompose canonicalized VP into graphs
+    let VpGraphs {
+        metadata: _vp_metadata,
+        proof: vp_proof,
+        proof_graph_name: vp_proof_graph_name,
+        filters: filters_graph,
+        disclosed_vcs: c14n_disclosed_vc_graphs,
+    } = decompose_vp(&canonicalized_vp)?;
+
+    // convert to Vecs
+    let disclosed_vec = c14n_disclosed_vc_graphs
+        .into_iter()
+        .map(|(_, v)| v.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+
+    // get proof value
+    let proof_value_triple = vp_proof
+        .triples_for_predicate(PROOF_VALUE)
+        .next()
+        .ok_or(RDFProofsError::InvalidVP)?;
+    let proof_value_encoded = match proof_value_triple.object {
+        TermRef::Literal(v) => Ok(v.value()),
+        _ => Err(RDFProofsError::InvalidVP),
+    }?;
+
+    // deserialize proof value into proof and index_map
+    let (_, proof_value_bytes) = multibase::decode(proof_value_encoded)?;
+    let ProofWithIndexMap {
+        proof: proof_bytes,
+        index_map,
+    } = serde_cbor::from_slice(&proof_value_bytes)?;
+    let proof = ProofG1::deserialize_compressed(&*proof_bytes)?;
+    println!("proof:\n{:#?}\n", proof);
+    println!("index_map:\n{:#?}\n", index_map);
+
+    // TODO: reorder statements according to index map
+
+    todo!();
+}
+
 pub fn derive_proof<R: RngCore>(
     rng: &mut R,
     vcs: &Vec<VcWithDisclosed>,
@@ -207,6 +259,7 @@ pub fn derive_proof<R: RngCore>(
     // TODO:
     // check: verify VCs
 
+    // get issuer public keys
     let verification_methods = vcs
         .iter()
         .map(|VcWithDisclosed { vc, .. }| {
@@ -227,29 +280,6 @@ pub fn derive_proof<R: RngCore>(
         .collect::<Result<Vec<_>, _>>()?;
     println!("verification methods:\n{:#?}\n", verification_methods);
     println!("public keys:\n{:#?}\n", public_keys);
-
-    // get disclosed VCs, where `proofValue` is removed if any
-    let disclosed_vcs = vcs
-        .iter()
-        .map(|VcWithDisclosed { disclosed, .. }| disclosed)
-        .map(|VerifiableCredential { document, proof }| {
-            VerifiableCredential::new(
-                // clone document and proof without `proofValue`
-                Graph::from_iter(document),
-                Graph::from_iter(proof.iter().filter(|t| t.predicate != PROOF_VALUE)),
-            )
-        })
-        .collect();
-
-    // build VP (without proof yet) based on disclosed VCs
-    let (vp, vc_graph_names) = build_vp(&disclosed_vcs)?;
-    println!("vp:\n{}\n", vp.to_string());
-
-    // canonicalize VP
-    let c14n_map_for_disclosed = issue(&vp)?;
-    let canonicalized_vp = relabel(&vp, &c14n_map_for_disclosed)?;
-    println!("issued identifiers map:\n{:#?}\n", c14n_map_for_disclosed);
-    println!("canonicalized VP:\n{}", serialize(&canonicalized_vp));
 
     // extract `proofValue`s from original VCs
     let (original_vcs, proof_values): (Vec<_>, Vec<_>) = vcs
@@ -302,6 +332,29 @@ pub fn derive_proof<R: RngCore>(
             }
         }
     }
+
+    // get disclosed VCs, where `proofValue` is removed if any
+    let disclosed_vcs = vcs
+        .iter()
+        .map(|VcWithDisclosed { disclosed, .. }| disclosed)
+        .map(|VerifiableCredential { document, proof }| {
+            VerifiableCredential::new(
+                // clone document and proof without `proofValue`
+                Graph::from_iter(document),
+                Graph::from_iter(proof.iter().filter(|t| t.predicate != PROOF_VALUE)),
+            )
+        })
+        .collect();
+
+    // build VP (without proof yet) based on disclosed VCs
+    let (vp, vc_graph_names) = build_vp(&disclosed_vcs)?;
+    println!("vp:\n{}\n", vp.to_string());
+
+    // canonicalize VP
+    let c14n_map_for_disclosed = issue(&vp)?;
+    let canonicalized_vp = relabel(&vp, &c14n_map_for_disclosed)?;
+    println!("issued identifiers map:\n{:#?}\n", c14n_map_for_disclosed);
+    println!("canonicalized VP:\n{}", serialize(&canonicalized_vp));
 
     // construct extended deanonymization map
     let extended_deanon_map =
@@ -1225,14 +1278,15 @@ mod tests {
         vc::VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use oxrdf::{BlankNode, Graph, NamedNode};
-    use oxttl::NTriplesParser;
+    use oxrdf::{BlankNode, Dataset, Graph, NamedNode};
+    use oxttl::{NQuadsParser, NTriplesParser};
     use std::{collections::HashMap, io::Cursor};
 
-    #[test]
-    fn derive_proof_simple() -> () {
-        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+    use super::verify_proof;
 
+    #[test]
+    fn derive_proof_simple() {
+        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let document_loader: DocumentLoader =
             get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
 
@@ -1390,5 +1444,60 @@ _:wTnTxH <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
         assert!(true)
+    }
+
+    #[test]
+    fn verify_proof_simple() {
+        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+        let document_loader: DocumentLoader =
+            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+
+        let vp_nquads = r#"
+<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n10 .
+<http://example.org/vcred/00> <https://w3id.org/security#proof> _:c14n0 _:c14n10 .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> _:c14n9 _:c14n10 .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n10 .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n10 .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n10 .
+<http://example.org/vicred/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n2 .
+<http://example.org/vicred/a> <https://w3id.org/security#proof> _:c14n8 _:c14n2 .
+<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#credentialSubject> _:c14n1 _:c14n2 .
+<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n2 .
+<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n2 .
+<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n2 .
+_:c14n1 <http://schema.org/status> "active" _:c14n2 .
+_:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n2 .
+_:c14n12 <http://example.org/vocab/vaccine> _:c14n1 _:c14n10 .
+_:c14n12 <http://example.org/vocab/vaccine> _:c14n3 _:c14n10 .
+_:c14n12 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n10 .
+_:c14n4 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
+_:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
+_:c14n4 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n0 .
+_:c14n4 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
+_:c14n4 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n0 .
+_:c14n5 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n8 .
+_:c14n5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n8 .
+_:c14n5 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n8 .
+_:c14n5 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n8 .
+_:c14n5 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n8 .
+_:c14n6 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
+_:c14n6 <https://w3id.org/security#proof> _:c14n11 .
+_:c14n6 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n10 .
+_:c14n6 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n2 .
+_:c14n7 <http://purl.org/dc/terms/created> "2023-08-11T11:57:56.233350513Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n11 .
+_:c14n7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n11 .
+_:c14n7 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n11 .
+_:c14n7 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n11 .
+_:c14n7 <https://w3id.org/security#proofValue> "uomVwcm9vZlkHrQIAAAAAAAAAALJndSM5_SvSHaoVMYGK9gQHCaeuNdXVq-FDVhkdz2Cjol5rgNBAKXh7PdFAZLd_uIhmGfbzSi_fKDf2U3kJkZuPigJHUrdTkldN_3CHj2Tv1zUC_C8x7ze-ZCWGGTACc45zm8wsxjKiVFUdiPbJ2Q6q8xMpDgfdAwA-PYOFtYce17JPaA4mliIIqdDhEE97x6gIkLwP9Xr_D_eMUge7p7In3gU9lg-epE2YlMgxob8hLOEAO0LzVM8IgYzNxkE_bwIAAAAAAAAADo4nihTp0oBtM3PA3A4f58GEHoULUKVN5Kkv0MD8z3OyKL7aPhLu2Hp3z1ZF4qpz6dTe0GSF3z_LFeJH25IQE656UTvZFBcM6OBx1FEpdQzYJGQvRQoWZirgBiNZam9U2qcEYMwNIoJtSVHRg_QT9RkAAAAAAAAAB8ryRnaY35R2UgXemxSEMeoY9ygLBCUhZmnuzbX1bz9mW2ErIjUVZbWkjWHg7m1EuQ6laISVSYM8nw0I-bdQYjYq_EHFofxEOVevROxyyYb1BiaZCE9VXJ3Yt7G6vKse3bbZJM6D7N7Ja_OkAfYIzKVFLAhbbxf660Tn1bkc1jGHwwoVNCdfT9Zi_GxiC8QYI4yr2gcWsnlf1KnlzN0FT99M7ylJSKOS01OX_VVFouqgX55vQe9SzLFrqUKfZgoQZQ4oG1BlHTvKnEfAy7xuDuBDRgUfsuUcrbOKtIotaDs2KvxBxaH8RDlXr0TscsmG9QYmmQhPVVyd2LexuryrHjYq_EHFofxEOVevROxyyYb1BiaZCE9VXJ3Yt7G6vKse9EqLplxksRNWhCOJQ-8D1jXNH2GXPov8IipJRkxJQRF3j9vc5e0mrOaLgXO-J-gyYYa90hixBifTGYpOhRJaJ5PCEoipvHmJvzEUm0-BdFjTN69czslOGJwT8Z3ZVsRlPNdYUD9Iz7RboyrIVqwjxHi788AordFAmK9g_7mOr0A0NWePfjfkUu7TMZmVaNNSz5SO5GD5rB5GtRbgWXqSIaUQ1W-RI_UUFfDmHElp61zW9g0ZKUMUhjo2YMojdk1E3bbZJM6D7N7Ja_OkAfYIzKVFLAhbbxf660Tn1bkc1jH4NmcHj3cSMICaX9zuSQZcfhBV9NauyLy3eb8gjlSxWN222STOg-zeyWvzpAH2CMylRSwIW28X-utE59W5HNYx552zljELfkFT2banarOtTS7h5zr7LLoHYI5j-JJ3cmTdttkkzoPs3slr86QB9gjMpUUsCFtvF_rrROfVuRzWMQ3L6twlpT9DjEj1ATCgXLyP1YWZaHKtjuhAm9_j4UcODcvq3CWlP0OMSPUBMKBcvI_VhZlocq2O6ECb3-PhRw4Ny-rcJaU_Q4xI9QEwoFy8j9WFmWhyrY7oQJvf4-FHDg3L6twlpT9DjEj1ATCgXLyP1YWZaHKtjuhAm9_j4UcODcvq3CWlP0OMSPUBMKBcvI_VhZlocq2O6ECb3-PhRw4AhNtcHw0xdSPJQzdZGmISOx0qmF0yIqE2hZrdwNrI065yyFcIbXWNHiKyKt_sEhD9r553WAx9xSz9rGW8kq6ouldt4RFI-LnXmZiODGtgc5fO9JXPwKuMS5CNdNa87xyKpTrgWkGEmX516hdeUVbOI4e-pM3jJzahe325MezhDeULtJqLnTKuxjoWFUIXmAqMg-0BOrPsCBtzq1h-a79fJW-wxUG9zl9mfRqoi51TzMzaW6zJNBLT8tNygQhfaFzYAgAAAAAAAADkVCgVm9owk7JUp11nlw9XEwkPjfXdqCx90vSwFF9qUBylvnABslrJmVdeT6p6n79kQ6wgM1RSkVdQ3sBSqUdnjsH50dpvTdz1tUrZIPZyPDW0FHwscCFV2dwzuz4-hRKv2oC50ldxRXPAPl2BC-MVEAAAAAAAAAAvJaGKAz7WxA95kCyWzdMJ_2_9-CDlQakCZxLC8esmLTC_43aVB7zgva_KE1Etdg0GnG5bHzbABD8_8LAAGIFp2g9RrhAlIKXt2UM19owjwgeOiIsORmhs2At-QtQPXSeOjcXnGYJsSKYfAt0NBSQuUEiyB2bCTw0ItNQoyzbUUzcTHMbiOAmmg1XEEm2CrPkEvYxf8h3Vp_HzZhkWds4TTiIe8nUVEkc8r43y7HzHNRr84kACktYCx6m2b4Ybww__rU2BzJQUxA1cpJGi8FEtSUDld3mp8wr0_JtmIaMKDA2XA-Kj2ek0I2sJTaaKAYPgxWJR_h2AeQU5awrfTLMf-DZnB493EjCAml_c7kkGXH4QVfTWrsi8t3m_II5UsVj4NmcHj3cSMICaX9zuSQZcfhBV9NauyLy3eb8gjlSxWPg2ZwePdxIwgJpf3O5JBlx-EFX01q7IvLd5vyCOVLFYCiynK7JekFlXContAjA5bHpbR7JGclMGgSQpvtmi-GcKLKcrsl6QWVcKie0CMDlseltHskZyUwaBJCm-2aL4ZwospyuyXpBZVwqJ7QIwOWx6W0eyRnJTBoEkKb7ZovhnCiynK7JekFlXContAjA5bHpbR7JGclMGgSQpvtmi-GcKLKcrsl6QWVcKie0CMDlseltHskZyUwaBJCm-2aL4ZwAAAGlpbmRleF9tYXCCpGExigMEBQYHCgsMAAJhMg1hM4UAAQIDBGE0BaRhMYcEBQYHCAIDYTIJYTOFAAECAwRhNAU"^^<https://w3id.org/security#multibase> _:c14n11 .
+_:c14n9 <http://example.org/vocab/isPatientOf> _:c14n12 _:c14n10 .
+_:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n10 .
+"#;
+        let vp = Dataset::from_iter(
+            NQuadsParser::new()
+                .parse_from_read(Cursor::new(vp_nquads))
+                .into_iter()
+                .map(|x| x.unwrap()),
+        );
+        let verified = verify_proof(&mut rng, &vp, &document_loader);
     }
 }
