@@ -35,6 +35,7 @@ pub enum RDFProofsError {
     DisclosedVCIsNotSubsetOfOriginalVC,
     DeriveProofValue,
     ProofSystem(ProofSystemError),
+    RDFStarUnsupported,
     Other(String),
 }
 
@@ -76,8 +77,9 @@ impl std::fmt::Display for RDFProofsError {
                 write!(f, "disclosed VC is not subset of original VC error")
             }
             RDFProofsError::DeriveProofValue => write!(f, "derive proof value error"),
-            RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
             RDFProofsError::ProofSystem(_) => write!(f, "proof system error"),
+            RDFProofsError::RDFStarUnsupported => write!(f, "RDF-star is not supported"),
+            RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
         }
     }
 }

@@ -185,62 +185,11 @@ type OrderedGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
 type OrderedVerifiableCredentialGraphViews<'a> =
     BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
 
-pub fn verify_proof<R: RngCore>(
-    rng: &mut R,
-    vp: &Dataset,
-    document_loader: &DocumentLoader,
-) -> Result<(), RDFProofsError> {
-    // canonicalize VP
-    let c14n_map_for_disclosed = issue(&vp)?;
-    let canonicalized_vp = relabel(&vp, &c14n_map_for_disclosed)?;
-    println!("canonicalized VP:\n{}", serialize(&canonicalized_vp));
-
-    // TODO: check VP
-
-    // decompose canonicalized VP into graphs
-    let VpGraphs {
-        metadata: _vp_metadata,
-        proof: vp_proof,
-        proof_graph_name: vp_proof_graph_name,
-        filters: filters_graph,
-        disclosed_vcs: c14n_disclosed_vc_graphs,
-    } = decompose_vp(&canonicalized_vp)?;
-
-    // convert to Vecs
-    let disclosed_vec = c14n_disclosed_vc_graphs
-        .into_iter()
-        .map(|(_, v)| v.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
-
-    // get proof value
-    let proof_value_triple = vp_proof
-        .triples_for_predicate(PROOF_VALUE)
-        .next()
-        .ok_or(RDFProofsError::InvalidVP)?;
-    let proof_value_encoded = match proof_value_triple.object {
-        TermRef::Literal(v) => Ok(v.value()),
-        _ => Err(RDFProofsError::InvalidVP),
-    }?;
-
-    // deserialize proof value into proof and index_map
-    let (_, proof_value_bytes) = multibase::decode(proof_value_encoded)?;
-    let ProofWithIndexMap {
-        proof: proof_bytes,
-        index_map,
-    } = serde_cbor::from_slice(&proof_value_bytes)?;
-    let proof = ProofG1::deserialize_compressed(&*proof_bytes)?;
-    println!("proof:\n{:#?}\n", proof);
-    println!("index_map:\n{:#?}\n", index_map);
-
-    // TODO: reorder statements according to index map
-
-    todo!();
-}
-
 pub fn derive_proof<R: RngCore>(
     rng: &mut R,
     vcs: &Vec<VcWithDisclosed>,
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
+    nonce: Option<&[u8]>,
     document_loader: &DocumentLoader,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vcs {
@@ -256,30 +205,15 @@ pub fn derive_proof<R: RngCore>(
     // TODO:
     // check: each disclosed VCs must be the derived subset of corresponding VCs via deanon map
 
+    // get issuer public keys
+    let public_keys = vcs
+        .iter()
+        .map(|VcWithDisclosed { vc, .. }| get_public_keys(&vc.proof, document_loader))
+        .collect::<Result<Vec<_>, _>>()?;
+    println!("public keys:\n{:#?}\n", public_keys);
+
     // TODO:
     // check: verify VCs
-
-    // get issuer public keys
-    let verification_methods = vcs
-        .iter()
-        .map(|VcWithDisclosed { vc, .. }| {
-            let vm_triple = vc
-                .proof
-                .triples_for_predicate(VERIFICATION_METHOD)
-                .next()
-                .ok_or(RDFProofsError::InvalidVerificationMethod)?;
-            match vm_triple.object {
-                TermRef::NamedNode(v) => Ok(v),
-                _ => Err(RDFProofsError::InvalidVerificationMethodURL),
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let public_keys = verification_methods
-        .iter()
-        .map(|vm| document_loader.get_public_key(*vm))
-        .collect::<Result<Vec<_>, _>>()?;
-    println!("verification methods:\n{:#?}\n", verification_methods);
-    println!("public keys:\n{:#?}\n", public_keys);
 
     // extract `proofValue`s from original VCs
     let (original_vcs, proof_values): (Vec<_>, Vec<_>) = vcs
@@ -367,25 +301,12 @@ pub fn derive_proof<R: RngCore>(
 
     // decompose canonicalized VP into graphs
     let VpGraphs {
-        metadata: _vp_metadata,
+        metadata: _,
         proof: vp_proof,
         proof_graph_name: vp_proof_graph_name,
-        filters: filters_graph,
+        filters: _filters_graph,
         disclosed_vcs: c14n_disclosed_vc_graphs,
     } = decompose_vp(&canonicalized_vp)?;
-    println!("VP metadata:\n{}\n", _vp_metadata);
-    println!("VP proof graph:\n{}\n", vp_proof);
-    println!("filter graphs:");
-    for (_, filter_graph) in &filters_graph {
-        println!("{}", filter_graph);
-    }
-    println!("");
-    println!("disclosed VC graphs:");
-    for (k, vc) in &c14n_disclosed_vc_graphs {
-        println!("{}:", k);
-        println!("{}", vc.document);
-        println!("{}", vc.proof);
-    }
 
     // reorder the original VCs and proof values
     // according to the order of canonicalized graph names of disclosed VCs
@@ -472,6 +393,7 @@ pub fn derive_proof<R: RngCore>(
         public_keys,
         proof_values_vec,
         index_map,
+        nonce,
     )?;
 
     // add derived proof value to VP
@@ -488,6 +410,182 @@ pub fn derive_proof<R: RngCore>(
     canonicalized_vp_quads.push(vp_proof_value_quad);
 
     Ok(Dataset::from_iter(canonicalized_vp_quads))
+}
+
+pub fn verify_proof<R: RngCore>(
+    rng: &mut R,
+    vp: &Dataset,
+    nonce: Option<&[u8]>,
+    document_loader: &DocumentLoader,
+) -> Result<(), RDFProofsError> {
+    println!("VP:\n{}", serialize(&vp));
+
+    // decompose VP into graphs
+    let VpGraphs {
+        proof: vp_proof_with_value,
+        proof_graph_name,
+        ..
+    } = decompose_vp(vp)?;
+    let proof_graph_name: GraphNameRef = proof_graph_name.into();
+
+    // get proof value
+    let proof_value_triple = vp_proof_with_value
+        .triples_for_predicate(PROOF_VALUE)
+        .next()
+        .ok_or(RDFProofsError::InvalidVP)?;
+    let proof_value_encoded = match proof_value_triple.object {
+        TermRef::Literal(v) => Ok(v.value()),
+        _ => Err(RDFProofsError::InvalidVP),
+    }?;
+
+    // drop proof value from VP proof
+    let vp_without_proof_value = Dataset::from_iter(
+        vp.iter()
+            .filter(|q| !(q.predicate == PROOF_VALUE && q.graph_name == proof_graph_name)),
+    );
+
+    // canonicalize VP
+    let c14n_map_for_disclosed = issue(&vp_without_proof_value)?;
+    let canonicalized_vp = relabel(&vp_without_proof_value, &c14n_map_for_disclosed)?;
+    println!("canonicalized VP:\n{}", serialize(&canonicalized_vp));
+
+    // TODO: check VP
+
+    // decompose canonicalized VP into graphs
+    let VpGraphs {
+        metadata: _,
+        proof: _,
+        proof_graph_name: _,
+        filters: _filters_graph,
+        disclosed_vcs: c14n_disclosed_vc_graphs,
+    } = decompose_vp(&canonicalized_vp)?;
+
+    // get issuer public keys
+    let public_keys = c14n_disclosed_vc_graphs
+        .iter()
+        .map(|(_, vc)| get_public_keys_from_graphview(&vc.proof, document_loader))
+        .collect::<Result<Vec<_>, _>>()?;
+    println!("public_keys:\n{:#?}\n", public_keys);
+
+    // convert to Vecs
+    let disclosed_vec = c14n_disclosed_vc_graphs
+        .into_iter()
+        .map(|(_, v)| v.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+
+    // deserialize proof value into proof and index_map
+    let (_, proof_value_bytes) = multibase::decode(proof_value_encoded)?;
+    let ProofWithIndexMap {
+        proof: proof_bytes,
+        index_map,
+    } = serde_cbor::from_slice(&proof_value_bytes)?;
+    let proof = ProofG1::deserialize_compressed(&*proof_bytes)?;
+    println!("proof:\n{:#?}\n", proof);
+    println!("index_map:\n{:#?}\n", index_map);
+
+    // reorder statements according to index map
+    let reordered_vc_triples = reorder_vc_triples(&disclosed_vec, &index_map)?;
+    println!(
+        "reordered_disclosed_vc_triples:\n{:#?}\n",
+        reordered_vc_triples
+    );
+
+    // identify disclosed terms
+    let disclosed_terms = reordered_vc_triples
+        .iter()
+        .enumerate()
+        .map(|(i, disclosed_vc_triples)| get_disclosed_terms(disclosed_vc_triples, i))
+        .collect::<Result<Vec<_>, RDFProofsError>>()?;
+    println!("disclosed_terms:\n{:#?}\n", disclosed_terms);
+
+    let params_and_pks = disclosed_terms
+        .iter()
+        .zip(public_keys)
+        .map(|(t, pk)| (generate_params(t.term_count), pk));
+
+    // merge each partial equivs
+    let mut equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> = BTreeMap::new();
+    for DisclosedTerms {
+        equivs: partial_equivs,
+        ..
+    } in &disclosed_terms
+    {
+        for (k, v) in partial_equivs {
+            equivs
+                .entry(k.clone().into())
+                .or_default()
+                .extend(v.clone());
+        }
+    }
+    // drop single-element vecs from equivs
+    let equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> =
+        equivs.into_iter().filter(|(_, v)| v.len() > 1).collect();
+
+    // build statements
+    let mut statements = Statements::<Bls12_381, <Bls12_381 as Pairing>::G1Affine>::new();
+    for (DisclosedTerms { disclosed, .. }, (params, public_key)) in
+        disclosed_terms.iter().zip(params_and_pks)
+    {
+        statements.add(PoKBBSSignatureG1Stmt::new_statement_from_params(
+            params,
+            public_key,
+            disclosed.clone(),
+        ));
+    }
+
+    // build meta statements
+    let mut meta_statements = MetaStatements::new();
+    for (_, equiv_vec) in equivs {
+        let equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
+        meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
+    }
+
+    // TODO: build context
+    let context = None;
+
+    // build proof spec
+    let proof_spec = ProofSpec::new(statements, meta_statements, vec![], context);
+    proof_spec.validate()?;
+    println!("proof_spec:\n{:#?}\n", proof_spec);
+
+    // verify proof
+    Ok(proof.verify::<R, Blake2b512>(
+        rng,
+        proof_spec,
+        nonce.map(|v| v.to_vec()),
+        Default::default(),
+    )?)
+}
+
+fn get_public_keys(
+    proof_graph: &Graph,
+    document_loader: &DocumentLoader,
+) -> Result<BBSPublicKeyG2<Bls12_381>, RDFProofsError> {
+    let vm_triple = proof_graph
+        .triples_for_predicate(VERIFICATION_METHOD)
+        .next()
+        .ok_or(RDFProofsError::InvalidVerificationMethod)?;
+    let vm = match vm_triple.object {
+        TermRef::NamedNode(v) => Ok(v),
+        _ => Err(RDFProofsError::InvalidVerificationMethodURL),
+    }?;
+    document_loader.get_public_key(vm)
+}
+
+// TODO: to be integrated with `get_public_keys`
+fn get_public_keys_from_graphview(
+    proof_graph: &GraphView,
+    document_loader: &DocumentLoader,
+) -> Result<BBSPublicKeyG2<Bls12_381>, RDFProofsError> {
+    let vm_triple = proof_graph
+        .triples_for_predicate(VERIFICATION_METHOD)
+        .next()
+        .ok_or(RDFProofsError::InvalidVerificationMethod)?;
+    let vm = match vm_triple.object {
+        TermRef::NamedNode(v) => Ok(v),
+        _ => Err(RDFProofsError::InvalidVerificationMethodURL),
+    }?;
+    document_loader.get_public_key(vm)
 }
 
 // function to remove from the VP the multiple graphs that are reachable from `source` via `link`
@@ -758,10 +856,6 @@ fn extend_deanon_map(
 
 fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
     let mut vp_graphs = dataset_into_ordered_graphs(vp);
-    println!("canonicalized VP graphs:");
-    for g in vp_graphs.keys() {
-        println!("{}:\n{}\n", g, vp_graphs.get(g).unwrap());
-    }
 
     // extract VP metadata (default graph)
     let metadata = vp_graphs
@@ -932,16 +1026,11 @@ fn gen_index_map(
     Ok(index_map)
 }
 
-fn derive_proof_value<R: RngCore>(
-    rng: &mut R,
-    original_vc_triples: Vec<VerifiableCredentialTriples>,
-    disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
-    public_keys: Vec<BBSPublicKeyG2<Bls12_381>>,
-    proof_values: Vec<&str>,
-    index_map: Vec<StatementIndexMap>,
-) -> Result<String, RDFProofsError> {
-    // reorder disclosed VC triples according to index map
-    let reordered_disclosed_vc_triples = disclosed_vc_triples
+fn reorder_vc_triples(
+    vc_triples: &[VerifiableCredentialTriples],
+    index_map: &[StatementIndexMap],
+) -> Result<Vec<DisclosedVerifiableCredential>, RDFProofsError> {
+    vc_triples
         .iter()
         .enumerate()
         .map(|(i, VerifiableCredentialTriples { document, proof })| {
@@ -983,8 +1072,20 @@ fn derive_proof_value<R: RngCore>(
                 proof: mapped_proof,
             })
         })
-        .collect::<Result<Vec<_>, RDFProofsError>>()?;
+        .collect::<Result<Vec<_>, RDFProofsError>>()
+}
 
+fn derive_proof_value<R: RngCore>(
+    rng: &mut R,
+    original_vc_triples: Vec<VerifiableCredentialTriples>,
+    disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
+    public_keys: Vec<BBSPublicKeyG2<Bls12_381>>,
+    proof_values: Vec<&str>,
+    index_map: Vec<StatementIndexMap>,
+    nonce: Option<&[u8]>,
+) -> Result<String, RDFProofsError> {
+    // reorder disclosed VC triples according to index map
+    let reordered_disclosed_vc_triples = reorder_vc_triples(&disclosed_vc_triples, &index_map)?;
     println!(
         "reordered_disclosed_vc_triples:\n{:#?}\n",
         reordered_disclosed_vc_triples
@@ -1008,9 +1109,9 @@ fn derive_proof_value<R: RngCore>(
     let params_and_pks = disclosed_and_undisclosed_terms
         .iter()
         .zip(public_keys)
-        .map(|(t, pk)| (generate_params(t.count()), pk));
+        .map(|(t, pk)| (generate_params(t.term_count), pk));
 
-    // identify equivalent witnesses
+    // merge each partial equivs
     let mut equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> = BTreeMap::new();
     for DisclosedAndUndisclosedTerms {
         equivs: partial_equivs,
@@ -1049,6 +1150,8 @@ fn derive_proof_value<R: RngCore>(
 
     // TODO: build context
     let context = None;
+
+    // build proof spec
     let proof_spec = ProofSpec::new(statements, meta_statements, vec![], context);
     proof_spec.validate()?;
     println!("proof_spec:\n{:#?}\n", proof_spec);
@@ -1067,12 +1170,15 @@ fn derive_proof_value<R: RngCore>(
     }
     println!("witnesses:\n{:#?}\n", witnesses);
 
-    // TODO: build nonce
-    let nonce = None;
-
     // build proof
-    let proof =
-        ProofG1::new::<R, Blake2b512>(rng, proof_spec, witnesses, nonce, Default::default())?.0;
+    let proof = ProofG1::new::<R, Blake2b512>(
+        rng,
+        proof_spec,
+        witnesses,
+        nonce.map(|v| v.to_vec()),
+        Default::default(),
+    )?
+    .0;
     println!("proof:\n{:#?}\n", proof);
 
     // serialize proof and index_map
@@ -1107,16 +1213,139 @@ struct ProofWithIndexMap {
 }
 
 #[derive(Debug)]
+struct DisclosedTerms {
+    disclosed: BTreeMap<usize, Fr>,
+    equivs: HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
+    term_count: usize,
+}
+
+fn get_disclosed_terms(
+    disclosed_vc_triples: &DisclosedVerifiableCredential,
+    vc_index: usize,
+) -> Result<DisclosedTerms, RDFProofsError> {
+    let mut disclosed_terms = BTreeMap::<usize, Fr>::new();
+    let mut equivs = HashMap::<NamedOrBlankNode, Vec<(usize, usize)>>::new();
+
+    let DisclosedVerifiableCredential {
+        document: disclosed_document,
+        proof: disclosed_proof,
+    } = disclosed_vc_triples;
+
+    for (j, disclosed_triple) in disclosed_document {
+        let subject_index = 3 * j;
+        build_disclosed_terms(
+            disclosed_triple,
+            subject_index,
+            vc_index,
+            &mut disclosed_terms,
+            &mut equivs,
+        )?;
+    }
+
+    let delimiter_index = disclosed_document.len() * 3;
+    let proof_index = delimiter_index + 1;
+    let delimiter = get_delimiter()?;
+    disclosed_terms.insert(delimiter_index, delimiter);
+
+    for (j, disclosed_triple) in disclosed_proof {
+        let subject_index = 3 * j + proof_index;
+        build_disclosed_terms(
+            disclosed_triple,
+            subject_index,
+            vc_index,
+            &mut disclosed_terms,
+            &mut equivs,
+        )?;
+    }
+    Ok(DisclosedTerms {
+        disclosed: disclosed_terms,
+        equivs,
+        term_count: (disclosed_document.len() + disclosed_proof.len()) * 3 + 1,
+    })
+}
+
+fn build_disclosed_terms(
+    disclosed_triple: &Option<Triple>,
+    subject_index: usize,
+    vc_index: usize,
+    disclosed_terms: &mut BTreeMap<usize, Fr>,
+    equivs: &mut HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
+) -> Result<(), RDFProofsError> {
+    let predicate_index = subject_index + 1;
+    let object_index = subject_index + 2;
+
+    let hasher = get_hasher();
+
+    match disclosed_triple {
+        Some(triple) => {
+            match &triple.subject {
+                Subject::BlankNode(b) => {
+                    equivs
+                        .entry(NamedOrBlankNode::BlankNode(b.clone().into()))
+                        .or_default()
+                        .push((vc_index, subject_index));
+                }
+                Subject::NamedNode(n) if is_nym(n) => {
+                    equivs
+                        .entry(NamedOrBlankNode::NamedNode(n.clone().into()))
+                        .or_default()
+                        .push((vc_index, subject_index));
+                }
+                Subject::NamedNode(n) => {
+                    let subject_fr = hash_term_to_field(n.into(), &hasher)?;
+                    disclosed_terms.insert(subject_index, subject_fr);
+                }
+                #[cfg(feature = "rdf-star")]
+                Subject::Triple(_) => return Err(RDFProofsError::RDFStarUnsupported),
+            };
+
+            if is_nym(&triple.predicate) {
+                equivs
+                    .entry(NamedOrBlankNode::NamedNode(triple.predicate.clone().into()))
+                    .or_default()
+                    .push((vc_index, predicate_index));
+            } else {
+                let predicate_fr = hash_term_to_field((&triple.predicate).into(), &hasher)?;
+                disclosed_terms.insert(predicate_index, predicate_fr);
+            };
+
+            match &triple.object {
+                Term::BlankNode(b) => {
+                    equivs
+                        .entry(NamedOrBlankNode::BlankNode(b.clone().into()))
+                        .or_default()
+                        .push((vc_index, object_index));
+                }
+                Term::NamedNode(n) if is_nym(n) => {
+                    equivs
+                        .entry(NamedOrBlankNode::NamedNode(n.clone().into()))
+                        .or_default()
+                        .push((vc_index, object_index));
+                }
+                Term::NamedNode(n) => {
+                    let object_fr = hash_term_to_field(n.into(), &hasher)?;
+                    disclosed_terms.insert(object_index, object_fr);
+                }
+                Term::Literal(v) => {
+                    let object_fr = hash_term_to_field(v.into(), &hasher)?;
+                    disclosed_terms.insert(object_index, object_fr);
+                }
+                #[cfg(feature = "rdf-star")]
+                Term::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
+            };
+        }
+
+        None => {}
+    };
+    Ok(())
+}
+
+#[derive(Debug)]
 struct DisclosedAndUndisclosedTerms {
     disclosed: BTreeMap<usize, Fr>,
     undisclosed: BTreeMap<usize, Fr>,
     equivs: HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
-}
-
-impl DisclosedAndUndisclosedTerms {
-    pub fn count(&self) -> usize {
-        self.disclosed.len() + self.undisclosed.len()
-    }
+    term_count: usize,
 }
 
 fn get_disclosed_and_undisclosed_terms(
@@ -1179,6 +1408,7 @@ fn get_disclosed_and_undisclosed_terms(
         disclosed: disclosed_terms,
         undisclosed: undisclosed_terms,
         equivs,
+        term_count: (disclosed_document.len() + disclosed_proof.len()) * 3 + 1,
     })
 }
 
@@ -1220,7 +1450,7 @@ fn build_disclosed_and_undisclosed_terms(
                     disclosed_terms.insert(subject_index, subject_fr);
                 }
                 #[cfg(feature = "rdf-star")]
-                Subject::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
+                Subject::Triple(_) => return Err(RDFProofsError::RDFStarUnsupported),
             };
 
             if is_nym(&triple.predicate) {
@@ -1252,7 +1482,7 @@ fn build_disclosed_and_undisclosed_terms(
                     disclosed_terms.insert(object_index, object_fr);
                 }
                 #[cfg(feature = "rdf-star")]
-                Term::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
+                Term::Triple(_) => return Err(RDFProofsError::RDFStarUnsupported),
             };
         }
 
@@ -1440,7 +1670,9 @@ _:wTnTxH <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls
         let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
         let vc_with_disclosed_2 = VcWithDisclosed::new(vc_2, disclosed_2);
         let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
-        let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, &document_loader).unwrap();
+        let nonce = b"abcde";
+        let derived_proof =
+            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
         assert!(true)
@@ -1453,44 +1685,44 @@ _:wTnTxH <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls
             get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
 
         let vp_nquads = r#"
-<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n10 .
-<http://example.org/vcred/00> <https://w3id.org/security#proof> _:c14n0 _:c14n10 .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> _:c14n9 _:c14n10 .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n10 .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n10 .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n10 .
-<http://example.org/vicred/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n2 .
-<http://example.org/vicred/a> <https://w3id.org/security#proof> _:c14n8 _:c14n2 .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#credentialSubject> _:c14n1 _:c14n2 .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n2 .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n2 .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n2 .
-_:c14n1 <http://schema.org/status> "active" _:c14n2 .
-_:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n2 .
-_:c14n12 <http://example.org/vocab/vaccine> _:c14n1 _:c14n10 .
-_:c14n12 <http://example.org/vocab/vaccine> _:c14n3 _:c14n10 .
-_:c14n12 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n10 .
-_:c14n4 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
-_:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
-_:c14n4 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n0 .
-_:c14n4 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
-_:c14n4 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n0 .
-_:c14n5 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n8 .
-_:c14n5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n8 .
-_:c14n5 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n8 .
-_:c14n5 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n8 .
-_:c14n5 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n8 .
-_:c14n6 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
-_:c14n6 <https://w3id.org/security#proof> _:c14n11 .
-_:c14n6 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n10 .
-_:c14n6 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n2 .
-_:c14n7 <http://purl.org/dc/terms/created> "2023-08-11T11:57:56.233350513Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n11 .
-_:c14n7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n11 .
-_:c14n7 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n11 .
-_:c14n7 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n11 .
-_:c14n7 <https://w3id.org/security#proofValue> "uomVwcm9vZlkHrQIAAAAAAAAAALJndSM5_SvSHaoVMYGK9gQHCaeuNdXVq-FDVhkdz2Cjol5rgNBAKXh7PdFAZLd_uIhmGfbzSi_fKDf2U3kJkZuPigJHUrdTkldN_3CHj2Tv1zUC_C8x7ze-ZCWGGTACc45zm8wsxjKiVFUdiPbJ2Q6q8xMpDgfdAwA-PYOFtYce17JPaA4mliIIqdDhEE97x6gIkLwP9Xr_D_eMUge7p7In3gU9lg-epE2YlMgxob8hLOEAO0LzVM8IgYzNxkE_bwIAAAAAAAAADo4nihTp0oBtM3PA3A4f58GEHoULUKVN5Kkv0MD8z3OyKL7aPhLu2Hp3z1ZF4qpz6dTe0GSF3z_LFeJH25IQE656UTvZFBcM6OBx1FEpdQzYJGQvRQoWZirgBiNZam9U2qcEYMwNIoJtSVHRg_QT9RkAAAAAAAAAB8ryRnaY35R2UgXemxSEMeoY9ygLBCUhZmnuzbX1bz9mW2ErIjUVZbWkjWHg7m1EuQ6laISVSYM8nw0I-bdQYjYq_EHFofxEOVevROxyyYb1BiaZCE9VXJ3Yt7G6vKse3bbZJM6D7N7Ja_OkAfYIzKVFLAhbbxf660Tn1bkc1jGHwwoVNCdfT9Zi_GxiC8QYI4yr2gcWsnlf1KnlzN0FT99M7ylJSKOS01OX_VVFouqgX55vQe9SzLFrqUKfZgoQZQ4oG1BlHTvKnEfAy7xuDuBDRgUfsuUcrbOKtIotaDs2KvxBxaH8RDlXr0TscsmG9QYmmQhPVVyd2LexuryrHjYq_EHFofxEOVevROxyyYb1BiaZCE9VXJ3Yt7G6vKse9EqLplxksRNWhCOJQ-8D1jXNH2GXPov8IipJRkxJQRF3j9vc5e0mrOaLgXO-J-gyYYa90hixBifTGYpOhRJaJ5PCEoipvHmJvzEUm0-BdFjTN69czslOGJwT8Z3ZVsRlPNdYUD9Iz7RboyrIVqwjxHi788AordFAmK9g_7mOr0A0NWePfjfkUu7TMZmVaNNSz5SO5GD5rB5GtRbgWXqSIaUQ1W-RI_UUFfDmHElp61zW9g0ZKUMUhjo2YMojdk1E3bbZJM6D7N7Ja_OkAfYIzKVFLAhbbxf660Tn1bkc1jH4NmcHj3cSMICaX9zuSQZcfhBV9NauyLy3eb8gjlSxWN222STOg-zeyWvzpAH2CMylRSwIW28X-utE59W5HNYx552zljELfkFT2banarOtTS7h5zr7LLoHYI5j-JJ3cmTdttkkzoPs3slr86QB9gjMpUUsCFtvF_rrROfVuRzWMQ3L6twlpT9DjEj1ATCgXLyP1YWZaHKtjuhAm9_j4UcODcvq3CWlP0OMSPUBMKBcvI_VhZlocq2O6ECb3-PhRw4Ny-rcJaU_Q4xI9QEwoFy8j9WFmWhyrY7oQJvf4-FHDg3L6twlpT9DjEj1ATCgXLyP1YWZaHKtjuhAm9_j4UcODcvq3CWlP0OMSPUBMKBcvI_VhZlocq2O6ECb3-PhRw4AhNtcHw0xdSPJQzdZGmISOx0qmF0yIqE2hZrdwNrI065yyFcIbXWNHiKyKt_sEhD9r553WAx9xSz9rGW8kq6ouldt4RFI-LnXmZiODGtgc5fO9JXPwKuMS5CNdNa87xyKpTrgWkGEmX516hdeUVbOI4e-pM3jJzahe325MezhDeULtJqLnTKuxjoWFUIXmAqMg-0BOrPsCBtzq1h-a79fJW-wxUG9zl9mfRqoi51TzMzaW6zJNBLT8tNygQhfaFzYAgAAAAAAAADkVCgVm9owk7JUp11nlw9XEwkPjfXdqCx90vSwFF9qUBylvnABslrJmVdeT6p6n79kQ6wgM1RSkVdQ3sBSqUdnjsH50dpvTdz1tUrZIPZyPDW0FHwscCFV2dwzuz4-hRKv2oC50ldxRXPAPl2BC-MVEAAAAAAAAAAvJaGKAz7WxA95kCyWzdMJ_2_9-CDlQakCZxLC8esmLTC_43aVB7zgva_KE1Etdg0GnG5bHzbABD8_8LAAGIFp2g9RrhAlIKXt2UM19owjwgeOiIsORmhs2At-QtQPXSeOjcXnGYJsSKYfAt0NBSQuUEiyB2bCTw0ItNQoyzbUUzcTHMbiOAmmg1XEEm2CrPkEvYxf8h3Vp_HzZhkWds4TTiIe8nUVEkc8r43y7HzHNRr84kACktYCx6m2b4Ybww__rU2BzJQUxA1cpJGi8FEtSUDld3mp8wr0_JtmIaMKDA2XA-Kj2ek0I2sJTaaKAYPgxWJR_h2AeQU5awrfTLMf-DZnB493EjCAml_c7kkGXH4QVfTWrsi8t3m_II5UsVj4NmcHj3cSMICaX9zuSQZcfhBV9NauyLy3eb8gjlSxWPg2ZwePdxIwgJpf3O5JBlx-EFX01q7IvLd5vyCOVLFYCiynK7JekFlXContAjA5bHpbR7JGclMGgSQpvtmi-GcKLKcrsl6QWVcKie0CMDlseltHskZyUwaBJCm-2aL4ZwospyuyXpBZVwqJ7QIwOWx6W0eyRnJTBoEkKb7ZovhnCiynK7JekFlXContAjA5bHpbR7JGclMGgSQpvtmi-GcKLKcrsl6QWVcKie0CMDlseltHskZyUwaBJCm-2aL4ZwAAAGlpbmRleF9tYXCCpGExigMEBQYHCgsMAAJhMg1hM4UAAQIDBGE0BaRhMYcEBQYHCAIDYTIJYTOFAAECAwRhNAU"^^<https://w3id.org/security#multibase> _:c14n11 .
-_:c14n9 <http://example.org/vocab/isPatientOf> _:c14n12 _:c14n10 .
-_:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n10 .
+<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n11 .
+<http://example.org/vcred/00> <https://w3id.org/security#proof> _:c14n1 _:c14n11 .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> _:c14n10000 _:c14n11 .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n11 .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n11 .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n11 .
+<http://example.org/vicred/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n30000.
+<http://example.org/vicred/a> <https://w3id.org/security#proof> _:c14n8 _:c14n30000.
+<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#credentialSubject> _:c14n2 _:c14n30000.
+<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n30000.
+<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n30000.
+<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n30000.
+_:c14n10000 <http://example.org/vocab/isPatientOf> _:c14n12 _:c14n11 .
+_:c14n10000 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n11 .
+_:c14n12 <http://example.org/vocab/vaccine> _:c14n2 _:c14n11 .
+_:c14n12 <http://example.org/vocab/vaccine> _:c14n4 _:c14n11 .
+_:c14n12 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n11 .
+_:c14n2 <http://schema.org/status> "active" _:c14n30000 .
+_:c14n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n30000 .
+_:c14n5 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n1 .
+_:c14n5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n1 .
+_:c14n5 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n1 .
+_:c14n5 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n1 .
+_:c14n5 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n1 .
+_:c14n6 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n8 .
+_:c14n6 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n8 .
+_:c14n6 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n8 .
+_:c14n6 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n8 .
+_:c14n6 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n8 .
+_:c14n7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
+_:c14n7 <https://w3id.org/security#proof> _:c14n0 .
+_:c14n7 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n11 .
+_:c14n7 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n30000 .
+_:c14n9 <http://purl.org/dc/terms/created> "2023-08-11T17:07:00.057382476Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
+_:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
+_:c14n9 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n0 .
+_:c14n9 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
+_:c14n9 <https://w3id.org/security#proofValue> "uomVwcm9vZlkHugIAAAAAAAAAALJndSM5_SvSHaoVMYGK9gQHCaeuNdXVq-FDVhkdz2Cjol5rgNBAKXh7PdFAZLd_uIhmGfbzSi_fKDf2U3kJkZuPigJHUrdTkldN_3CHj2Tv1zUC_C8x7ze-ZCWGGTACc45zm8wsxjKiVFUdiPbJ2Q6q8xMpDgfdAwA-PYOFtYce17JPaA4mliIIqdDhEE97x6gIkLwP9Xr_D_eMUge7p7In3gU9lg-epE2YlMgxob8hLOEAO0LzVM8IgYzNxkE_bwIAAAAAAAAAgyUiEs4RNUS828YMiaJA1aSFqpoEPtIiQayMB9TR1G4jbcabHOCUYTreK6arcCS-cy-OTLvaZVGJZSKRF8QcXYQqGx2SZ61st3yPxT9v2I_nE1TcPtVgT4puuja69ejdvvCzAVugoUHL7a_0kLTZZBkAAAAAAAAAACPO3ib4uZ7vMAnEwJr9rGwkOLfOjThw50JK0vXEXAMQBySg85b-EodZC966wOj4QB_39Fegdxfq0F-FPKyKPEucOg6r7sdFW7NxnvyeoxTifdXAiLnZwfCEjhDAXmFsACpBXFMIFcp5m4GgR3DUoQp5pTYI9RXxqqGleB68sEAUG8W3KkvRHr2kgbN8bHs1doeuEyDw5ACqGgCmLAbfVVj6pHsge7ZnbTGJusdKMmsvoxzweA1qimt2yRYqud5xFucsKYJwFEjDf0zNrvEN-Lp4oHtyQcp_NIfKDut3GR9LnDoOq-7HRVuzcZ78nqMU4n3VwIi52cHwhI4QwF5hbEucOg6r7sdFW7NxnvyeoxTifdXAiLnZwfCEjhDAXmFsF77y3eHo2f4FtLGEiWnPq5oAmY9ExInz4YYH6bDoGyCkmhVBu0VPTmEgbFmi_9wt6EhtuXbtA8p2zpkFqGH_bp-Speoq_680BxFua1LD97eWm1rpbwi-aBEJYaBnTg9qX0rAh8TM958L07jDnCbvmd3ubO_VMtA3Vwwfoh4uik-MqNyvC5Py1JAS-MQGMYDCzQEFx_UTkkvx9nittiDGPPhQjYlt-a2iAwR_WsGfUGg339itYpvRGL4_0mcs908YACpBXFMIFcp5m4GgR3DUoQp5pTYI9RXxqqGleB68sEBsGzma8f3EqtyJuVZmbL2ipcU2AFrHhp3zrUfA2V5NAwAqQVxTCBXKeZuBoEdw1KEKeaU2CPUV8aqhpXgevLBA1hcO0vkCwuBYN_T4TVAFhFJuY9LvBUugkd_mMKQv6AcAKkFcUwgVynmbgaBHcNShCnmlNgj1FfGqoaV4HrywQCyfDmM447hECN4Y6UUGR-7Zth7X6x8YyvcDSjfrmuUCLJ8OYzjjuEQI3hjpRQZH7tm2HtfrHxjK9wNKN-ua5QIsnw5jOOO4RAjeGOlFBkfu2bYe1-sfGMr3A0o365rlAiyfDmM447hECN4Y6UUGR-7Zth7X6x8YyvcDSjfrmuUCLJ8OYzjjuEQI3hjpRQZH7tm2HtfrHxjK9wNKN-ua5QIAhNtcHw0xdSPJQzdZGmISOx0qmF0yIqE2hZrdwNrI065yyFcIbXWNHiKyKt_sEhD9r553WAx9xSz9rGW8kq6ouldt4RFI-LnXmZiODGtgc5fO9JXPwKuMS5CNdNa87xyKpTrgWkGEmX516hdeUVbOI4e-pM3jJzahe325MezhDeULtJqLnTKuxjoWFUIXmAqMg-0BOrPsCBtzq1h-a79fJW-wxUG9zl9mfRqoi51TzMzaW6zJNBLT8tNygQhfaFzYAgAAAAAAAABZ7CKdVAOTVgH9-qkTKzFF9gmbou7L1QHa1FHoJzRvS0A4jp4W4L-AMUoqMHK1qTEWmCRjXiEVieRqUpCZOSpWshprItCXoFXCKlmOuSqAAmhLWhGYfdzyDTzd3j6QcB7-c23eFqH3zB42L8Ow99XBEAAAAAAAAADaepPjdOmCrkcoJj3i5rjreHw2bFiZXQaGR4ARxTS9L6kZIfEE8VU-AcOfrNi5E2pKp_LAAcMjO9Z0sxu_oBgQsEbpmLq7ZUylwYwHiSOaLOueX1ZzJgIxegqI6dXNSFvPQedNU4X9C6lsq4JHJExvX4dgwQoy8Vn-fz-sJd9MOPOpAJMCGVotSS2j9HHX9adzKKy5GI2wrZyPTwivMVBRJFm23B-sV-7zltbEfxM-oP0MugtncnDHaKjAFojZrkN4WwPTo8cnmac5lk4U9uGt14Nj-LDHCsmtB7w6rPXebRfEQCPPwbfmZqOJfDyExHIOxhBVLs0rju5LHdQLdGZfbBs5mvH9xKrciblWZmy9oqXFNgBax4ad861HwNleTQNsGzma8f3EqtyJuVZmbL2ipcU2AFrHhp3zrUfA2V5NA2wbOZrx_cSq3Im5VmZsvaKlxTYAWseGnfOtR8DZXk0DCnaUQgMRoilcVjVCm8PERBfpR5iPLzaLBAJb61i7lV8KdpRCAxGiKVxWNUKbw8REF-lHmI8vNosEAlvrWLuVXwp2lEIDEaIpXFY1QpvDxEQX6UeYjy82iwQCW-tYu5VfCnaUQgMRoilcVjVCm8PERBfpR5iPLzaLBAJb61i7lV8KdpRCAxGiKVxWNUKbw8REF-lHmI8vNosEAlvrWLuVXwEFAAAAAAAAAGFiY2RlAABpaW5kZXhfbWFwgqRhMYoDBAUGBwACCgsMYTINYTOFAAECAwRhNAWkYTGHBAUGBwgCA2EyCWEzhQABAgMEYTQF"^^<https://w3id.org/security#multibase> _:c14n0 .
 "#;
         let vp = Dataset::from_iter(
             NQuadsParser::new()
@@ -1498,6 +1730,8 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Per
                 .into_iter()
                 .map(|x| x.unwrap()),
         );
-        let verified = verify_proof(&mut rng, &vp, &document_loader);
+        let nonce = b"abcde";
+        let verified = verify_proof(&mut rng, &vp, Some(nonce), &document_loader);
+        assert!(verified.is_ok(), "{:?}", verified)
     }
 }
