@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn key_gen_simple() -> () {
-        let mut rng = StdRng::seed_from_u64(1u64); // TODO: to be fixed
+        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
         let keypair = generate_keypair(&mut rng).unwrap();
         let secret_key_multibase = serialize_secret_key(&keypair.secret_key).unwrap();
