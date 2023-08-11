@@ -25,3 +25,5 @@ pub const PUBLIC_KEY_MULTIBASE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#publicKeyMultibase");
 pub const SECRET_KEY_MULTIBASE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#secretKeyMultibase");
+pub const MULTIBASE: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://w3id.org/security#multibase");

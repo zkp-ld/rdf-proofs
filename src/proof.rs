@@ -2,8 +2,8 @@ use super::constants::{CRYPTOSUITE_PROOF, NYM_IRI_PREFIX};
 use crate::{
     common::{get_delimiter, get_hasher, hash_term_to_field, Fr, ProofG1},
     context::{
-        ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, PROOF, PROOF_PURPOSE,
-        PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
+        ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, MULTIBASE, PROOF,
+        PROOF_PURPOSE, PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
         VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
@@ -308,13 +308,13 @@ pub fn derive_proof<R: RngCore>(
 
     // decompose canonicalized VP into graphs
     let VpGraphs {
-        metadata: vp_metadata,
+        metadata: _vp_metadata,
         proof: vp_proof,
         proof_graph_name: vp_proof_graph_name,
         filters: filters_graph,
         disclosed_vcs: c14n_disclosed_vc_graphs,
     } = decompose_vp(&canonicalized_vp)?;
-    println!("VP metadata:\n{}\n", vp_metadata);
+    println!("VP metadata:\n{}\n", _vp_metadata);
     println!("VP proof graph:\n{}\n", vp_proof);
     println!("filter graphs:");
     for (_, filter_graph) in &filters_graph {
@@ -415,17 +415,16 @@ pub fn derive_proof<R: RngCore>(
         index_map,
     )?;
 
-    // TODO: add derived proof value to VP
+    // add derived proof value to VP
     let vp_proof_subject = vp_proof
         .subject_for_predicate_object(TYPE, DATA_INTEGRITY_PROOF)
         .ok_or(RDFProofsError::InvalidVP)?;
     let vp_proof_value_quad = QuadRef::new(
         vp_proof_subject,
         PROOF_VALUE,
-        LiteralRef::new_simple_literal(&derived_proof_value),
+        LiteralRef::new_typed_literal(&derived_proof_value, MULTIBASE),
         vp_proof_graph_name,
     );
-
     let mut canonicalized_vp_quads = canonicalized_vp.into_iter().collect::<Vec<_>>();
     canonicalized_vp_quads.push(vp_proof_value_quad);
 
