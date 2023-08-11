@@ -11,7 +11,7 @@ rdf-star = ["oxrdf/rdf-star", "oxttl/rdf-star"]
 [dependencies]
 serde = "1.0"
 serde_cbor = "0.11"
-serde_json = "1.0"
+serde_with = "3.2"
 chrono = "0.4"
 oxrdf = { git = "https://github.com/oxigraph/oxigraph.git", rev = "922023b" } # to be fixed once Oxigraph v0.4 is released
 oxsdatatypes = { git = "https://github.com/oxigraph/oxigraph.git", rev = "922023b" } # to be fixed once Oxigraph v0.4 is released

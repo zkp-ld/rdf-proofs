@@ -14,7 +14,6 @@ pub enum RDFProofsError {
     HashToField,
     ArkSerialization(SerializationError),
     CBORSerialization(serde_cbor::Error),
-    JSONSerialization(serde_json::Error),
     ProofTransformation,
     InvalidProofConfiguration,
     InvalidProofDatetime,
@@ -47,7 +46,6 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::HashToField => write!(f, "hash to field is failed"),
             RDFProofsError::ArkSerialization(_) => write!(f, "arkworks serialization error"),
             RDFProofsError::CBORSerialization(_) => write!(f, "CBOR serialization error"),
-            RDFProofsError::JSONSerialization(_) => write!(f, "JSON serialization error"),
             RDFProofsError::ProofTransformation => write!(f, "proof transformation error"),
             RDFProofsError::InvalidProofConfiguration => {
                 write!(f, "invalid proof configuration error")
@@ -101,12 +99,6 @@ impl From<BBSPlusError> for RDFProofsError {
 impl From<SerializationError> for RDFProofsError {
     fn from(e: SerializationError) -> Self {
         Self::ArkSerialization(e)
-    }
-}
-
-impl From<serde_json::Error> for RDFProofsError {
-    fn from(e: serde_json::Error) -> Self {
-        Self::JSONSerialization(e)
     }
 }
 

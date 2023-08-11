@@ -36,6 +36,7 @@ use proof_system::{
 };
 use rdf_canon::{issue, issue_graph, relabel, relabel_graph, serialize};
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, Bytes};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub struct VcWithDisclosed {
@@ -168,10 +169,15 @@ impl<'a> From<NamedOrBlankNodeRef<'a>> for OrderedNamedOrBlankNodeRef<'a> {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename = "0")]
 struct StatementIndexMap {
+    #[serde(rename = "1")]
     document_map: Vec<usize>,
+    #[serde(rename = "2")]
     document_len: usize,
+    #[serde(rename = "3")]
     proof_map: Vec<usize>,
+    #[serde(rename = "4")]
     proof_len: usize,
 }
 
@@ -1017,14 +1023,34 @@ fn derive_proof_value<R: RngCore>(
     println!("proof:\n{:#?}\n", proof);
 
     // serialize proof and index_map
-    // TODO: fix it later
+    serialize_proof_with_index_map(proof, &index_map)
+}
+
+fn serialize_proof_with_index_map(
+    proof: ProofG1,
+    index_map: &Vec<StatementIndexMap>,
+) -> Result<String, RDFProofsError> {
+    // TODO: optimize
+    // TODO: use multicodec
     let mut proof_bytes_compressed = Vec::new();
     proof.serialize_compressed(&mut proof_bytes_compressed)?;
-    let proof_bytes_multibase = multibase::encode(Base::Base64Url, proof_bytes_compressed);
-    let index_map_multibase = multibase::encode(Base::Base64Url, serde_cbor::to_vec(&index_map)?);
-    let proof_with_index_map = (proof_bytes_multibase, index_map_multibase);
 
-    Ok(serde_json::to_string(&proof_with_index_map)?)
+    let proof_with_index_map = ProofWithIndexMap {
+        proof: proof_bytes_compressed,
+        index_map: index_map.clone(),
+    };
+    let proof_with_index_map_cbor = serde_cbor::to_vec(&proof_with_index_map)?;
+    let proof_with_index_map_multibase =
+        multibase::encode(Base::Base64Url, proof_with_index_map_cbor);
+    Ok(proof_with_index_map_multibase)
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize)]
+struct ProofWithIndexMap {
+    #[serde_as(as = "Bytes")]
+    proof: Vec<u8>,
+    index_map: Vec<StatementIndexMap>,
 }
 
 #[derive(Debug)]
