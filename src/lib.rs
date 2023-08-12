@@ -21,9 +21,9 @@ mod tests {
     use ark_bls12_381::Bls12_381;
     use ark_serialize::CanonicalDeserialize;
     use bbs_plus::prelude::SignatureG1 as BBSSignatureG1;
-    use oxrdf::{Graph, TermRef};
-    use oxttl::NTriplesParser;
-    use std::io::Cursor;
+    use oxrdf::{BlankNode, Dataset, Graph, NamedNode, NamedOrBlankNode, Term, TermRef};
+    use oxttl::{NQuadsParser, NTriplesParser};
+    use std::{collections::HashMap, io::Cursor};
 
     pub(crate) const DOCUMENT_LOADER_NTRIPLES: &str = r#"
 # issuer0
@@ -53,6 +53,29 @@ mod tests {
                 .into_iter()
                 .map(|x| x.unwrap()),
         )
+    }
+
+    pub(crate) fn get_dataset_from_nquads_str(nquads: &str) -> Dataset {
+        Dataset::from_iter(
+            NQuadsParser::new()
+                .parse_from_read(Cursor::new(nquads))
+                .into_iter()
+                .map(|x| x.unwrap()),
+        )
+    }
+
+    pub(crate) fn get_deanon_map(
+        key_and_values: Vec<(&str, &str)>,
+    ) -> HashMap<NamedOrBlankNode, Term> {
+        key_and_values
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    BlankNode::new_unchecked(k).into(),
+                    NamedNode::new_unchecked(v).into(),
+                )
+            })
+            .collect()
     }
 
     pub(crate) fn print_vc(vc: &VerifiableCredential) {

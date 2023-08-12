@@ -1505,20 +1505,19 @@ fn is_nym(node: &NamedNode) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
+        error::RDFProofsError,
         loader::DocumentLoader,
-        proof::{derive_proof, VcWithDisclosed},
-        tests::{get_graph_from_ntriples_str, DOCUMENT_LOADER_NTRIPLES},
+        proof::{derive_proof, verify_proof, VcWithDisclosed},
+        tests::{
+            get_dataset_from_nquads_str, get_deanon_map, get_graph_from_ntriples_str,
+            DOCUMENT_LOADER_NTRIPLES,
+        },
         vc::VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use oxrdf::{BlankNode, Dataset, Graph, NamedNode};
-    use oxttl::{NQuadsParser, NTriplesParser};
-    use std::{collections::HashMap, io::Cursor};
-
-    use super::verify_proof;
 
     #[test]
-    fn derive_proof_simple() {
+    fn derive_and_verify_proof() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let document_loader: DocumentLoader =
             get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
@@ -1539,7 +1538,7 @@ _:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 "#;
         let vc_proof_ntriples_1 = r#"
-_:6b92db <https://w3id.org/security#proofValue> "ugZveToWB9bUAm3RDFWeORovPDYdIgNWbsquhn334R78TCG86fad_3JiA6yh_f-bsnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ" .
+_:6b92db <https://w3id.org/security#proofValue> "ugZveToWB9bUAm3RDFWeORovPDYdIgNWbsquhn334R78TCG86fad_3JiA6yh_f-bsnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
 _:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
 _:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
 _:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -1558,7 +1557,7 @@ _:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls
 <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 "#;
         let vc_proof_ntriples_2 = r#"
-_:wTnTxH <https://w3id.org/security#proofValue>"upqbT4ZPXjIRFKEQt5k-Bs5g_KG50zREjSMFH0wL5wkDAs7Ci2Qg58_EJLDffc2M0nHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ" .
+_:wTnTxH <https://w3id.org/security#proofValue> "upqbT4ZPXjIRFKEQt5k-Bs5g_KG50zREjSMFH0wL5wkDAs7Ci2Qg58_EJLDffc2M0nHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
 _:wTnTxH <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
 _:wTnTxH <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
 _:wTnTxH <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -1599,78 +1598,27 @@ _:wTnTxH <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.
 _:wTnTxH <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
 _:wTnTxH <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
 "#;
-        let mut deanon_map = HashMap::new();
-        deanon_map.insert(
-            BlankNode::new_unchecked("e0").into(),
-            NamedNode::new_unchecked("did:example:john").into(),
-        );
-        deanon_map.insert(
-            BlankNode::new_unchecked("e1").into(),
-            NamedNode::new_unchecked("http://example.org/vaccine/a").into(),
-        );
-        deanon_map.insert(
-            BlankNode::new_unchecked("e2").into(),
-            NamedNode::new_unchecked("http://example.org/vcred/00").into(),
-        );
-        deanon_map.insert(
-            BlankNode::new_unchecked("e3").into(),
-            NamedNode::new_unchecked("http://example.org/vicred/a").into(),
-        );
+        let deanon_map = get_deanon_map(vec![
+            ("e0", "did:example:john"),
+            ("e1", "http://example.org/vaccine/a"),
+            ("e2", "http://example.org/vcred/00"),
+            ("e3", "http://example.org/vicred/a"),
+        ]);
 
-        let vc_doc_1 = Graph::from_iter(
-            NTriplesParser::new()
-                .parse_from_read(Cursor::new(vc_ntriples_1))
-                .into_iter()
-                .map(|x| x.unwrap()),
-        );
-        let proof_1 = Graph::from_iter(
-            NTriplesParser::new()
-                .parse_from_read(Cursor::new(vc_proof_ntriples_1))
-                .into_iter()
-                .map(|x| x.unwrap()),
-        );
-        let vc_1 = VerifiableCredential::new(vc_doc_1, proof_1);
+        let vc_doc_1 = get_graph_from_ntriples_str(vc_ntriples_1);
+        let vc_proof_1 = get_graph_from_ntriples_str(vc_proof_ntriples_1);
+        let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
 
-        let disclosed_vc_doc_1 = Graph::from_iter(
-            NTriplesParser::new()
-                .parse_from_read(Cursor::new(disclosed_vc_ntriples_1))
-                .into_iter()
-                .map(|x| x.unwrap()),
-        );
-        let disclosed_vc_proof_1 = Graph::from_iter(
-            NTriplesParser::new()
-                .parse_from_read(Cursor::new(disclosed_vc_proof_ntriples_1))
-                .into_iter()
-                .map(|x| x.unwrap()),
-        );
+        let disclosed_vc_doc_1 = get_graph_from_ntriples_str(disclosed_vc_ntriples_1);
+        let disclosed_vc_proof_1 = get_graph_from_ntriples_str(disclosed_vc_proof_ntriples_1);
         let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
 
-        let vc_doc_2 = Graph::from_iter(
-            NTriplesParser::new()
-                .parse_from_read(Cursor::new(vc_ntriples_2))
-                .into_iter()
-                .map(|x| x.unwrap()),
-        );
-        let proof_2 = Graph::from_iter(
-            NTriplesParser::new()
-                .parse_from_read(Cursor::new(vc_proof_ntriples_2))
-                .into_iter()
-                .map(|x| x.unwrap()),
-        );
-        let vc_2 = VerifiableCredential::new(vc_doc_2, proof_2);
+        let vc_doc_2 = get_graph_from_ntriples_str(vc_ntriples_2);
+        let vc_proof_2 = get_graph_from_ntriples_str(vc_proof_ntriples_2);
+        let vc_2 = VerifiableCredential::new(vc_doc_2, vc_proof_2);
 
-        let disclosed_vc_doc_2 = Graph::from_iter(
-            NTriplesParser::new()
-                .parse_from_read(Cursor::new(disclosed_vc_ntriples_2))
-                .into_iter()
-                .map(|x| x.unwrap()),
-        );
-        let disclosed_vc_proof_2 = Graph::from_iter(
-            NTriplesParser::new()
-                .parse_from_read(Cursor::new(disclosed_vc_proof_ntriples_2))
-                .into_iter()
-                .map(|x| x.unwrap()),
-        );
+        let disclosed_vc_doc_2 = get_graph_from_ntriples_str(disclosed_vc_ntriples_2);
+        let disclosed_vc_proof_2 = get_graph_from_ntriples_str(disclosed_vc_proof_ntriples_2);
         let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
 
         let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
@@ -1681,7 +1629,8 @@ _:wTnTxH <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls
             derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
-        assert!(true)
+        let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &document_loader);
+        assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
@@ -1730,14 +1679,83 @@ _:c14n7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vo
 _:c14n8 <http://example.org/vocab/isPatientOf> _:c14n13 _:c14n2 .
 _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n2 .
 "#;
-        let vp = Dataset::from_iter(
-            NQuadsParser::new()
-                .parse_from_read(Cursor::new(vp_nquads))
-                .into_iter()
-                .map(|x| x.unwrap()),
-        );
+        let vp = get_dataset_from_nquads_str(vp_nquads);
         let nonce = b"abcde";
         let verified = verify_proof(&mut rng, &vp, Some(nonce), &document_loader);
         assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_invalid_vc() {
+        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+        let document_loader: DocumentLoader =
+            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+
+        let vc_ntriples = r#"
+<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+<did:example:john> <http://schema.org/name> "John Smith" .
+<did:example:john> <http://example.org/vocab/isPatientOf> _:a91b3e .
+_:a91b3e <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+_:a91b3e <http://example.org/vocab/lotNumber> "0000001" .
+_:a91b3e <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+_:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
+_:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
+<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+"#;
+        let vc_proof_ntriples = r#"
+_:6b92db <https://w3id.org/security#proofValue> "upqbT4ZPXjIRFKEQt5k-Bs5g_KG50zREjSMFH0wL5wkDAs7Ci2Qg58_EJLDffc2M0nHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> . # invalid signature
+_:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+_:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+_:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+_:6b92db <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+"#;
+        let disclosed_vc_ntriples = r#"
+_:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+_:e0 <http://example.org/vocab/isPatientOf> _:a91b3e .
+_:a91b3e <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+_:a91b3e <http://example.org/vocab/vaccine> _:e1 .
+_:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+_:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
+_:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+_:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+_:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+"#;
+        let disclosed_vc_proof_ntriples = r#"
+_:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+_:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+_:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+_:6b92db <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+"#;
+        let deanon_map = get_deanon_map(vec![
+            ("e0", "did:example:john"),
+            ("e1", "http://example.org/vaccine/a"),
+            ("e2", "http://example.org/vcred/00"),
+        ]);
+
+        let vc_doc = get_graph_from_ntriples_str(vc_ntriples);
+        let vc_proof = get_graph_from_ntriples_str(vc_proof_ntriples);
+        let vc = VerifiableCredential::new(vc_doc, vc_proof);
+
+        let disclosed_vc_doc = get_graph_from_ntriples_str(disclosed_vc_ntriples);
+        let disclosed_vc_proof = get_graph_from_ntriples_str(disclosed_vc_proof_ntriples);
+        let disclosed = VerifiableCredential::new(disclosed_vc_doc, disclosed_vc_proof);
+
+        let vc_with_disclosed = VcWithDisclosed::new(vc, disclosed);
+        let vcs = vec![vc_with_disclosed];
+        let nonce = b"abcde";
+        let derived_proof =
+            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader);
+        assert!(matches!(
+            derived_proof,
+            Err(RDFProofsError::BBSPlus(
+                bbs_plus::prelude::BBSPlusError::InvalidSignature
+            ))
+        ))
     }
 }
