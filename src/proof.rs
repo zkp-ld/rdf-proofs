@@ -35,7 +35,6 @@ use proof_system::{
     statement::{bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, Statements},
     witness::{PoKBBSSignatureG1 as PoKBBSSignatureG1Wit, Witnesses},
 };
-use rdf_canon::{issue, issue_graph, relabel, relabel_graph, serialize};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, Bytes};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -186,6 +185,7 @@ type OrderedGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
 type OrderedVerifiableCredentialGraphViews<'a> =
     BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
 
+/// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
     rng: &mut R,
     vcs: &Vec<VcWithDisclosed>,
@@ -198,7 +198,7 @@ pub fn derive_proof<R: RngCore>(
     }
     println!("deanon map:\n{:#?}\n", deanon_map);
 
-    // check: VCs must not be empty
+    // VCs must not be empty
     if vcs.is_empty() {
         return Err(RDFProofsError::InvalidVCPairs);
     }
@@ -213,7 +213,7 @@ pub fn derive_proof<R: RngCore>(
         .collect::<Result<Vec<_>, _>>()?;
     println!("public keys:\n{:#?}\n", public_keys);
 
-    // check: verify VCs
+    // verify VCs
     vcs.iter()
         .map(|VcWithDisclosed { vc, .. }| verify(vc, document_loader))
         .collect::<Result<(), _>>()?;
@@ -288,10 +288,13 @@ pub fn derive_proof<R: RngCore>(
     println!("vp:\n{}\n", vp.to_string());
 
     // canonicalize VP
-    let c14n_map_for_disclosed = issue(&vp)?;
-    let canonicalized_vp = relabel(&vp, &c14n_map_for_disclosed)?;
+    let c14n_map_for_disclosed = rdf_canon::issue(&vp)?;
+    let canonicalized_vp = rdf_canon::relabel(&vp, &c14n_map_for_disclosed)?;
     println!("issued identifiers map:\n{:#?}\n", c14n_map_for_disclosed);
-    println!("canonicalized VP:\n{}", serialize(&canonicalized_vp));
+    println!(
+        "canonicalized VP:\n{}",
+        rdf_canon::serialize(&canonicalized_vp)
+    );
 
     // construct extended deanonymization map
     let extended_deanon_map =
@@ -311,9 +314,9 @@ pub fn derive_proof<R: RngCore>(
         disclosed_vcs: c14n_disclosed_vc_graphs,
     } = decompose_vp(&canonicalized_vp)?;
 
-    // reorder the original VCs and proof values
+    // reorder the original VC graphs and proof values
     // according to the order of canonicalized graph names of disclosed VCs
-    let (c14n_original_vc_triples, ordered_proof_values) = reorder_vcs(
+    let (c14n_original_vc_triples, ordered_proof_values) = reorder_vc_graphs(
         &c14n_original_vcs,
         &proof_values,
         &c14n_disclosed_vc_graphs,
@@ -415,13 +418,14 @@ pub fn derive_proof<R: RngCore>(
     Ok(Dataset::from_iter(canonicalized_vp_quads))
 }
 
+/// verify VP
 pub fn verify_proof<R: RngCore>(
     rng: &mut R,
     vp: &Dataset,
     nonce: Option<&[u8]>,
     document_loader: &DocumentLoader,
 ) -> Result<(), RDFProofsError> {
-    println!("VP:\n{}", serialize(&vp));
+    println!("VP:\n{}", rdf_canon::serialize(&vp));
 
     // decompose VP into graphs
     let VpGraphs {
@@ -448,9 +452,12 @@ pub fn verify_proof<R: RngCore>(
     );
 
     // canonicalize VP
-    let c14n_map_for_disclosed = issue(&vp_without_proof_value)?;
-    let canonicalized_vp = relabel(&vp_without_proof_value, &c14n_map_for_disclosed)?;
-    println!("canonicalized VP:\n{}", serialize(&canonicalized_vp));
+    let c14n_map_for_disclosed = rdf_canon::issue(&vp_without_proof_value)?;
+    let canonicalized_vp = rdf_canon::relabel(&vp_without_proof_value, &c14n_map_for_disclosed)?;
+    println!(
+        "canonicalized VP:\n{}",
+        rdf_canon::serialize(&canonicalized_vp)
+    );
 
     // TODO: check VP
 
@@ -704,11 +711,12 @@ fn canonicalize_original_vcs(
     original_vcs
         .iter()
         .map(|VerifiableCredential { document, proof }| {
-            let document_issued_identifiers_map = issue_graph(&document)?;
-            let proof_issued_identifiers_map = issue_graph(&proof)?;
+            let document_issued_identifiers_map = rdf_canon::issue_graph(&document)?;
+            let proof_issued_identifiers_map = rdf_canon::issue_graph(&proof)?;
             let canonicalized_document =
-                relabel_graph(&document, &document_issued_identifiers_map)?;
-            let canonicalized_proof = relabel_graph(&proof, &proof_issued_identifiers_map)?;
+                rdf_canon::relabel_graph(&document, &document_issued_identifiers_map)?;
+            let canonicalized_proof =
+                rdf_canon::relabel_graph(&proof, &proof_issued_identifiers_map)?;
             Ok(CanonicalVerifiableCredentialTriples::new(
                 canonicalized_document
                     .iter()
@@ -899,7 +907,7 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
     })
 }
 
-fn reorder_vcs<'a>(
+fn reorder_vc_graphs<'a>(
     c14n_original_vcs: &'a Vec<CanonicalVerifiableCredentialTriples>,
     proof_values: &'a Vec<&str>,
     c14n_disclosed_vc_graphs: &OrderedVerifiableCredentialGraphViews<'a>,

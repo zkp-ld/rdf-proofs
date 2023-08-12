@@ -19,7 +19,6 @@ use oxrdf::{
     Graph, Literal, Term, TermRef, Triple,
 };
 use oxsdatatypes::DateTime;
-use rdf_canon::{issue_graph, relabel_graph, sort_graph};
 use std::str::FromStr;
 
 pub fn sign<R: RngCore>(
@@ -108,9 +107,9 @@ fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, RDFProofsError> {
 }
 
 fn _canonicalize_into_terms(graph: &Graph) -> Result<Vec<Term>, RDFProofsError> {
-    let issued_identifiers_map = &issue_graph(graph)?;
-    let canonicalized_graph = relabel_graph(graph, issued_identifiers_map)?;
-    let canonicalized_triples = sort_graph(&canonicalized_graph);
+    let issued_identifiers_map = &rdf_canon::issue_graph(graph)?;
+    let canonicalized_graph = rdf_canon::relabel_graph(graph, issued_identifiers_map)?;
+    let canonicalized_triples = rdf_canon::sort_graph(&canonicalized_graph);
     Ok(canonicalized_triples
         .into_iter()
         .flat_map(|t| vec![t.subject.into(), t.predicate.into(), t.object])
