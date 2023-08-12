@@ -9,6 +9,7 @@ use crate::{
     error::RDFProofsError,
     keygen::generate_params,
     loader::DocumentLoader,
+    signature::verify,
     vc::{
         CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VerifiableCredential,
         VerifiableCredentialTriples, VerifiableCredentialView,
@@ -212,8 +213,10 @@ pub fn derive_proof<R: RngCore>(
         .collect::<Result<Vec<_>, _>>()?;
     println!("public keys:\n{:#?}\n", public_keys);
 
-    // TODO:
     // check: verify VCs
+    vcs.iter()
+        .map(|VcWithDisclosed { vc, .. }| verify(vc, document_loader))
+        .collect::<Result<(), _>>()?;
 
     // extract `proofValue`s from original VCs
     let (original_vcs, proof_values): (Vec<_>, Vec<_>) = vcs
