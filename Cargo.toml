@@ -1,7 +1,11 @@
 [package]
 name = "rdf-proofs"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
+authors = ["yamdan"]
+license = "MIT"
+repository = "https://github.com/zkp-ld/rdf-proofs"
+description = "BBS+ signatures and zero-knowledge proofs for Linked Data"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
