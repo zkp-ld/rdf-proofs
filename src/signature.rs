@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn sign_and_verify_success() {
-        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+        let mut rng = StdRng::seed_from_u64(0u64);
 
         let unsecured_document_ntriples = r#"
 <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
@@ -231,45 +231,8 @@ _:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls
     }
 
     #[test]
-    fn sign_and_verify_success_issuer1() {
-        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-
-        let unsecured_document_ntriples = r#"
-<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-<did:example:john> <http://schema.org/name> "John Smith" .
-<did:example:john> <http://example.org/vocab/isPatientOf> _:a91b3e .
-_:a91b3e <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-_:a91b3e <http://example.org/vocab/lotNumber> "0000001" .
-_:a91b3e <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
-_:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
-<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> .  # issuer1
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-"#;
-        let proof_config_ntriples = r#"
-_:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-_:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-_:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:6b92db <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .  # issuer1
-"#;
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
-        let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
-        let proof_config = get_graph_from_ntriples_str(proof_config_ntriples);
-        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        sign(&mut rng, &mut vc, &document_loader).unwrap();
-        print_vc(&vc);
-        print_signature(&vc);
-        assert!(verify(&vc, &document_loader).is_ok())
-    }
-
-    #[test]
-    fn sign_and_verify_success_issuer3() {
-        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+    fn sign_and_verify_success_2() {
+        let mut rng = StdRng::seed_from_u64(0u64);
 
         let unsecured_document_ntriples = r#"
 <http://example.org/vaccine/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
@@ -318,7 +281,7 @@ _:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 "#;
         let signed_proof_config_ntriples = r#"
-_:6b92db <https://w3id.org/security#proofValue> "ugZveToWB9bUAm3RDFWeORovPDYdIgNWbsquhn334R78TCG86fad_3JiA6yh_f-bsnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+_:6b92db <https://w3id.org/security#proofValue> "uhzr5tCpvFA-bebnJZBpUi2mkWStLGmZJm-c6crfIjUsYTbpNywgXUfbaOtD84V-UnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
 _:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
 _:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
 _:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -335,41 +298,7 @@ _:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls
     }
 
     #[test]
-    fn verify_success_issuer1() {
-        let unsecured_document_ntriples = r#"
-<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-<did:example:john> <http://schema.org/name> "John Smith" .
-<did:example:john> <http://example.org/vocab/isPatientOf> _:a91b3e .
-_:a91b3e <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-_:a91b3e <http://example.org/vocab/lotNumber> "0000001" .
-_:a91b3e <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
-_:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
-<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> .  # issuer1
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-"#;
-        let signed_proof_config_ntriples = r#"
-_:6b92db <https://w3id.org/security#proofValue> "ups_0MAlFoDctUdvWimqsLAPHdPQb55qIjiktM3H7t_WOTitkXzyiOpdFw67bWjhTnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
-_:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-_:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-_:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:6b92db <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .  # issuer1
-"#;
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
-        let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
-        let signed_proof_config = get_graph_from_ntriples_str(signed_proof_config_ntriples);
-        let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
-        let verified = verify(&vc, &document_loader);
-        assert!(verified.is_ok())
-    }
-
-    #[test]
-    fn verify_success_issuer3() {
+    fn verify_success_2() {
         let unsecured_document_ntriples = r#"
 <http://example.org/vaccine/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
 <http://example.org/vaccine/a> <http://schema.org/name> "AwesomeVaccine" .
@@ -382,7 +311,7 @@ _:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls
 <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 "#;
         let signed_proof_config_ntriples = r#"
-_:wTnTxH <https://w3id.org/security#proofValue> "upqbT4ZPXjIRFKEQt5k-Bs5g_KG50zREjSMFH0wL5wkDAs7Ci2Qg58_EJLDffc2M0nHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+_:wTnTxH <https://w3id.org/security#proofValue> "usjQI4FuaD8udL2e5Rhvf4J4L0IOjmXT7Q3E40FXnIG-GQ6GMJkUuLv5tU1gJjW42nHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
 _:wTnTxH <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
 _:wTnTxH <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
 _:wTnTxH <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -416,7 +345,7 @@ _:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 "#;
         let signed_proof_config_ntriples = r#"
-_:6b92db <https://w3id.org/security#proofValue> "ugZveToWB9bUAm3RDFWeORovPDYdIgNWbsquhn334R78TCG86fad_3JiA6yh_f-bsnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ" .
+_:6b92db <https://w3id.org/security#proofValue> "uhzr5tCpvFA-bebnJZBpUi2mkWStLGmZJm-c6crfIjUsYTbpNywgXUfbaOtD84V-UnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
 _:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
 _:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
 _:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -453,7 +382,7 @@ _:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 "#;
         let signed_proof_config_ntriples = r#"
-_:6b92db <https://w3id.org/security#proofValue> "ugZveToWB9bUAm3RDFWeORovPDYdIgNWbsquhn334R78TCG86fad_3JiA6yh_f-bsnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ" .
+_:6b92db <https://w3id.org/security#proofValue> "uhzr5tCpvFA-bebnJZBpUi2mkWStLGmZJm-c6crfIjUsYTbpNywgXUfbaOtD84V-UnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
 _:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
 _:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
 _:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
