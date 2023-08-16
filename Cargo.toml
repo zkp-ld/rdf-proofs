@@ -1,6 +1,6 @@
 [package]
 name = "rdf-proofs"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 authors = ["yamdan"]
 license = "MIT"
@@ -26,8 +26,8 @@ oxrdf = { git = "https://github.com/oxigraph/oxigraph.git", rev = "922023b" } # 
 oxsdatatypes = { git = "https://github.com/oxigraph/oxigraph.git", rev = "922023b" } # to be fixed once Oxigraph v0.4 is released
 oxiri = "0.2"
 rdf-canon = { git = "https://github.com/zkp-ld/rdf-canon.git", version = "0.13.0" }
-proof_system = { git = "https://github.com/yamdan/crypto.git", branch = "sig-params-u64", version = "0.21", default-features = false }
-bbs_plus = { git = "https://github.com/yamdan/crypto.git", branch = "sig-params-u64", version = "0.15", default-features = false }
+proof_system = { git = "https://github.com/docknetwork/crypto.git", rev = "7a238b9", version = "0.21", default-features = false }
+bbs_plus = { git = "https://github.com/docknetwork/crypto.git", rev = "7a238b9", version = "0.15", default-features = false }
 ark-ff = { version = "0.4", default-features = false }
 ark-ec = { version = "0.4", default-features = false }
 ark-std = { version = "0.4", default-features = false }
