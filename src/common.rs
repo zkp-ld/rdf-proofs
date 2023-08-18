@@ -7,8 +7,9 @@ use ark_bls12_381::{Bls12_381, G1Affine};
 use ark_ec::pairing::Pairing;
 use ark_ff::field_hashers::{DefaultFieldHasher, HashToField};
 use blake2::Blake2b512;
-use oxrdf::{vocab::rdf::TYPE, Graph, NamedNodeRef, Term, TermRef};
+use oxrdf::{vocab::rdf::TYPE, BlankNode, Graph, NamedNodeRef, SubjectRef, Term, TermRef, Triple};
 use proof_system::proof::Proof;
+use std::collections::HashMap;
 
 pub type Fr = <Bls12_381 as Pairing>::ScalarField;
 pub type ProofG1 = Proof<Bls12_381, G1Affine>;
@@ -58,4 +59,58 @@ pub fn get_verification_method_identifier(
         TermRef::NamedNode(v) => Ok(v),
         _ => Err(RDFProofsError::InvalidVerificationMethodURL),
     }
+}
+
+pub fn randomize_bnodes(vc_graph: &Graph, disclosed_graph: &Graph) -> (Graph, Graph) {
+    let mut random_map = HashMap::new();
+
+    // randomize each blank nodes
+    let graph_iter = vc_graph.iter().map(|triple| {
+        let s = match triple.subject {
+            SubjectRef::BlankNode(b) => random_map
+                .entry(b)
+                .or_insert_with(|| BlankNode::default())
+                .to_owned()
+                .into(),
+            _ => triple.subject.into_owned(),
+        };
+        let p = triple.predicate.into_owned();
+        let o = match triple.object {
+            TermRef::BlankNode(b) => random_map
+                .entry(b)
+                .or_insert_with(|| BlankNode::default())
+                .to_owned()
+                .into(),
+            _ => triple.object.into_owned(),
+        };
+        Triple::new(s, p, o)
+    });
+
+    let r_vc_graph = Graph::from_iter(graph_iter);
+
+    // apply random map to blank nodes
+    let disclosed_iter = disclosed_graph.iter().map(|triple| {
+        let s = match triple.subject {
+            SubjectRef::BlankNode(b) => random_map
+                .get(&b)
+                .unwrap_or(&b.into_owned())
+                .to_owned()
+                .into(),
+            _ => triple.subject.into_owned(),
+        };
+        let p = triple.predicate.into_owned();
+        let o = match triple.object {
+            TermRef::BlankNode(b) => random_map
+                .get(&b)
+                .unwrap_or(&b.into_owned())
+                .to_owned()
+                .into(),
+            _ => triple.object.into_owned(),
+        };
+        Triple::new(s, p, o)
+    });
+
+    let r_disclosed_graph = Graph::from_iter(disclosed_iter);
+
+    (r_vc_graph, r_disclosed_graph)
 }
