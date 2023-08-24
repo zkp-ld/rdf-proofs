@@ -36,6 +36,10 @@ pub enum RDFProofsError {
     DeriveProofValue,
     ProofSystem(ProofSystemError),
     RDFStarUnsupported,
+    MissingChallengeInVP,
+    MissingChallengeInRequest,
+    MismatchedChallenge,
+    InvalidChallengeDatatype,
     Other(String),
 }
 
@@ -79,6 +83,14 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::DeriveProofValue => write!(f, "derive proof value error"),
             RDFProofsError::ProofSystem(_) => write!(f, "proof system error"),
             RDFProofsError::RDFStarUnsupported => write!(f, "RDF-star is not supported"),
+            RDFProofsError::MissingChallengeInVP => write!(f, "verifier's required challenge is not present in VP"),
+            RDFProofsError::MissingChallengeInRequest => write!(f, "challenge is in VP but not present in verifier's request"),
+            RDFProofsError::MismatchedChallenge => {
+                write!(f, "challenge does not match the expected value")
+            }
+            RDFProofsError::InvalidChallengeDatatype => {
+                write!(f, "challenge in VP has invalid datatype")
+            }
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
         }
     }

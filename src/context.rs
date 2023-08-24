@@ -15,6 +15,8 @@ pub const VERIFIABLE_CREDENTIAL: NamedNodeRef =
 pub const DATA_INTEGRITY_PROOF: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#DataIntegrityProof");
 pub const PROOF: NamedNodeRef = NamedNodeRef::new_unchecked("https://w3id.org/security#proof");
+pub const CHALLENGE: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://w3id.org/security#challenge");
 pub const CRYPTOSUITE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#cryptosuite");
 pub const PROOF_PURPOSE: NamedNodeRef =
