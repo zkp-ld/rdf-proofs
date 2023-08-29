@@ -21,7 +21,7 @@ mod tests {
     use ark_bls12_381::Bls12_381;
     use ark_serialize::CanonicalDeserialize;
     use bbs_plus::prelude::SignatureG1 as BBSSignatureG1;
-    use oxrdf::{BlankNode, Dataset, Graph, NamedNode, NamedOrBlankNode, Term, TermRef};
+    use oxrdf::{BlankNode, Dataset, Graph, Literal, NamedNode, NamedOrBlankNode, Term, TermRef};
     use oxttl::{NQuadsParser, NTriplesParser};
     use std::{collections::HashMap, io::Cursor};
 
@@ -71,15 +71,23 @@ mod tests {
     }
 
     pub(crate) fn get_deanon_map(
-        key_and_values: Vec<(&str, &str)>,
+        key_and_values: Vec<(&str, &str, Option<&str>)>,
     ) -> HashMap<NamedOrBlankNode, Term> {
         key_and_values
             .into_iter()
-            .map(|(k, v)| {
-                (
+            .map(|(k, v, dt)| match dt {
+                Some(dt) if dt == "" => (
+                    BlankNode::new_unchecked(k).into(),
+                    Literal::new_simple_literal(v).into(),
+                ),
+                Some(dt) => (
+                    BlankNode::new_unchecked(k).into(),
+                    Literal::new_typed_literal(v, NamedNode::new_unchecked(dt)).into(),
+                ),
+                None => (
                     BlankNode::new_unchecked(k).into(),
                     NamedNode::new_unchecked(v).into(),
-                )
+                ),
             })
             .collect()
     }

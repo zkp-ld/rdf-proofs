@@ -1602,6 +1602,8 @@ mod tests {
         vc::VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
+    use oxrdf::{NamedOrBlankNode, Term};
+    use std::collections::HashMap;
 
     const VC_NTRIPLES_1: &str = r#"
     <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
@@ -1687,18 +1689,20 @@ mod tests {
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
     "#;
 
+    fn get_example_deanon_map() -> HashMap<NamedOrBlankNode, Term> {
+        get_deanon_map(vec![
+            ("e0", "did:example:john", None),
+            ("e1", "http://example.org/vaccine/a", None),
+            ("e2", "http://example.org/vcred/00", None),
+            ("e3", "http://example.org/vicred/a", None),
+        ])
+    }
+
     #[test]
     fn derive_and_verify_proof() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let document_loader: DocumentLoader =
             get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
-
-        let deanon_map = get_deanon_map(vec![
-            ("e0", "did:example:john"),
-            ("e1", "http://example.org/vaccine/a"),
-            ("e2", "http://example.org/vcred/00"),
-            ("e3", "http://example.org/vicred/a"),
-        ]);
 
         let vc_doc_1 = get_graph_from_ntriples_str(VC_NTRIPLES_1);
         let vc_proof_1 = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
@@ -1719,7 +1723,11 @@ mod tests {
         let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
         let vc_with_disclosed_2 = VcWithDisclosed::new(vc_2, disclosed_2);
         let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
+
+        let deanon_map = get_example_deanon_map();
+
         let nonce = "abcde";
+
         let derived_proof =
             derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
@@ -1788,13 +1796,6 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let document_loader: DocumentLoader =
             get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
 
-        let deanon_map = get_deanon_map(vec![
-            ("e0", "did:example:john"),
-            ("e1", "http://example.org/vaccine/a"),
-            ("e2", "http://example.org/vcred/00"),
-            ("e3", "http://example.org/vicred/a"),
-        ]);
-
         let vc_doc_1 = get_graph_from_ntriples_str(VC_NTRIPLES_1);
         let vc_proof_1 = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
         let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
@@ -1814,6 +1815,8 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
         let vc_with_disclosed_2 = VcWithDisclosed::new(vc_2, disclosed_2);
         let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
+
+        let deanon_map = get_example_deanon_map();
 
         let derived_proof =
             derive_proof(&mut rng, &vcs, &deanon_map, None, &document_loader).unwrap();
@@ -1829,13 +1832,6 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let document_loader: DocumentLoader =
             get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
 
-        let deanon_map = get_deanon_map(vec![
-            ("e0", "did:example:john"),
-            ("e1", "http://example.org/vaccine/a"),
-            ("e2", "http://example.org/vcred/00"),
-            ("e3", "http://example.org/vicred/a"),
-        ]);
-
         let vc_doc_1 = get_graph_from_ntriples_str(VC_NTRIPLES_1);
         let vc_proof_1 = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
         let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
@@ -1856,11 +1852,14 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let vc_with_disclosed_2 = VcWithDisclosed::new(vc_2, disclosed_2);
         let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
 
+        let deanon_map = get_example_deanon_map();
+
         let derived_proof =
             derive_proof(&mut rng, &vcs, &deanon_map, None, &document_loader).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
         let nonce = "abcde";
+
         let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &document_loader);
         assert!(matches!(
             verified,
@@ -1874,13 +1873,6 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let document_loader: DocumentLoader =
             get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
 
-        let deanon_map = get_deanon_map(vec![
-            ("e0", "did:example:john"),
-            ("e1", "http://example.org/vaccine/a"),
-            ("e2", "http://example.org/vcred/00"),
-            ("e3", "http://example.org/vicred/a"),
-        ]);
-
         let vc_doc_1 = get_graph_from_ntriples_str(VC_NTRIPLES_1);
         let vc_proof_1 = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
         let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
@@ -1901,7 +1893,10 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let vc_with_disclosed_2 = VcWithDisclosed::new(vc_2, disclosed_2);
         let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
 
+        let deanon_map = get_example_deanon_map();
+
         let nonce = "abcde";
+
         let derived_proof =
             derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
@@ -1911,6 +1906,61 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
             verified,
             Err(RDFProofsError::MissingChallengeInRequest)
         ))
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_hidden_literals() {
+        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+        let document_loader: DocumentLoader =
+            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+
+        const DISCLOSED_VC_NTRIPLES_1_WITH_HIDDEN_LITERALS: &str = r#"
+            _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+            _:e0 <http://schema.org/name> _:e4 .
+            _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
+            _:e0 <http://schema.org/worksFor> _:b1 .
+            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+            _:b0 <http://example.org/vocab/vaccine> _:e1 .
+            _:b0 <http://example.org/vocab/vaccinationDate> _:e5 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
+            _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+            _:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
+            _:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+            _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+            _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+            "#;
+
+        let mut deanon_map = get_example_deanon_map();
+        let deanon_map_with_hidden_literal = get_deanon_map(vec![
+            ("e4", "John Smith", Some("")),
+            (
+                "e5",
+                "2022-01-01T00:00:00Z",
+                Some("http://www.w3.org/2001/XMLSchema#dateTime"),
+            ),
+        ]);
+        deanon_map.extend(deanon_map_with_hidden_literal);
+
+        let vc_doc_1 = get_graph_from_ntriples_str(VC_NTRIPLES_1);
+        let vc_proof_1 = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
+        let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
+
+        let disclosed_vc_doc_1 =
+            get_graph_from_ntriples_str(DISCLOSED_VC_NTRIPLES_1_WITH_HIDDEN_LITERALS);
+        let disclosed_vc_proof_1 = get_graph_from_ntriples_str(DISCLOSED_VC_PROOF_NTRIPLES_1);
+        let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
+
+        let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
+        let vcs = vec![vc_with_disclosed_1];
+
+        let nonce = "abcde";
+
+        let derived_proof =
+            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader).unwrap();
+        println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
+
+        let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &document_loader);
+        assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
@@ -1937,11 +1987,6 @@ _:b1 <http://schema.org/name> "ABC inc." .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
 "#;
-        let deanon_map = get_deanon_map(vec![
-            ("e0", "did:example:john"),
-            ("e1", "http://example.org/vaccine/a"),
-            ("e2", "http://example.org/vcred/00"),
-        ]);
 
         let vc_doc = get_graph_from_ntriples_str(vc_ntriples);
         let vc_proof = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
@@ -1953,7 +1998,11 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let vc_with_disclosed = VcWithDisclosed::new(vc, disclosed);
         let vcs = vec![vc_with_disclosed];
+
+        let deanon_map = get_example_deanon_map();
+
         let nonce = "abcde";
+
         let derived_proof =
             derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader);
         assert!(matches!(
