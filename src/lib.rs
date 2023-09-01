@@ -55,8 +55,7 @@ mod tests {
     pub(crate) fn get_graph_from_ntriples_str(ntriples: &str) -> Graph {
         Graph::from_iter(
             NTriplesParser::new()
-                .parse_from_read(Cursor::new(ntriples))
-                .into_iter()
+                .parse_read(Cursor::new(ntriples))
                 .map(|x| x.unwrap()),
         )
     }
@@ -64,8 +63,7 @@ mod tests {
     pub(crate) fn get_dataset_from_nquads_str(nquads: &str) -> Dataset {
         Dataset::from_iter(
             NQuadsParser::new()
-                .parse_from_read(Cursor::new(nquads))
-                .into_iter()
+                .parse_read(Cursor::new(nquads))
                 .map(|x| x.unwrap()),
         )
     }
