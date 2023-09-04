@@ -1,8 +1,13 @@
-use crate::context::PROOF;
-
+use crate::{
+    context::PROOF,
+    ordered_triple::{
+        OrderedGraphNameRef, OrderedGraphViews, OrderedVerifiableCredentialGraphViews,
+    },
+};
 use oxrdf::{dataset::GraphView, Graph, Triple};
 use std::collections::{BTreeMap, HashMap};
 
+#[derive(Clone)]
 pub struct VerifiableCredential {
     pub document: Graph,
     pub proof: Graph,
@@ -14,6 +19,7 @@ impl VerifiableCredential {
     }
 }
 
+#[derive(Clone)]
 pub struct VerifiableCredentialView<'a> {
     pub document: GraphView<'a>,
     pub proof: GraphView<'a>,
@@ -108,4 +114,53 @@ impl CanonicalVerifiableCredentialTriples {
 pub struct DisclosedVerifiableCredential {
     pub document: BTreeMap<usize, Option<Triple>>,
     pub proof: BTreeMap<usize, Option<Triple>>,
+}
+
+pub struct VcWithDisclosed {
+    pub vc: VerifiableCredential,
+    pub disclosed: VerifiableCredential,
+}
+
+impl VcWithDisclosed {
+    pub fn new(vc: VerifiableCredential, disclosed: VerifiableCredential) -> Self {
+        Self { vc, disclosed }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!(
+            "vc:\n{}vc_proof:\n{}\ndisclosed_vc:\n{}disclosed_vc_proof:\n{}\n",
+            &self
+                .vc
+                .document
+                .iter()
+                .map(|q| format!("{} .\n", q.to_string()))
+                .collect::<String>(),
+            &self
+                .vc
+                .proof
+                .iter()
+                .map(|q| format!("{} .\n", q.to_string()))
+                .collect::<String>(),
+            &self
+                .disclosed
+                .document
+                .iter()
+                .map(|q| format!("{} .\n", q.to_string()))
+                .collect::<String>(),
+            &self
+                .disclosed
+                .proof
+                .iter()
+                .map(|q| format!("{} .\n", q.to_string()))
+                .collect::<String>()
+        )
+    }
+}
+
+pub struct VpGraphs<'a> {
+    pub metadata: GraphView<'a>,
+    pub proof: GraphView<'a>,
+    pub proof_graph_name: OrderedGraphNameRef<'a>,
+    pub filters: OrderedGraphViews<'a>,
+    pub disclosed_vcs: OrderedVerifiableCredentialGraphViews<'a>,
 }

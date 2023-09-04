@@ -9,10 +9,14 @@ use crate::{
     error::RDFProofsError,
     key_gen::generate_params,
     key_graph::KeyGraph,
+    ordered_triple::{
+        OrderedGraphNameRef, OrderedGraphViews, OrderedNamedOrBlankNode,
+        OrderedVerifiableCredentialGraphViews,
+    },
     signature::verify,
     vc::{
-        CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VerifiableCredential,
-        VerifiableCredentialTriples, VerifiableCredentialView,
+        CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VcWithDisclosed,
+        VerifiableCredential, VerifiableCredentialTriples, VerifiableCredentialView, VpGraphs,
     },
 };
 use ark_bls12_381::Bls12_381;
@@ -27,7 +31,7 @@ use oxrdf::{
     dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
     BlankNode, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode, NamedNodeRef, NamedOrBlankNode,
-    NamedOrBlankNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
+    Quad, QuadRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
     prelude::{EqualWitnesses, MetaStatements},
@@ -38,135 +42,6 @@ use proof_system::{
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, Bytes};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-
-pub struct VcWithDisclosed {
-    vc: VerifiableCredential,
-    disclosed: VerifiableCredential,
-}
-
-impl VcWithDisclosed {
-    pub fn new(vc: VerifiableCredential, disclosed: VerifiableCredential) -> Self {
-        Self { vc, disclosed }
-    }
-
-    pub fn to_string(&self) -> String {
-        format!(
-            "vc:\n{}vc_proof:\n{}\ndisclosed_vc:\n{}disclosed_vc_proof:\n{}\n",
-            &self
-                .vc
-                .document
-                .iter()
-                .map(|q| format!("{} .\n", q.to_string()))
-                .collect::<String>(),
-            &self
-                .vc
-                .proof
-                .iter()
-                .map(|q| format!("{} .\n", q.to_string()))
-                .collect::<String>(),
-            &self
-                .disclosed
-                .document
-                .iter()
-                .map(|q| format!("{} .\n", q.to_string()))
-                .collect::<String>(),
-            &self
-                .disclosed
-                .proof
-                .iter()
-                .map(|q| format!("{} .\n", q.to_string()))
-                .collect::<String>()
-        )
-    }
-}
-
-struct VpGraphs<'a> {
-    metadata: GraphView<'a>,
-    proof: GraphView<'a>,
-    proof_graph_name: OrderedGraphNameRef<'a>,
-    filters: OrderedGraphViews<'a>,
-    disclosed_vcs: OrderedVerifiableCredentialGraphViews<'a>,
-}
-
-/// `oxrdf::triple::GraphNameRef` with string-based ordering
-#[derive(Eq, PartialEq, Clone)]
-struct OrderedGraphNameRef<'a>(GraphNameRef<'a>);
-impl Ord for OrderedGraphNameRef<'_> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.to_string().cmp(&other.0.to_string())
-    }
-}
-impl PartialOrd for OrderedGraphNameRef<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.to_string().partial_cmp(&other.0.to_string())
-    }
-}
-impl<'a> From<OrderedGraphNameRef<'a>> for GraphNameRef<'a> {
-    fn from(value: OrderedGraphNameRef<'a>) -> Self {
-        value.0
-    }
-}
-impl<'a> From<&'a OrderedGraphNameRef<'a>> for &'a GraphNameRef<'a> {
-    fn from(value: &'a OrderedGraphNameRef<'a>) -> Self {
-        &value.0
-    }
-}
-impl<'a> TryFrom<TermRef<'a>> for OrderedGraphNameRef<'a> {
-    type Error = RDFProofsError;
-
-    fn try_from(value: TermRef<'a>) -> Result<Self, Self::Error> {
-        match value {
-            TermRef::NamedNode(n) => Ok(Self(n.into())),
-            TermRef::BlankNode(n) => Ok(Self(n.into())),
-            _ => Err(RDFProofsError::Other(
-                "invalid graph name: graph name must not be literal or triple".to_string(),
-            )),
-        }
-    }
-}
-impl std::fmt::Display for OrderedGraphNameRef<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-/// `oxrdf::triple::GraphName` with string-based ordering
-#[derive(Eq, PartialEq, Clone, Debug)]
-struct OrderedNamedOrBlankNode(NamedOrBlankNode);
-impl Ord for OrderedNamedOrBlankNode {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.to_string().cmp(&other.0.to_string())
-    }
-}
-impl PartialOrd for OrderedNamedOrBlankNode {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.to_string().partial_cmp(&other.0.to_string())
-    }
-}
-impl From<NamedOrBlankNode> for OrderedNamedOrBlankNode {
-    fn from(value: NamedOrBlankNode) -> Self {
-        Self(value)
-    }
-}
-
-/// `oxrdf::triple::GraphNameRef` with string-based ordering
-#[derive(Eq, PartialEq, Clone, Debug)]
-struct OrderedNamedOrBlankNodeRef<'a>(NamedOrBlankNodeRef<'a>);
-impl Ord for OrderedNamedOrBlankNodeRef<'_> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.to_string().cmp(&other.0.to_string())
-    }
-}
-impl PartialOrd for OrderedNamedOrBlankNodeRef<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.to_string().partial_cmp(&other.0.to_string())
-    }
-}
-impl<'a> From<NamedOrBlankNodeRef<'a>> for OrderedNamedOrBlankNodeRef<'a> {
-    fn from(value: NamedOrBlankNodeRef<'a>) -> Self {
-        Self(value)
-    }
-}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename = "0")]
@@ -180,10 +55,6 @@ struct StatementIndexMap {
     #[serde(rename = "4")]
     proof_len: usize,
 }
-
-type OrderedGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
-type OrderedVerifiableCredentialGraphViews<'a> =
-    BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
 
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
@@ -901,7 +772,7 @@ fn build_vp(
 fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
     let graph_name_set = dataset
         .iter()
-        .map(|QuadRef { graph_name, .. }| OrderedGraphNameRef(graph_name))
+        .map(|QuadRef { graph_name, .. }| OrderedGraphNameRef::new(graph_name))
         .collect::<BTreeSet<_>>();
 
     graph_name_set
@@ -944,7 +815,7 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
 
     // extract VP metadata (default graph)
     let metadata = vp_graphs
-        .remove(&OrderedGraphNameRef(GraphNameRef::DefaultGraph))
+        .remove(&OrderedGraphNameRef::new(GraphNameRef::default()))
         .ok_or(RDFProofsError::Other(
             "VP graphs must have default graph".to_owned(),
         ))?;

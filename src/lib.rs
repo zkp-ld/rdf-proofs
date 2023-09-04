@@ -3,6 +3,7 @@ pub mod context;
 pub mod error;
 pub mod key_gen;
 pub mod key_graph;
+pub mod ordered_triple;
 pub mod proof;
 pub mod signature;
 pub mod vc;
