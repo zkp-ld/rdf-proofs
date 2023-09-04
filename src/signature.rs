@@ -5,8 +5,8 @@ use crate::{
     constants::CRYPTOSUITE_SIGN,
     context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
     error::RDFProofsError,
-    keygen::generate_params,
-    loader::DocumentLoader,
+    key_gen::generate_params,
+    key_graph::KeyGraph,
     vc::VerifiableCredential,
 };
 use ark_bls12_381::Bls12_381;
@@ -24,20 +24,20 @@ use std::str::FromStr;
 pub fn sign<R: RngCore>(
     rng: &mut R,
     unsecured_credential: &mut VerifiableCredential,
-    document_loader: &DocumentLoader,
+    key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
     let VerifiableCredential { document, proof } = unsecured_credential;
     let transformed_data = transform(document, proof)?;
     let canonical_proof_config = configure_proof(proof)?;
     let hash_data = hash(&transformed_data, &canonical_proof_config)?;
-    let proof_value = serialize_proof(rng, &hash_data, proof, document_loader)?;
+    let proof_value = serialize_proof(rng, &hash_data, proof, key_graph)?;
     add_proof_value(unsecured_credential, proof_value)?;
     Ok(())
 }
 
 pub fn verify(
     secured_credential: &VerifiableCredential,
-    document_loader: &DocumentLoader,
+    key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
     let VerifiableCredential { document, proof } = secured_credential;
     let proof_value_triple = proof
@@ -58,7 +58,7 @@ pub fn verify(
     let transformed_data = transform(document, proof)?;
     let canonical_proof_config = configure_proof(&proof_config)?;
     let hash_data = hash(&transformed_data, &canonical_proof_config)?;
-    verify_base_proof(hash_data, proof_value, &proof_config, document_loader)
+    verify_base_proof(hash_data, proof_value, &proof_config, key_graph)
 }
 
 fn transform(
@@ -133,12 +133,12 @@ fn serialize_proof<R: RngCore>(
     rng: &mut R,
     hash_data: &Vec<Fr>,
     proof_options: &Graph,
-    document_loader: &DocumentLoader,
+    key_graph: &KeyGraph,
 ) -> Result<String, RDFProofsError> {
     let message_count = hash_data.len();
 
     let verification_method_identifier = get_verification_method_identifier(proof_options)?;
-    let (secret_key, _public_key) = document_loader.get_keypair(verification_method_identifier)?;
+    let (secret_key, _public_key) = key_graph.get_keypair(verification_method_identifier)?;
 
     let params = generate_params(message_count);
 
@@ -171,12 +171,12 @@ fn verify_base_proof(
     hash_data: Vec<Fr>,
     proof_value: &str,
     proof_config: &Graph,
-    document_loader: &DocumentLoader,
+    key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
     let (_, proof_value_bytes) = multibase::decode(proof_value)?;
     let signature = BBSSignatureG1::<Bls12_381>::deserialize_compressed(&*proof_value_bytes)?;
     let verification_method_identifier = get_verification_method_identifier(proof_config)?;
-    let pk = document_loader.get_public_key(verification_method_identifier)?;
+    let pk = key_graph.get_public_key(verification_method_identifier)?;
     let params = generate_params(hash_data.len());
     Ok(signature.verify(&hash_data, pk, params)?)
 }
@@ -185,9 +185,9 @@ fn verify_base_proof(
 mod tests {
     use crate::{
         error::RDFProofsError,
-        loader::DocumentLoader,
+        key_graph::KeyGraph,
         signature::{sign, verify},
-        tests::{get_graph_from_ntriples_str, print_signature, print_vc, DOCUMENT_LOADER_NTRIPLES},
+        tests::{get_graph_from_ntriples_str, print_signature, print_vc, KEY_GRAPH_NTRIPLES},
         vc::VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
@@ -222,15 +222,14 @@ _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.o
 _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
 _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
 "#;
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
         let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
         let proof_config = get_graph_from_ntriples_str(proof_config_ntriples);
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        sign(&mut rng, &mut vc, &document_loader).unwrap();
+        sign(&mut rng, &mut vc, &key_graph).unwrap();
         print_vc(&vc);
         print_signature(&vc);
-        assert!(verify(&vc, &document_loader).is_ok())
+        assert!(verify(&vc, &key_graph).is_ok())
     }
 
     #[test]
@@ -255,15 +254,14 @@ _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.o
 _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
 _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
 "#;
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
         let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
         let proof_config = get_graph_from_ntriples_str(proof_config_ntriples);
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        sign(&mut rng, &mut vc, &document_loader).unwrap();
+        sign(&mut rng, &mut vc, &key_graph).unwrap();
         print_vc(&vc);
         print_signature(&vc);
-        assert!(verify(&vc, &document_loader).is_ok())
+        assert!(verify(&vc, &key_graph).is_ok())
     }
 
     #[test]
@@ -294,12 +292,11 @@ _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.o
 _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
 _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
 "#;
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
         let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
         let signed_proof_config = get_graph_from_ntriples_str(signed_proof_config_ntriples);
         let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
-        let verified = verify(&vc, &document_loader);
+        let verified = verify(&vc, &key_graph);
         assert!(verified.is_ok())
     }
 
@@ -324,12 +321,11 @@ _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.o
 _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
 _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
 "#;
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
         let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
         let signed_proof_config = get_graph_from_ntriples_str(signed_proof_config_ntriples);
         let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
-        let verified = verify(&vc, &document_loader);
+        let verified = verify(&vc, &key_graph);
         assert!(verified.is_ok())
     }
 
@@ -361,12 +357,11 @@ _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.o
 _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
 _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
 "#;
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
         let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
         let signed_proof_config = get_graph_from_ntriples_str(signed_proof_config_ntriples);
         let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
-        let verified = verify(&vc, &document_loader);
+        let verified = verify(&vc, &key_graph);
         assert!(matches!(
             verified,
             Err(RDFProofsError::BBSPlus(InvalidSignature))
@@ -401,12 +396,11 @@ _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.o
 _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
 _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> . # the other issuer's pk
 "#;
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
         let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
         let signed_proof_config = get_graph_from_ntriples_str(signed_proof_config_ntriples);
         let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
-        let verified = verify(&vc, &document_loader);
+        let verified = verify(&vc, &key_graph);
         assert!(matches!(
             verified,
             Err(RDFProofsError::BBSPlus(InvalidSignature))

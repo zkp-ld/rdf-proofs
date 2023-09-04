@@ -52,7 +52,7 @@ pub fn deserialize_public_key(key: &str) -> Result<BBSPublicKeyG2<Bls12_381>, RD
 #[cfg(test)]
 mod tests {
     use super::generate_keypair;
-    use crate::keygen::{serialize_public_key, serialize_secret_key};
+    use crate::key_gen::{serialize_public_key, serialize_secret_key};
     use ark_std::rand::{rngs::StdRng, SeedableRng};
 
     #[test]

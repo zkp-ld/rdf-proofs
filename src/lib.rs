@@ -1,8 +1,8 @@
 pub mod common;
 pub mod context;
 pub mod error;
-pub mod keygen;
-pub mod loader;
+pub mod key_gen;
+pub mod key_graph;
 pub mod proof;
 pub mod signature;
 pub mod vc;
@@ -25,7 +25,7 @@ mod tests {
     use oxttl::{NQuadsParser, NTriplesParser};
     use std::{collections::HashMap, io::Cursor};
 
-    pub(crate) const DOCUMENT_LOADER_NTRIPLES: &str = r#"
+    pub(crate) const KEY_GRAPH_NTRIPLES: &str = r#"
 # issuer0
 <did:example:issuer0> <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
 <did:example:issuer0#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .

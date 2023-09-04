@@ -2,23 +2,23 @@ use crate::{
     common::Fr,
     context::{PUBLIC_KEY_MULTIBASE, SECRET_KEY_MULTIBASE},
     error::RDFProofsError,
-    keygen::{deserialize_public_key, deserialize_secret_key},
+    key_gen::{deserialize_public_key, deserialize_secret_key},
 };
 use ark_bls12_381::Bls12_381;
 use bbs_plus::setup::{PublicKeyG2 as BBSPublicKeyG2, SecretKey as BBSSecretKey};
 use oxrdf::{Graph, NamedNodeRef, TermRef, Triple};
 
-pub struct DocumentLoader {
+pub struct KeyGraph {
     inner: Graph,
 }
 
-impl From<Graph> for DocumentLoader {
+impl From<Graph> for KeyGraph {
     fn from(value: Graph) -> Self {
         Self { inner: value }
     }
 }
 
-impl From<Vec<Triple>> for DocumentLoader {
+impl From<Vec<Triple>> for KeyGraph {
     fn from(value: Vec<Triple>) -> Self {
         Self {
             inner: Graph::from_iter(value),
@@ -26,7 +26,7 @@ impl From<Vec<Triple>> for DocumentLoader {
     }
 }
 
-impl DocumentLoader {
+impl KeyGraph {
     // TODO: add dereferencing external controller document URL
     pub fn retrieve_verification_method(
         &self,

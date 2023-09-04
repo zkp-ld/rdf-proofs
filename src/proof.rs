@@ -7,8 +7,8 @@ use crate::{
         VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
-    keygen::generate_params,
-    loader::DocumentLoader,
+    key_gen::generate_params,
+    key_graph::KeyGraph,
     signature::verify,
     vc::{
         CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VerifiableCredential,
@@ -191,7 +191,7 @@ pub fn derive_proof<R: RngCore>(
     vcs: &Vec<VcWithDisclosed>,
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     nonce: Option<&str>,
-    document_loader: &DocumentLoader,
+    key_graph: &KeyGraph,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vcs {
         println!("{}", vc.to_string());
@@ -209,13 +209,13 @@ pub fn derive_proof<R: RngCore>(
     // get issuer public keys
     let public_keys = vcs
         .iter()
-        .map(|VcWithDisclosed { vc, .. }| get_public_keys(&vc.proof, document_loader))
+        .map(|VcWithDisclosed { vc, .. }| get_public_keys(&vc.proof, key_graph))
         .collect::<Result<Vec<_>, _>>()?;
     println!("public keys:\n{:#?}\n", public_keys);
 
     // verify VCs
     vcs.iter()
-        .map(|VcWithDisclosed { vc, .. }| verify(vc, document_loader))
+        .map(|VcWithDisclosed { vc, .. }| verify(vc, key_graph))
         .collect::<Result<(), _>>()?;
 
     // randomize blank node identifiers in VC documents and VC proofs
@@ -442,7 +442,7 @@ pub fn verify_proof<R: RngCore>(
     rng: &mut R,
     vp: &Dataset,
     nonce: Option<&str>,
-    document_loader: &DocumentLoader,
+    key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
     println!("VP:\n{}", rdf_canon::serialize(&vp));
 
@@ -534,7 +534,7 @@ pub fn verify_proof<R: RngCore>(
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
         .iter()
-        .map(|(_, vc)| get_public_keys_from_graphview(&vc.proof, document_loader))
+        .map(|(_, vc)| get_public_keys_from_graphview(&vc.proof, key_graph))
         .collect::<Result<Vec<_>, _>>()?;
     println!("public_keys:\n{:#?}\n", public_keys);
 
@@ -634,7 +634,7 @@ pub fn verify_proof<R: RngCore>(
 
 fn get_public_keys(
     proof_graph: &Graph,
-    document_loader: &DocumentLoader,
+    key_graph: &KeyGraph,
 ) -> Result<BBSPublicKeyG2<Bls12_381>, RDFProofsError> {
     let vm_triple = proof_graph
         .triples_for_predicate(VERIFICATION_METHOD)
@@ -644,13 +644,13 @@ fn get_public_keys(
         TermRef::NamedNode(v) => Ok(v),
         _ => Err(RDFProofsError::InvalidVerificationMethodURL),
     }?;
-    document_loader.get_public_key(vm)
+    key_graph.get_public_key(vm)
 }
 
 // TODO: to be integrated with `get_public_keys`
 fn get_public_keys_from_graphview(
     proof_graph: &GraphView,
-    document_loader: &DocumentLoader,
+    key_graph: &KeyGraph,
 ) -> Result<BBSPublicKeyG2<Bls12_381>, RDFProofsError> {
     let vm_triple = proof_graph
         .triples_for_predicate(VERIFICATION_METHOD)
@@ -660,7 +660,7 @@ fn get_public_keys_from_graphview(
         TermRef::NamedNode(v) => Ok(v),
         _ => Err(RDFProofsError::InvalidVerificationMethodURL),
     }?;
-    document_loader.get_public_key(vm)
+    key_graph.get_public_key(vm)
 }
 
 // function to remove from the VP the multiple graphs that are reachable from `source` via `link`
@@ -1593,11 +1593,11 @@ fn is_nym(node: &NamedNode) -> bool {
 mod tests {
     use crate::{
         error::RDFProofsError,
-        loader::DocumentLoader,
+        key_graph::KeyGraph,
         proof::{derive_proof, verify_proof, VcWithDisclosed},
         tests::{
             get_dataset_from_nquads_str, get_deanon_map, get_graph_from_ntriples_str,
-            DOCUMENT_LOADER_NTRIPLES,
+            KEY_GRAPH_NTRIPLES,
         },
         vc::VerifiableCredential,
     };
@@ -1701,8 +1701,7 @@ mod tests {
     #[test]
     fn derive_and_verify_proof() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
 
         let vc_doc_1 = get_graph_from_ntriples_str(VC_NTRIPLES_1);
         let vc_proof_1 = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
@@ -1729,18 +1728,17 @@ mod tests {
         let nonce = "abcde";
 
         let derived_proof =
-            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader).unwrap();
+            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &key_graph).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &document_loader);
+        let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &key_graph);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
     fn verify_proof_simple() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
 
         let vp_nquads = r#"
 _:c14n10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n8 .
@@ -1786,15 +1784,14 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
 "#;
         let vp = get_dataset_from_nquads_str(vp_nquads);
         let nonce = "abcde";
-        let verified = verify_proof(&mut rng, &vp, Some(nonce), &document_loader);
+        let verified = verify_proof(&mut rng, &vp, Some(nonce), &key_graph);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
     fn derive_and_verify_proof_without_nonce() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
 
         let vc_doc_1 = get_graph_from_ntriples_str(VC_NTRIPLES_1);
         let vc_proof_1 = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
@@ -1818,19 +1815,17 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
 
         let deanon_map = get_example_deanon_map();
 
-        let derived_proof =
-            derive_proof(&mut rng, &vcs, &deanon_map, None, &document_loader).unwrap();
+        let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, None, &key_graph).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(&mut rng, &derived_proof, None, &document_loader);
+        let verified = verify_proof(&mut rng, &derived_proof, None, &key_graph);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
     fn derive_without_nonce_and_verify_proof_with_nonce() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
 
         let vc_doc_1 = get_graph_from_ntriples_str(VC_NTRIPLES_1);
         let vc_proof_1 = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
@@ -1854,13 +1849,12 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
 
         let deanon_map = get_example_deanon_map();
 
-        let derived_proof =
-            derive_proof(&mut rng, &vcs, &deanon_map, None, &document_loader).unwrap();
+        let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, None, &key_graph).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
         let nonce = "abcde";
 
-        let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &document_loader);
+        let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &key_graph);
         assert!(matches!(
             verified,
             Err(RDFProofsError::MissingChallengeInVP)
@@ -1870,8 +1864,7 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
     #[test]
     fn derive_with_nonce_and_verify_proof_without_nonce() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
 
         let vc_doc_1 = get_graph_from_ntriples_str(VC_NTRIPLES_1);
         let vc_proof_1 = get_graph_from_ntriples_str(VC_PROOF_NTRIPLES_1);
@@ -1898,10 +1891,10 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let nonce = "abcde";
 
         let derived_proof =
-            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader).unwrap();
+            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &key_graph).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(&mut rng, &derived_proof, None, &document_loader);
+        let verified = verify_proof(&mut rng, &derived_proof, None, &key_graph);
         assert!(matches!(
             verified,
             Err(RDFProofsError::MissingChallengeInRequest)
@@ -1911,8 +1904,7 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
     #[test]
     fn derive_and_verify_proof_with_hidden_literals() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
 
         const DISCLOSED_VC_NTRIPLES_1_WITH_HIDDEN_LITERALS: &str = r#"
             _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
@@ -1956,18 +1948,17 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let nonce = "abcde";
 
         let derived_proof =
-            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader).unwrap();
+            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &key_graph).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &document_loader);
+        let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &key_graph);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
     fn derive_invalid_vc() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let document_loader: DocumentLoader =
-            get_graph_from_ntriples_str(DOCUMENT_LOADER_NTRIPLES).into();
+        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
 
         let vc_ntriples = r#"
 <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
@@ -2003,8 +1994,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let nonce = "abcde";
 
-        let derived_proof =
-            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &document_loader);
+        let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &key_graph);
         assert!(matches!(
             derived_proof,
             Err(RDFProofsError::BBSPlus(
