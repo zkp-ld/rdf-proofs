@@ -61,11 +61,11 @@ pub fn get_verification_method_identifier(
     }
 }
 
-pub fn randomize_bnodes(vc_graph: &Graph, disclosed_graph: &Graph) -> (Graph, Graph) {
+pub fn randomize_bnodes(original_graph: &Graph, disclosed_graph: &Graph) -> (Graph, Graph) {
     let mut random_map = HashMap::new();
 
-    // randomize each blank nodes
-    let graph_iter = vc_graph.iter().map(|triple| {
+    // randomize each blank nodes in the original graph
+    let original_iter = original_graph.iter().map(|triple| {
         let s = match triple.subject {
             SubjectRef::BlankNode(b) => random_map
                 .entry(b)
@@ -85,10 +85,9 @@ pub fn randomize_bnodes(vc_graph: &Graph, disclosed_graph: &Graph) -> (Graph, Gr
         };
         Triple::new(s, p, o)
     });
+    let randomized_original_graph = Graph::from_iter(original_iter);
 
-    let r_vc_graph = Graph::from_iter(graph_iter);
-
-    // apply random map to blank nodes
+    // apply the same bnode randomization to the disclosed graph
     let disclosed_iter = disclosed_graph.iter().map(|triple| {
         let s = match triple.subject {
             SubjectRef::BlankNode(b) => random_map
@@ -110,7 +109,7 @@ pub fn randomize_bnodes(vc_graph: &Graph, disclosed_graph: &Graph) -> (Graph, Gr
         Triple::new(s, p, o)
     });
 
-    let r_disclosed_graph = Graph::from_iter(disclosed_iter);
+    let randomized_disclosed_graph = Graph::from_iter(disclosed_iter);
 
-    (r_vc_graph, r_disclosed_graph)
+    (randomized_original_graph, randomized_disclosed_graph)
 }

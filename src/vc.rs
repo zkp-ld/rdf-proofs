@@ -87,25 +87,25 @@ impl From<&CanonicalVerifiableCredentialTriples> for VerifiableCredentialTriples
 
 pub struct CanonicalVerifiableCredentialTriples {
     pub document: Vec<Triple>,
-    pub document_issued_identifiers_map: HashMap<String, String>,
     pub proof: Vec<Triple>,
-    pub proof_issued_identifiers_map: HashMap<String, String>,
+    pub document_bnode_map: HashMap<String, String>,
+    pub proof_bnode_map: HashMap<String, String>,
 }
 
 impl CanonicalVerifiableCredentialTriples {
     pub fn new(
         mut document: Vec<Triple>,
-        document_issued_identifiers_map: HashMap<String, String>,
+        document_bnode_map: HashMap<String, String>,
         mut proof: Vec<Triple>,
-        proof_issued_identifiers_map: HashMap<String, String>,
+        proof_bnode_map: HashMap<String, String>,
     ) -> Self {
         document.sort_by_cached_key(|t| t.to_string());
         proof.sort_by_cached_key(|t| t.to_string());
         Self {
             document,
-            document_issued_identifiers_map,
+            document_bnode_map,
             proof,
-            proof_issued_identifiers_map,
+            proof_bnode_map,
         }
     }
 }
@@ -116,27 +116,30 @@ pub struct DisclosedVerifiableCredential {
     pub proof: BTreeMap<usize, Option<Triple>>,
 }
 
-pub struct VcWithDisclosed {
-    pub vc: VerifiableCredential,
+pub struct VcPair {
+    pub original: VerifiableCredential,
     pub disclosed: VerifiableCredential,
 }
 
-impl VcWithDisclosed {
-    pub fn new(vc: VerifiableCredential, disclosed: VerifiableCredential) -> Self {
-        Self { vc, disclosed }
+impl VcPair {
+    pub fn new(original: VerifiableCredential, disclosed: VerifiableCredential) -> Self {
+        Self {
+            original,
+            disclosed,
+        }
     }
 
     pub fn to_string(&self) -> String {
         format!(
             "vc:\n{}vc_proof:\n{}\ndisclosed_vc:\n{}disclosed_vc_proof:\n{}\n",
             &self
-                .vc
+                .original
                 .document
                 .iter()
                 .map(|q| format!("{} .\n", q.to_string()))
                 .collect::<String>(),
             &self
-                .vc
+                .original
                 .proof
                 .iter()
                 .map(|q| format!("{} .\n", q.to_string()))

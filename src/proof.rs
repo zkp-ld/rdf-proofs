@@ -15,7 +15,7 @@ use crate::{
     },
     signature::verify,
     vc::{
-        CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VcWithDisclosed,
+        CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VcPair,
         VerifiableCredential, VerifiableCredentialTriples, VerifiableCredentialView, VpGraphs,
     },
 };
@@ -59,18 +59,18 @@ struct StatementIndexMap {
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
     rng: &mut R,
-    vcs: &Vec<VcWithDisclosed>,
+    vc_pairs: &Vec<VcPair>,
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     nonce: Option<&str>,
     key_graph: &KeyGraph,
 ) -> Result<Dataset, RDFProofsError> {
-    for vc in vcs {
+    for vc in vc_pairs {
         println!("{}", vc.to_string());
     }
     println!("deanon map:\n{:#?}\n", deanon_map);
 
     // VCs must not be empty
-    if vcs.is_empty() {
+    if vc_pairs.is_empty() {
         return Err(RDFProofsError::InvalidVCPairs);
     }
 
@@ -78,39 +78,46 @@ pub fn derive_proof<R: RngCore>(
     // check: each disclosed VCs must be the derived subset of corresponding VCs via deanon map
 
     // get issuer public keys
-    let public_keys = vcs
+    let public_keys = vc_pairs
         .iter()
-        .map(|VcWithDisclosed { vc, .. }| get_public_keys(&vc.proof, key_graph))
+        .map(|VcPair { original: vc, .. }| get_public_keys(&vc.proof, key_graph))
         .collect::<Result<Vec<_>, _>>()?;
     println!("public keys:\n{:#?}\n", public_keys);
 
     // verify VCs
-    vcs.iter()
-        .map(|VcWithDisclosed { vc, .. }| verify(vc, key_graph))
+    vc_pairs
+        .iter()
+        .map(|VcPair { original: vc, .. }| verify(vc, key_graph))
         .collect::<Result<(), _>>()?;
 
     // randomize blank node identifiers in VC documents and VC proofs
     // for avoiding identifier collisions among multiple VCs
-    let vcs = vcs
+    let randomized_vc_pairs = vc_pairs
         .iter()
-        .map(|VcWithDisclosed { vc, disclosed }| {
-            let (r_vc_document, r_disclosed_document) =
-                randomize_bnodes(&vc.document, &disclosed.document);
-            let (r_vc_proof, r_disclosed_proof) = randomize_bnodes(&vc.proof, &disclosed.proof);
-            VcWithDisclosed::new(
-                VerifiableCredential::new(r_vc_document, r_vc_proof),
-                VerifiableCredential::new(r_disclosed_document, r_disclosed_proof),
-            )
-        })
+        .map(
+            |VcPair {
+                 original,
+                 disclosed,
+             }| {
+                let (r_original_document, r_disclosed_document) =
+                    randomize_bnodes(&original.document, &disclosed.document);
+                let (r_original_proof, r_disclosed_proof) =
+                    randomize_bnodes(&original.proof, &disclosed.proof);
+                VcPair::new(
+                    VerifiableCredential::new(r_original_document, r_original_proof),
+                    VerifiableCredential::new(r_disclosed_document, r_disclosed_proof),
+                )
+            },
+        )
         .collect::<Vec<_>>();
-    for vc in &vcs {
+    for vc in &randomized_vc_pairs {
         println!("randomized vc: {}", vc.to_string());
     }
 
     // extract `proofValue`s from original VCs
-    let (original_vcs, proof_values): (Vec<_>, Vec<_>) = vcs
+    let (randomized_original_vcs, proof_values): (Vec<_>, Vec<_>) = randomized_vc_pairs
         .iter()
-        .map(|VcWithDisclosed { vc, .. }| vc)
+        .map(|VcPair { original: vc, .. }| vc)
         .map(|VerifiableCredential { document, proof }| {
             // get `proofValue`s from original VCs
             let proof_value_triple = proof
@@ -135,34 +142,36 @@ pub fn derive_proof<R: RngCore>(
         .unzip();
 
     // canonicalize original VCs
-    let c14n_original_vcs = canonicalize_original_vcs(&original_vcs)?;
-    let mut c14n_original_vcs_map = HashMap::<String, String>::new();
+    let canonicalized_original_vcs = canonicalize_original_vcs(&randomized_original_vcs)?;
+
+    // compose bnode maps resulted from canonicalization
+    let mut canonicalized_original_vcs_bnode_map = HashMap::<String, String>::new();
     for CanonicalVerifiableCredentialTriples {
-        document_issued_identifiers_map,
-        proof_issued_identifiers_map,
+        document_bnode_map,
+        proof_bnode_map,
         ..
-    } in &c14n_original_vcs
+    } in &canonicalized_original_vcs
     {
-        for (k, v) in document_issued_identifiers_map {
-            if c14n_original_vcs_map.contains_key(k) {
+        for (k, v) in document_bnode_map {
+            if canonicalized_original_vcs_bnode_map.contains_key(k) {
                 return Err(RDFProofsError::BlankNodeCollision);
             } else {
-                c14n_original_vcs_map.insert(k.to_string(), v.to_string());
+                canonicalized_original_vcs_bnode_map.insert(k.to_string(), v.to_string());
             }
         }
-        for (k, v) in proof_issued_identifiers_map {
-            if c14n_original_vcs_map.contains_key(k) {
+        for (k, v) in proof_bnode_map {
+            if canonicalized_original_vcs_bnode_map.contains_key(k) {
                 return Err(RDFProofsError::BlankNodeCollision);
             } else {
-                c14n_original_vcs_map.insert(k.to_string(), v.to_string());
+                canonicalized_original_vcs_bnode_map.insert(k.to_string(), v.to_string());
             }
         }
     }
 
     // get disclosed VCs, where `proofValue` is removed if any
-    let disclosed_vcs = vcs
+    let disclosed_vcs = randomized_vc_pairs
         .iter()
-        .map(|VcWithDisclosed { disclosed, .. }| disclosed)
+        .map(|VcPair { disclosed, .. }| disclosed)
         .map(|VerifiableCredential { document, proof }| {
             VerifiableCredential::new(
                 // clone document and proof without `proofValue`
@@ -172,31 +181,37 @@ pub fn derive_proof<R: RngCore>(
         })
         .collect();
 
-    // build VP (without proof yet) based on disclosed VCs
-    let (vp, vc_graph_names) = build_vp(&disclosed_vcs, &nonce)?;
-    println!("vp:\n{}\n", vp.to_string());
+    // build VP draft (= VP without proofValue) based on disclosed VCs
+    let (vp_draft, vc_document_graph_names) = build_vp_draft(&disclosed_vcs, &nonce)?;
+    println!("vp_draft:\n{}\n", vp_draft.to_string());
 
-    // canonicalize VP
-    let c14n_map_for_disclosed = rdf_canon::issue(&vp)?;
-    let canonicalized_vp = rdf_canon::relabel(&vp, &c14n_map_for_disclosed)?;
-    println!("issued identifiers map:\n{:#?}\n", c14n_map_for_disclosed);
+    // canonicalize VP draft
+    let canonicalized_vp_draft_bnode_map = rdf_canon::issue(&vp_draft)?;
+    let canonicalized_vp_draft = rdf_canon::relabel(&vp_draft, &canonicalized_vp_draft_bnode_map)?;
+    println!(
+        "issued identifiers map:\n{:#?}\n",
+        canonicalized_vp_draft_bnode_map
+    );
     println!(
         "canonicalized VP:\n{}",
-        rdf_canon::serialize(&canonicalized_vp)
+        rdf_canon::serialize(&canonicalized_vp_draft)
     );
 
-    // decompose canonicalized VP into graphs
+    // decompose canonicalized VP draft into graphs
     let VpGraphs {
         metadata: _,
         proof: vp_proof,
         proof_graph_name: vp_proof_graph_name,
         filters: _filters_graph,
-        disclosed_vcs: c14n_disclosed_vc_graphs,
-    } = decompose_vp(&canonicalized_vp)?;
+        disclosed_vcs: canonicalized_disclosed_vc_graphs,
+    } = decompose_vp_draft(&canonicalized_vp_draft)?;
 
     // construct extended deanonymization map
-    let extended_deanon_map =
-        extend_deanon_map(deanon_map, &c14n_map_for_disclosed, &c14n_original_vcs_map)?;
+    let extended_deanon_map = extend_deanon_map(
+        deanon_map,
+        &canonicalized_vp_draft_bnode_map,
+        &canonicalized_original_vcs_bnode_map,
+    )?;
     println!("extended deanon map:");
     for (f, t) in &extended_deanon_map {
         println!("{}: {}", f.to_string(), t.to_string());
@@ -206,17 +221,17 @@ pub fn derive_proof<R: RngCore>(
     // reorder the original VC graphs and proof values
     // according to the order of canonicalized graph names of disclosed VCs
     let (c14n_original_vc_triples, ordered_proof_values) = reorder_vc_graphs(
-        &c14n_original_vcs,
+        &canonicalized_original_vcs,
         &proof_values,
-        &c14n_disclosed_vc_graphs,
+        &canonicalized_disclosed_vc_graphs,
         &extended_deanon_map,
-        &vc_graph_names,
+        &vc_document_graph_names,
     )?;
 
     // assert the keys of two VC graphs are equivalent
     if !c14n_original_vc_triples
         .keys()
-        .eq(c14n_disclosed_vc_graphs.keys())
+        .eq(canonicalized_disclosed_vc_graphs.keys())
     {
         return Err(RDFProofsError::Other(
             "gen_index_map: the keys of two VC graphs must be equivalent".to_string(),
@@ -228,7 +243,7 @@ pub fn derive_proof<R: RngCore>(
         .into_iter()
         .map(|(_, v)| v.into())
         .collect::<Vec<VerifiableCredentialTriples>>();
-    let disclosed_vec = c14n_disclosed_vc_graphs
+    let disclosed_vec = canonicalized_disclosed_vc_graphs
         .into_iter()
         .map(|(_, v)| v.into())
         .collect::<Vec<VerifiableCredentialTriples>>();
@@ -288,7 +303,7 @@ pub fn derive_proof<R: RngCore>(
         public_keys,
         proof_values_vec,
         index_map,
-        &canonicalized_vp,
+        &canonicalized_vp_draft,
         nonce,
     )?;
 
@@ -302,7 +317,7 @@ pub fn derive_proof<R: RngCore>(
         LiteralRef::new_typed_literal(&derived_proof_value, MULTIBASE),
         vp_proof_graph_name,
     );
-    let mut canonicalized_vp_quads = canonicalized_vp.into_iter().collect::<Vec<_>>();
+    let mut canonicalized_vp_quads = canonicalized_vp_draft.into_iter().collect::<Vec<_>>();
     canonicalized_vp_quads.push(vp_proof_value_quad);
 
     Ok(Dataset::from_iter(canonicalized_vp_quads))
@@ -322,7 +337,7 @@ pub fn verify_proof<R: RngCore>(
         proof: vp_proof_with_value,
         proof_graph_name,
         ..
-    } = decompose_vp(vp)?;
+    } = decompose_vp_draft(vp)?;
     let proof_graph_name: GraphNameRef = proof_graph_name.into();
 
     // get proof value
@@ -400,7 +415,7 @@ pub fn verify_proof<R: RngCore>(
         proof_graph_name: _,
         filters: _filters_graph,
         disclosed_vcs: c14n_disclosed_vc_graphs,
-    } = decompose_vp(&canonicalized_vp)?;
+    } = decompose_vp_draft(&canonicalized_vp)?;
 
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
@@ -666,7 +681,7 @@ fn canonicalize_original_vcs(
         .collect::<Result<Vec<_>, RDFProofsError>>()
 }
 
-fn build_vp(
+fn build_vp_draft(
     disclosed_vcs: &Vec<VerifiableCredential>,
     nonce: &Option<&str>,
 ) -> Result<(Dataset, Vec<BlankNode>), RDFProofsError> {
@@ -721,14 +736,14 @@ fn build_vp(
     }
 
     // convert VC graphs (triples) into VC dataset (quads)
-    let mut vc_graph_names = Vec::with_capacity(disclosed_vcs.len());
+    let mut vc_document_graph_names = Vec::with_capacity(disclosed_vcs.len());
     let vc_quads = disclosed_vcs
         .iter()
         .map(|VerifiableCredential { document, proof }| {
             let document_graph_name = BlankNode::default();
             let proof_graph_name = BlankNode::default();
 
-            vc_graph_names.push(document_graph_name.clone());
+            vc_document_graph_names.push(document_graph_name.clone());
 
             let document_id = document
                 .subject_for_predicate_object(TYPE, VERIFIABLE_CREDENTIAL_TYPE)
@@ -766,7 +781,7 @@ fn build_vp(
         ));
         vp.extend(vc_quad);
     }
-    Ok((vp, vc_graph_names))
+    Ok((vp, vc_document_graph_names))
 }
 
 fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
@@ -783,13 +798,14 @@ fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
 
 fn extend_deanon_map(
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
-    issued_identifiers_map: &HashMap<String, String>,
-    c14n_original_vcs_map: &HashMap<String, String>,
+    canonicalized_vp_draft_bnode_map: &HashMap<String, String>,
+    canonicalized_original_vcs_bnode_map: &HashMap<String, String>,
 ) -> Result<HashMap<NamedOrBlankNode, Term>, RDFProofsError> {
-    let mut res = issued_identifiers_map
+    // blank node -> original term
+    let mut res = canonicalized_vp_draft_bnode_map
         .into_iter()
         .map(|(bnid, cnid)| {
-            let mapped_bnid = match c14n_original_vcs_map.get(bnid) {
+            let mapped_bnid = match canonicalized_original_vcs_bnode_map.get(bnid) {
                 Some(v) => v,
                 None => bnid,
             };
@@ -802,6 +818,8 @@ fn extend_deanon_map(
             }
         })
         .collect::<Result<HashMap<_, _>, RDFProofsError>>()?;
+
+    // named node -> original term
     for (k, v) in deanon_map {
         if let NamedOrBlankNode::NamedNode(_) = k {
             res.insert(k.clone(), v.clone());
@@ -810,7 +828,7 @@ fn extend_deanon_map(
     Ok(res)
 }
 
-fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
+fn decompose_vp_draft<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
     let mut vp_graphs = dataset_into_ordered_graphs(vp);
 
     // extract VP metadata (default graph)
@@ -853,11 +871,11 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
 }
 
 fn reorder_vc_graphs<'a>(
-    c14n_original_vcs: &'a Vec<CanonicalVerifiableCredentialTriples>,
+    canonicalized_original_vcs: &'a Vec<CanonicalVerifiableCredentialTriples>,
     proof_values: &'a Vec<&str>,
-    c14n_disclosed_vc_graphs: &OrderedVerifiableCredentialGraphViews<'a>,
+    canonicalized_disclosed_vc_graphs: &OrderedVerifiableCredentialGraphViews<'a>,
     extended_deanon_map: &'a HashMap<NamedOrBlankNode, Term>,
-    vc_graph_names: &Vec<BlankNode>,
+    vc_document_graph_names: &Vec<BlankNode>,
 ) -> Result<
     (
         BTreeMap<OrderedGraphNameRef<'a>, &'a CanonicalVerifiableCredentialTriples>,
@@ -868,7 +886,7 @@ fn reorder_vc_graphs<'a>(
     let mut ordered_vcs = BTreeMap::new();
     let mut ordered_proof_values = BTreeMap::new();
 
-    for k in c14n_disclosed_vc_graphs.keys() {
+    for k in canonicalized_disclosed_vc_graphs.keys() {
         let vc_graph_name_c14n: &GraphNameRef = k.into();
         let vc_graph_name = match vc_graph_name_c14n {
             GraphNameRef::BlankNode(n) => match extended_deanon_map.get(&(*n).into()) {
@@ -877,11 +895,11 @@ fn reorder_vc_graphs<'a>(
             },
             _ => Err(RDFProofsError::Other("invalid VC graph name".to_string())),
         }?;
-        let index = vc_graph_names
+        let index = vc_document_graph_names
             .iter()
             .position(|v| v == vc_graph_name)
             .ok_or(RDFProofsError::Other("invalid VC index".to_string()))?;
-        let vc = c14n_original_vcs
+        let vc = canonicalized_original_vcs
             .get(index)
             .ok_or(RDFProofsError::Other("invalid VC index".to_string()))?;
         let proof_value = proof_values.get(index).ok_or(RDFProofsError::Other(
@@ -1465,7 +1483,7 @@ mod tests {
     use crate::{
         error::RDFProofsError,
         key_graph::KeyGraph,
-        proof::{derive_proof, verify_proof, VcWithDisclosed},
+        proof::{derive_proof, verify_proof, VcPair},
         tests::{
             get_dataset_from_nquads_str, get_deanon_map, get_graph_from_ntriples_str,
             KEY_GRAPH_NTRIPLES,
@@ -1590,8 +1608,8 @@ mod tests {
         let disclosed_vc_proof_2 = get_graph_from_ntriples_str(DISCLOSED_VC_PROOF_NTRIPLES_2);
         let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
 
-        let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
-        let vc_with_disclosed_2 = VcWithDisclosed::new(vc_2, disclosed_2);
+        let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
+        let vc_with_disclosed_2 = VcPair::new(vc_2, disclosed_2);
         let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
 
         let deanon_map = get_example_deanon_map();
@@ -1680,8 +1698,8 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let disclosed_vc_proof_2 = get_graph_from_ntriples_str(DISCLOSED_VC_PROOF_NTRIPLES_2);
         let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
 
-        let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
-        let vc_with_disclosed_2 = VcWithDisclosed::new(vc_2, disclosed_2);
+        let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
+        let vc_with_disclosed_2 = VcPair::new(vc_2, disclosed_2);
         let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
 
         let deanon_map = get_example_deanon_map();
@@ -1714,8 +1732,8 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let disclosed_vc_proof_2 = get_graph_from_ntriples_str(DISCLOSED_VC_PROOF_NTRIPLES_2);
         let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
 
-        let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
-        let vc_with_disclosed_2 = VcWithDisclosed::new(vc_2, disclosed_2);
+        let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
+        let vc_with_disclosed_2 = VcPair::new(vc_2, disclosed_2);
         let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
 
         let deanon_map = get_example_deanon_map();
@@ -1753,8 +1771,8 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let disclosed_vc_proof_2 = get_graph_from_ntriples_str(DISCLOSED_VC_PROOF_NTRIPLES_2);
         let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
 
-        let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
-        let vc_with_disclosed_2 = VcWithDisclosed::new(vc_2, disclosed_2);
+        let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
+        let vc_with_disclosed_2 = VcPair::new(vc_2, disclosed_2);
         let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
 
         let deanon_map = get_example_deanon_map();
@@ -1813,7 +1831,7 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Org
         let disclosed_vc_proof_1 = get_graph_from_ntriples_str(DISCLOSED_VC_PROOF_NTRIPLES_1);
         let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
 
-        let vc_with_disclosed_1 = VcWithDisclosed::new(vc_1, disclosed_1);
+        let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
         let vcs = vec![vc_with_disclosed_1];
 
         let nonce = "abcde";
@@ -1858,7 +1876,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let disclosed_vc_proof = get_graph_from_ntriples_str(DISCLOSED_VC_PROOF_NTRIPLES_1);
         let disclosed = VerifiableCredential::new(disclosed_vc_doc, disclosed_vc_proof);
 
-        let vc_with_disclosed = VcWithDisclosed::new(vc, disclosed);
+        let vc_with_disclosed = VcPair::new(vc, disclosed);
         let vcs = vec![vc_with_disclosed];
 
         let deanon_map = get_example_deanon_map();
