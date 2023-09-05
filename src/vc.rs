@@ -56,6 +56,25 @@ impl From<VerifiableCredentialView<'_>> for VerifiableCredentialTriples {
     }
 }
 
+impl From<&VerifiableCredentialView<'_>> for VerifiableCredentialTriples {
+    fn from(view: &VerifiableCredentialView) -> Self {
+        let mut document = view
+            .document
+            .iter()
+            .filter(|t| t.predicate != PROOF) // filter out `proof`
+            .map(|t| t.into_owned())
+            .collect::<Vec<_>>();
+        document.sort_by_cached_key(|t| t.to_string());
+        let mut proof = view
+            .proof
+            .iter()
+            .map(|t| t.into_owned())
+            .collect::<Vec<_>>();
+        proof.sort_by_cached_key(|t| t.to_string());
+        Self { document, proof }
+    }
+}
+
 impl From<&VerifiableCredential> for VerifiableCredentialTriples {
     fn from(view: &VerifiableCredential) -> Self {
         let mut document = view

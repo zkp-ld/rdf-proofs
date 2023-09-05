@@ -124,17 +124,8 @@ pub fn derive_proof<R: RngCore>(
     let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) =
         build_vp_draft(&disclosed_vcs, &nonce)?;
 
-    // decompose VP draft into graphs
-    let VpGraphs {
-        metadata: _,
-        proof: vp_proof,
-        proof_graph_name: vp_proof_graph_name,
-        filters: _filters_graph,
-        disclosed_vcs: canonicalized_disclosed_vc_graphs,
-    } = decompose_vp_draft(&vp_draft)?;
-
     // extract `proofValue`s from original VCs
-    let (randomized_original_vcs, proof_values): (Vec<_>, Vec<_>) = randomized_vc_pairs
+    let (randomized_original_vcs, vc_proof_values): (Vec<_>, Vec<_>) = randomized_vc_pairs
         .iter()
         .map(|VcPair { original: vc, .. }| vc)
         .map(|VerifiableCredential { document, proof }| {
@@ -196,42 +187,27 @@ pub fn derive_proof<R: RngCore>(
     }
     println!("");
 
+    // decompose VP draft into graphs
+    let VpGraphs {
+        metadata: _vp_metadata_graph,
+        proof: vp_proof_graph,
+        proof_graph_name: vp_proof_graph_name,
+        disclosed_vcs: canonicalized_disclosed_vc_graphs,
+        filters: _filters_graph,
+    } = decompose_vp_draft(&vp_draft)?;
+
     // reorder the original VC graphs and proof values
     // according to the order of canonicalized graph names of disclosed VCs
-    let (c14n_original_vc_triples, ordered_proof_values) = reorder_vc_graphs(
+    let (original_vc_vec, disclosed_vc_vec, vc_proof_values_vec) = reorder_vc_graphs(
         &canonicalized_original_vcs,
-        &proof_values,
+        &vc_proof_values,
         &canonicalized_disclosed_vc_graphs,
         &extended_deanon_map,
         &vc_document_graph_names,
     )?;
 
-    // assert the keys of two VC graphs are equivalent
-    if !c14n_original_vc_triples
-        .keys()
-        .eq(canonicalized_disclosed_vc_graphs.keys())
-    {
-        return Err(RDFProofsError::Other(
-            "gen_index_map: the keys of two VC graphs must be equivalent".to_string(),
-        ));
-    }
-
-    // convert to Vecs
-    let original_vec = c14n_original_vc_triples
-        .into_iter()
-        .map(|(_, v)| v.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
-    let disclosed_vec = canonicalized_disclosed_vc_graphs
-        .into_iter()
-        .map(|(_, v)| v.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
-    let proof_values_vec = ordered_proof_values
-        .into_iter()
-        .map(|(_, v)| v)
-        .collect::<Vec<_>>();
-
     println!("canonicalized original VC graphs (sorted):");
-    for VerifiableCredentialTriples { document, proof } in &original_vec {
+    for VerifiableCredentialTriples { document, proof } in &original_vc_vec {
         println!(
             "document:\n{}",
             document
@@ -250,7 +226,7 @@ pub fn derive_proof<R: RngCore>(
         );
     }
     println!("canonicalized disclosed VC graphs (sorted):");
-    for VerifiableCredentialTriples { document, proof } in &disclosed_vec {
+    for VerifiableCredentialTriples { document, proof } in &disclosed_vc_vec {
         println!(
             "document:\n{}",
             document
@@ -270,23 +246,23 @@ pub fn derive_proof<R: RngCore>(
     }
 
     // generate index map
-    let index_map = gen_index_map(&original_vec, &disclosed_vec, &extended_deanon_map)?;
+    let index_map = gen_index_map(&original_vc_vec, &disclosed_vc_vec, &extended_deanon_map)?;
     println!("index_map:\n{:#?}\n", index_map);
 
     // derive proof value
     let derived_proof_value = derive_proof_value(
         rng,
-        original_vec,
-        disclosed_vec,
+        original_vc_vec,
+        disclosed_vc_vec,
         public_keys,
-        proof_values_vec,
+        vc_proof_values_vec,
         index_map,
         &vp_draft,
         nonce,
     )?;
 
     // add derived proof value to VP
-    let vp_proof_subject = vp_proof
+    let vp_proof_subject = vp_proof_graph
         .subject_for_predicate_object(TYPE, DATA_INTEGRITY_PROOF)
         .ok_or(RDFProofsError::InvalidVP)?;
     let vp_proof_value_quad = QuadRef::new(
@@ -873,16 +849,17 @@ fn decompose_vp_draft<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsErro
     })
 }
 
-fn reorder_vc_graphs<'a>(
-    canonicalized_original_vcs: &'a Vec<CanonicalVerifiableCredentialTriples>,
-    proof_values: &'a Vec<&str>,
-    canonicalized_disclosed_vc_graphs: &OrderedVerifiableCredentialGraphViews<'a>,
-    extended_deanon_map: &'a HashMap<NamedOrBlankNode, Term>,
+fn reorder_vc_graphs(
+    canonicalized_original_vcs: &Vec<CanonicalVerifiableCredentialTriples>,
+    proof_values: &Vec<&str>,
+    canonicalized_disclosed_vc_graphs: &OrderedVerifiableCredentialGraphViews,
+    extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
     vc_document_graph_names: &Vec<BlankNode>,
 ) -> Result<
     (
-        BTreeMap<OrderedGraphNameRef<'a>, &'a CanonicalVerifiableCredentialTriples>,
-        BTreeMap<OrderedGraphNameRef<'a>, &'a str>,
+        Vec<VerifiableCredentialTriples>,
+        Vec<VerifiableCredentialTriples>,
+        Vec<String>,
     ),
     RDFProofsError,
 > {
@@ -912,18 +889,42 @@ fn reorder_vc_graphs<'a>(
         ordered_proof_values.insert(k.clone(), proof_value.to_owned());
     }
 
-    Ok((ordered_vcs, ordered_proof_values))
+    // assert the keys of two VC graphs are equivalent
+    if !ordered_vcs
+        .keys()
+        .eq(canonicalized_disclosed_vc_graphs.keys())
+    {
+        return Err(RDFProofsError::Other(
+            "gen_index_map: the keys of two VC graphs must be equivalent".to_string(),
+        ));
+    }
+
+    // convert to Vecs
+    let original_vc_vec = ordered_vcs
+        .into_iter()
+        .map(|(_, v)| v.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+    let disclosed_vc_vec = canonicalized_disclosed_vc_graphs
+        .into_iter()
+        .map(|(_, v)| v.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+    let vc_proof_values_vec = ordered_proof_values
+        .into_iter()
+        .map(|(_, v)| v.into())
+        .collect::<Vec<_>>();
+
+    Ok((original_vc_vec, disclosed_vc_vec, vc_proof_values_vec))
 }
 
 fn gen_index_map(
-    c14n_original_vc_triples: &Vec<VerifiableCredentialTriples>,
-    c14n_disclosed_vc_triples: &Vec<VerifiableCredentialTriples>,
+    original_vc_vec: &Vec<VerifiableCredentialTriples>,
+    disclosed_vc_vec: &Vec<VerifiableCredentialTriples>,
     extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
 ) -> Result<Vec<StatementIndexMap>, RDFProofsError> {
-    let mut c14n_disclosed_vc_triples_cloned = (*c14n_disclosed_vc_triples).clone();
+    let mut disclosed_vc_triples_cloned = (*disclosed_vc_vec).clone();
 
     // deanonymize each disclosed VC triples, keeping their orders
-    for VerifiableCredentialTriples { document, proof } in &mut c14n_disclosed_vc_triples_cloned {
+    for VerifiableCredentialTriples { document, proof } in &mut disclosed_vc_triples_cloned {
         for triple in document.into_iter() {
             deanonymize_subject(extended_deanon_map, &mut triple.subject)?;
             deanonymize_named_node(extended_deanon_map, &mut triple.predicate)?;
@@ -936,7 +937,7 @@ fn gen_index_map(
         }
     }
     println!("deanonymized canonicalized disclosed VC graphs:");
-    for VerifiableCredentialTriples { document, proof } in &c14n_disclosed_vc_triples_cloned {
+    for VerifiableCredentialTriples { document, proof } in &disclosed_vc_triples_cloned {
         println!(
             "document:\n{}",
             document
@@ -956,9 +957,9 @@ fn gen_index_map(
     }
 
     // calculate index mapping
-    let index_map = c14n_disclosed_vc_triples_cloned
+    let index_map = disclosed_vc_triples_cloned
         .iter()
-        .zip(c14n_original_vc_triples)
+        .zip(original_vc_vec)
         .map(
             |(
                 VerifiableCredentialTriples {
@@ -1057,7 +1058,7 @@ fn derive_proof_value<R: RngCore>(
     original_vc_triples: Vec<VerifiableCredentialTriples>,
     disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
     public_keys: Vec<BBSPublicKeyG2<Bls12_381>>,
-    proof_values: Vec<&str>,
+    proof_values: Vec<String>,
     index_map: Vec<StatementIndexMap>,
     canonicalized_vp: &Dataset,
     nonce: Option<&str>,
