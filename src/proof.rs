@@ -337,21 +337,6 @@ pub fn verify_proof<R: RngCore>(
         }
     }?;
 
-    if let Some(given_nonce) = nonce {
-        let nonce_in_vp_triple = vp_proof_with_value
-            .triples_for_predicate(CHALLENGE)
-            .next()
-            .ok_or(RDFProofsError::MissingChallengeInVP)?;
-        if let TermRef::Literal(v) = nonce_in_vp_triple.object {
-            if v.value() != given_nonce {
-                return Err(RDFProofsError::MismatchedChallenge);
-            }
-        } else {
-            return Err(RDFProofsError::InvalidChallengeDatatype);
-        }
-    } else {
-    };
-
     // canonicalize VP
     let c14n_map_for_disclosed = rdf_canon::issue(&vp_without_proof_value)?;
     let canonicalized_vp = rdf_canon::relabel(&vp_without_proof_value, &c14n_map_for_disclosed)?;
