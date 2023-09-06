@@ -15,8 +15,8 @@ use crate::{
     },
     signature::verify,
     vc::{
-        CanonicalVerifiableCredentialTriples, DisclosedVerifiableCredential, VcPair,
-        VerifiableCredential, VerifiableCredentialTriples, VerifiableCredentialView, VpGraphs,
+        DisclosedVerifiableCredential, VcPair, VerifiableCredential, VerifiableCredentialTriples,
+        VerifiableCredentialView, VpGraphs,
     },
 };
 use ark_bls12_381::Bls12_381;
@@ -124,6 +124,15 @@ pub fn derive_proof<R: RngCore>(
     let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) =
         build_vp_draft(&disclosed_vcs, &nonce)?;
 
+    // decompose VP draft into graphs
+    let VpGraphs {
+        metadata: _vp_metadata_graph,
+        proof: vp_proof_graph,
+        proof_graph_name: vp_proof_graph_name,
+        disclosed_vcs: canonicalized_disclosed_vc_graphs,
+        filters: _filters_graph,
+    } = decompose_vp(&vp_draft)?;
+
     // extract `proofValue`s from original VCs
     let (randomized_original_vcs, vc_proof_values): (Vec<_>, Vec<_>) = randomized_vc_pairs
         .iter()
@@ -152,31 +161,8 @@ pub fn derive_proof<R: RngCore>(
         .unzip();
 
     // canonicalize original VCs
-    let canonicalized_original_vcs = canonicalize_original_vcs(&randomized_original_vcs)?;
-
-    // compose bnode maps resulted from canonicalization
-    let mut original_vcs_bnode_map = HashMap::<String, String>::new();
-    for CanonicalVerifiableCredentialTriples {
-        document_bnode_map,
-        proof_bnode_map,
-        ..
-    } in &canonicalized_original_vcs
-    {
-        for (k, v) in document_bnode_map {
-            if original_vcs_bnode_map.contains_key(k) {
-                return Err(RDFProofsError::BlankNodeCollision);
-            } else {
-                original_vcs_bnode_map.insert(k.to_string(), v.to_string());
-            }
-        }
-        for (k, v) in proof_bnode_map {
-            if original_vcs_bnode_map.contains_key(k) {
-                return Err(RDFProofsError::BlankNodeCollision);
-            } else {
-                original_vcs_bnode_map.insert(k.to_string(), v.to_string());
-            }
-        }
-    }
+    let (canonicalized_original_vcs, original_vcs_bnode_map) =
+        canonicalize_vcs(&randomized_original_vcs)?;
 
     // construct extended deanonymization map
     let extended_deanon_map =
@@ -186,15 +172,6 @@ pub fn derive_proof<R: RngCore>(
         println!("{}: {}", f.to_string(), t.to_string());
     }
     println!("");
-
-    // decompose VP draft into graphs
-    let VpGraphs {
-        metadata: _vp_metadata_graph,
-        proof: vp_proof_graph,
-        proof_graph_name: vp_proof_graph_name,
-        disclosed_vcs: canonicalized_disclosed_vc_graphs,
-        filters: _filters_graph,
-    } = decompose_vp_draft(&vp_draft)?;
 
     // reorder the original VC graphs and proof values
     // according to the order of canonicalized graph names of disclosed VCs
@@ -286,12 +263,12 @@ pub fn verify_proof<R: RngCore>(
 ) -> Result<(), RDFProofsError> {
     println!("VP:\n{}", rdf_canon::serialize(&vp));
 
-    // decompose VP into graphs
+    // decompose VP into graphs to identify VP proof and proof graph name
     let VpGraphs {
         proof: vp_proof_with_value,
         proof_graph_name,
         ..
-    } = decompose_vp_draft(vp)?;
+    } = decompose_vp(vp)?;
     let proof_graph_name: GraphNameRef = proof_graph_name.into();
 
     // get proof value
@@ -354,7 +331,7 @@ pub fn verify_proof<R: RngCore>(
         proof_graph_name: _,
         filters: _filters_graph,
         disclosed_vcs: c14n_disclosed_vc_graphs,
-    } = decompose_vp_draft(&canonicalized_vp)?;
+    } = decompose_vp(&canonicalized_vp)?;
 
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
@@ -595,29 +572,39 @@ fn deanonymize_term(
     Ok(())
 }
 
-fn canonicalize_original_vcs(
-    original_vcs: &Vec<VerifiableCredential>,
-) -> Result<Vec<CanonicalVerifiableCredentialTriples>, RDFProofsError> {
-    original_vcs
+fn canonicalize_vcs(
+    vcs: &Vec<VerifiableCredential>,
+) -> Result<(Vec<VerifiableCredential>, HashMap<String, String>), RDFProofsError> {
+    let mut bnode_map = HashMap::new();
+    let canonicalized_vcs = vcs
         .iter()
         .map(|VerifiableCredential { document, proof }| {
-            let document_issued_identifiers_map = rdf_canon::issue_graph(&document)?;
-            let proof_issued_identifiers_map = rdf_canon::issue_graph(&proof)?;
-            let canonicalized_document =
-                rdf_canon::relabel_graph(&document, &document_issued_identifiers_map)?;
-            let canonicalized_proof =
-                rdf_canon::relabel_graph(&proof, &proof_issued_identifiers_map)?;
-            Ok(CanonicalVerifiableCredentialTriples::new(
-                canonicalized_document
-                    .iter()
-                    .map(|t| t.into_owned())
-                    .collect(),
-                document_issued_identifiers_map,
-                canonicalized_proof.iter().map(|t| t.into_owned()).collect(),
-                proof_issued_identifiers_map,
+            let document_bnode_map = rdf_canon::issue_graph(&document)?;
+            for (k, v) in &document_bnode_map {
+                if bnode_map.contains_key(k) {
+                    return Err(RDFProofsError::BlankNodeCollision);
+                } else {
+                    bnode_map.insert(k.to_string(), v.to_string());
+                }
+            }
+            let proof_bnode_map = rdf_canon::issue_graph(&proof)?;
+            for (k, v) in &proof_bnode_map {
+                if bnode_map.contains_key(k) {
+                    return Err(RDFProofsError::BlankNodeCollision);
+                } else {
+                    bnode_map.insert(k.to_string(), v.to_string());
+                }
+            }
+
+            let canonicalized_document = rdf_canon::relabel_graph(&document, &document_bnode_map)?;
+            let canonicalized_proof = rdf_canon::relabel_graph(&proof, &proof_bnode_map)?;
+            Ok(VerifiableCredential::new(
+                canonicalized_document,
+                canonicalized_proof,
             ))
         })
-        .collect::<Result<Vec<_>, RDFProofsError>>()
+        .collect::<Result<Vec<_>, RDFProofsError>>()?;
+    Ok((canonicalized_vcs, bnode_map))
 }
 
 fn build_vp_draft(
@@ -723,6 +710,7 @@ fn build_vp_draft(
         })
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
 
+    // merge VC dataset into VP draft
     for (vc_graph_name, vc_quad) in vc_quads {
         vp.insert(QuadRef::new(
             &vp_id,
@@ -792,7 +780,7 @@ fn extend_deanon_map(
     Ok(res)
 }
 
-fn decompose_vp_draft<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
+fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
     let mut vp_graphs = dataset_into_ordered_graphs(vp);
 
     // extract VP metadata (default graph)
@@ -835,7 +823,7 @@ fn decompose_vp_draft<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsErro
 }
 
 fn reorder_vc_graphs(
-    canonicalized_original_vcs: &Vec<CanonicalVerifiableCredentialTriples>,
+    canonicalized_original_vcs: &Vec<VerifiableCredential>,
     proof_values: &Vec<&str>,
     canonicalized_disclosed_vc_graphs: &OrderedVerifiableCredentialGraphViews,
     extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
