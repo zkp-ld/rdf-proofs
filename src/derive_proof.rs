@@ -1,22 +1,22 @@
-use super::constants::{CRYPTOSUITE_PROOF, NYM_IRI_PREFIX};
+use super::constants::CRYPTOSUITE_PROOF;
 use crate::{
-    common::{get_delimiter, get_hasher, hash_term_to_field, randomize_bnodes, Fr, ProofG1},
+    common::{
+        decompose_vp, get_delimiter, get_hasher, hash_term_to_field, is_nym, randomize_bnodes,
+        reorder_vc_triples, Fr, ProofG1, ProofWithIndexMap, StatementIndexMap,
+    },
     context::{
-        ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, MULTIBASE,
-        PROOF, PROOF_PURPOSE, PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
+        ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF,
+        PROOF_PURPOSE, PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
         VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
     key_gen::generate_params,
     key_graph::KeyGraph,
-    ordered_triple::{
-        OrderedGraphNameRef, OrderedGraphViews, OrderedNamedOrBlankNode,
-        OrderedVerifiableCredentialGraphViews,
-    },
+    ordered_triple::{OrderedNamedOrBlankNode, OrderedVerifiableCredentialGraphViews},
     signature::verify,
     vc::{
         DisclosedVerifiableCredential, VcPair, VerifiableCredential, VerifiableCredentialTriples,
-        VerifiableCredentialView, VpGraphs,
+        VpGraphs,
     },
 };
 use ark_bls12_381::Bls12_381;
@@ -28,10 +28,9 @@ use blake2::Blake2b512;
 use chrono::offset::Utc;
 use multibase::Base;
 use oxrdf::{
-    dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
-    BlankNode, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode, NamedNodeRef, NamedOrBlankNode,
-    Quad, QuadRef, Subject, Term, TermRef, Triple,
+    BlankNode, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode, NamedOrBlankNode, Quad,
+    QuadRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
     prelude::{EqualWitnesses, MetaStatements},
@@ -39,22 +38,7 @@ use proof_system::{
     statement::{bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, Statements},
     witness::{PoKBBSSignatureG1 as PoKBBSSignatureG1Wit, Witnesses},
 };
-use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, Bytes};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename = "0")]
-struct StatementIndexMap {
-    #[serde(rename = "1")]
-    document_map: Vec<usize>,
-    #[serde(rename = "2")]
-    document_len: usize,
-    #[serde(rename = "3")]
-    proof_map: Vec<usize>,
-    #[serde(rename = "4")]
-    proof_len: usize,
-}
 
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
@@ -167,6 +151,11 @@ pub fn derive_proof<R: RngCore>(
     let (canonicalized_original_vcs, original_vcs_bnode_map) =
         canonicalize_vcs(&original_vcs_without_proof_value)?;
 
+    for v in &canonicalized_original_vcs {
+        println!("canonicalized_original_vcs: {}", v);
+    }
+    println!("original vcs bnode map: {:#?}", original_vcs_bnode_map);
+
     // construct extended deanonymization map
     let extended_deanon_map =
         extend_deanon_map(deanon_map, &vp_draft_bnode_map, &original_vcs_bnode_map)?;
@@ -186,7 +175,7 @@ pub fn derive_proof<R: RngCore>(
         &vc_document_graph_names,
     )?;
 
-    println!("canonicalized original VC graphs (sorted):");
+    println!("canonicalized original VC (sorted):");
     for VerifiableCredentialTriples { document, proof } in &original_vc_vec {
         println!(
             "document:\n{}",
@@ -205,7 +194,7 @@ pub fn derive_proof<R: RngCore>(
                 .unwrap()
         );
     }
-    println!("canonicalized disclosed VC graphs (sorted):");
+    println!("canonicalized disclosed VC (sorted):");
     for VerifiableCredentialTriples { document, proof } in &disclosed_vc_vec {
         println!(
             "document:\n{}",
@@ -257,186 +246,6 @@ pub fn derive_proof<R: RngCore>(
     Ok(Dataset::from_iter(canonicalized_vp_quads))
 }
 
-/// verify VP
-pub fn verify_proof<R: RngCore>(
-    rng: &mut R,
-    vp: &Dataset,
-    nonce: Option<&str>,
-    key_graph: &KeyGraph,
-) -> Result<(), RDFProofsError> {
-    println!("VP:\n{}", rdf_canon::serialize(&vp));
-
-    // decompose VP into graphs to identify VP proof and proof graph name
-    let VpGraphs {
-        proof: vp_proof_with_value,
-        proof_graph_name,
-        ..
-    } = decompose_vp(vp)?;
-    let proof_graph_name: GraphNameRef = proof_graph_name.into();
-
-    // get proof value
-    let proof_value_triple = vp_proof_with_value
-        .triples_for_predicate(PROOF_VALUE)
-        .next()
-        .ok_or(RDFProofsError::InvalidVP)?;
-    let proof_value_encoded = match proof_value_triple.object {
-        TermRef::Literal(v) => Ok(v.value()),
-        _ => Err(RDFProofsError::InvalidVP),
-    }?;
-
-    // drop proof value from VP proof before canonicalization
-    // (otherwise it could differ from the prover's canonicalization)
-    let vp_without_proof_value = Dataset::from_iter(
-        vp.iter()
-            .filter(|q| !(q.predicate == PROOF_VALUE && q.graph_name == proof_graph_name)),
-    );
-
-    // nonce check
-    let get_nonce = || {
-        let nonce_in_vp_triple = vp_proof_with_value.triples_for_predicate(CHALLENGE).next();
-        if let Some(triple) = nonce_in_vp_triple {
-            if let TermRef::Literal(v) = triple.object {
-                Ok(Some(v.value()))
-            } else {
-                Err(RDFProofsError::InvalidChallengeDatatype)
-            }
-        } else {
-            Ok(None)
-        }
-    };
-    match (nonce, get_nonce()?) {
-        (None, None) => Ok(()),
-        (None, Some(_)) => Err(RDFProofsError::MissingChallengeInRequest),
-        (Some(_), None) => Err(RDFProofsError::MissingChallengeInVP),
-        (Some(given_nonce), Some(nonce_in_vp)) => {
-            if given_nonce == nonce_in_vp {
-                Ok(())
-            } else {
-                Err(RDFProofsError::MismatchedChallenge)
-            }
-        }
-    }?;
-
-    // canonicalize VP
-    let c14n_map_for_disclosed = rdf_canon::issue(&vp_without_proof_value)?;
-    let canonicalized_vp = rdf_canon::relabel(&vp_without_proof_value, &c14n_map_for_disclosed)?;
-    println!(
-        "canonicalized VP:\n{}",
-        rdf_canon::serialize(&canonicalized_vp)
-    );
-
-    // TODO: check VP
-
-    // decompose canonicalized VP into graphs
-    let VpGraphs {
-        metadata: _,
-        proof: _,
-        proof_graph_name: _,
-        filters: _filters_graph,
-        disclosed_vcs: c14n_disclosed_vc_graphs,
-    } = decompose_vp(&canonicalized_vp)?;
-
-    // get issuer public keys
-    let public_keys = c14n_disclosed_vc_graphs
-        .iter()
-        .map(|(_, vc)| get_public_keys_from_graphview(&vc.proof, key_graph))
-        .collect::<Result<Vec<_>, _>>()?;
-    println!("public_keys:\n{:#?}\n", public_keys);
-
-    // convert to Vecs
-    let disclosed_vec = c14n_disclosed_vc_graphs
-        .into_iter()
-        .map(|(_, v)| v.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
-
-    // deserialize proof value into proof and index_map
-    let (_, proof_value_bytes) = multibase::decode(proof_value_encoded)?;
-    let ProofWithIndexMap {
-        proof: proof_bytes,
-        index_map,
-    } = serde_cbor::from_slice(&proof_value_bytes)?;
-    let proof = ProofG1::deserialize_compressed(&*proof_bytes)?;
-    println!("proof:\n{:#?}\n", proof);
-    println!("index_map:\n{:#?}\n", index_map);
-
-    // reorder statements according to index map
-    let reordered_vc_triples = reorder_vc_triples(&disclosed_vec, &index_map)?;
-    println!(
-        "reordered_disclosed_vc_triples:\n{:#?}\n",
-        reordered_vc_triples
-    );
-
-    // identify disclosed terms
-    let disclosed_terms = reordered_vc_triples
-        .iter()
-        .enumerate()
-        .map(|(i, disclosed_vc_triples)| get_disclosed_terms(disclosed_vc_triples, i))
-        .collect::<Result<Vec<_>, RDFProofsError>>()?;
-    println!("disclosed_terms:\n{:#?}\n", disclosed_terms);
-
-    let params_and_pks = disclosed_terms
-        .iter()
-        .zip(public_keys)
-        .map(|(t, pk)| (generate_params(t.term_count), pk));
-
-    // merge each partial equivs
-    let mut equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> = BTreeMap::new();
-    for DisclosedTerms {
-        equivs: partial_equivs,
-        ..
-    } in &disclosed_terms
-    {
-        for (k, v) in partial_equivs {
-            equivs
-                .entry(k.clone().into())
-                .or_default()
-                .extend(v.clone());
-        }
-    }
-    // drop single-element vecs from equivs
-    let equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> =
-        equivs.into_iter().filter(|(_, v)| v.len() > 1).collect();
-
-    // build statements
-    let mut statements = Statements::<Bls12_381, <Bls12_381 as Pairing>::G1Affine>::new();
-    for (DisclosedTerms { disclosed, .. }, (params, public_key)) in
-        disclosed_terms.iter().zip(params_and_pks)
-    {
-        statements.add(PoKBBSSignatureG1Stmt::new_statement_from_params(
-            params,
-            public_key,
-            disclosed.clone(),
-        ));
-    }
-
-    // build meta statements
-    let mut meta_statements = MetaStatements::new();
-    for (_, equiv_vec) in equivs {
-        let equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
-        meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
-    }
-
-    // build context
-    let serialized_vp = rdf_canon::serialize(&canonicalized_vp).into_bytes();
-    let serialized_vp_with_index_map = ProofWithIndexMap {
-        proof: serialized_vp,
-        index_map: index_map.clone(),
-    };
-    let context = serde_cbor::to_vec(&serialized_vp_with_index_map)?;
-
-    // build proof spec
-    let proof_spec = ProofSpec::new(statements, meta_statements, vec![], Some(context));
-    proof_spec.validate()?;
-
-    // verify proof
-    Ok(proof.verify::<R, Blake2b512>(
-        rng,
-        proof_spec,
-        nonce.map(|v| v.as_bytes().to_vec()),
-        Default::default(),
-    )?)
-}
-
 fn get_public_keys(
     proof_graph: &Graph,
     key_graph: &KeyGraph,
@@ -450,61 +259,6 @@ fn get_public_keys(
         _ => Err(RDFProofsError::InvalidVerificationMethodURL),
     }?;
     key_graph.get_public_key(vm)
-}
-
-// TODO: to be integrated with `get_public_keys`
-fn get_public_keys_from_graphview(
-    proof_graph: &GraphView,
-    key_graph: &KeyGraph,
-) -> Result<BBSPublicKeyG2<Bls12_381>, RDFProofsError> {
-    let vm_triple = proof_graph
-        .triples_for_predicate(VERIFICATION_METHOD)
-        .next()
-        .ok_or(RDFProofsError::InvalidVerificationMethod)?;
-    let vm = match vm_triple.object {
-        TermRef::NamedNode(v) => Ok(v),
-        _ => Err(RDFProofsError::InvalidVerificationMethodURL),
-    }?;
-    key_graph.get_public_key(vm)
-}
-
-// function to remove from the VP the multiple graphs that are reachable from `source` via `link`
-fn remove_graphs<'a>(
-    vp_graphs: &mut OrderedGraphViews<'a>,
-    source: &GraphView<'a>,
-    link: NamedNodeRef,
-) -> Result<OrderedGraphViews<'a>, RDFProofsError> {
-    source
-        .iter()
-        .filter(|triple| triple.predicate == link)
-        .map(|triple| {
-            Ok((
-                triple.object.try_into()?,
-                vp_graphs
-                    .remove(&triple.object.try_into()?)
-                    .ok_or(RDFProofsError::InvalidVP)?,
-            ))
-        })
-        .collect::<Result<OrderedGraphViews, RDFProofsError>>()
-}
-
-// function to remove from the VP the single graph that is reachable from `source` via `link`
-fn remove_graph<'a>(
-    vp_graphs: &mut OrderedGraphViews<'a>,
-    source: &GraphView<'a>,
-    link: NamedNodeRef,
-) -> Result<(OrderedGraphNameRef<'a>, GraphView<'a>), RDFProofsError> {
-    let mut graphs = remove_graphs(vp_graphs, source, link)?;
-    match graphs.pop_first() {
-        Some((graph_name, graph)) => {
-            if graphs.is_empty() {
-                Ok((graph_name, graph))
-            } else {
-                Err(RDFProofsError::InvalidVP)
-            }
-        }
-        None => Err(RDFProofsError::InvalidVP),
-    }
 }
 
 fn deanonymize_subject(
@@ -743,18 +497,6 @@ fn build_vp(
     ))
 }
 
-fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
-    let graph_name_set = dataset
-        .iter()
-        .map(|QuadRef { graph_name, .. }| OrderedGraphNameRef::new(graph_name))
-        .collect::<BTreeSet<_>>();
-
-    graph_name_set
-        .into_iter()
-        .map(|graph_name| (graph_name.clone(), dataset.graph(graph_name)))
-        .collect()
-}
-
 fn extend_deanon_map(
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     vp_draft_bnode_map: &HashMap<String, String>,
@@ -785,48 +527,6 @@ fn extend_deanon_map(
         }
     }
     Ok(res)
-}
-
-fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
-    let mut vp_graphs = dataset_into_ordered_graphs(vp);
-
-    // extract VP metadata (default graph)
-    let metadata = vp_graphs
-        .remove(&OrderedGraphNameRef::new(GraphNameRef::default()))
-        .ok_or(RDFProofsError::Other(
-            "VP graphs must have default graph".to_owned(),
-        ))?;
-
-    // extract VP proof graph
-    let (vp_proof_graph_name, vp_proof) = remove_graph(&mut vp_graphs, &metadata, PROOF)?;
-
-    // extract filter graphs if any
-    let filters = remove_graphs(&mut vp_graphs, &vp_proof, FILTER)?;
-
-    // extract VC graphs
-    let vcs = remove_graphs(&mut vp_graphs, &metadata, VERIFIABLE_CREDENTIAL)?;
-
-    // extract VC proof graphs
-    let disclosed_vcs = vcs
-        .into_iter()
-        .map(|(vc_graph_name, vc)| {
-            let (_, vc_proof) = remove_graph(&mut vp_graphs, &vc, PROOF)?;
-            Ok((vc_graph_name, VerifiableCredentialView::new(vc, vc_proof)))
-        })
-        .collect::<Result<OrderedVerifiableCredentialGraphViews, RDFProofsError>>()?;
-
-    // check if `vp_graphs` is empty
-    if !vp_graphs.is_empty() {
-        return Err(RDFProofsError::InvalidVP);
-    }
-
-    Ok(VpGraphs {
-        metadata,
-        proof: vp_proof,
-        proof_graph_name: vp_proof_graph_name,
-        filters,
-        disclosed_vcs,
-    })
 }
 
 fn reorder_vc_graphs(
@@ -973,66 +673,17 @@ fn gen_index_map(
                     .collect::<Result<Vec<_>, _>>()?;
                 let document_len = original_document.len();
                 let proof_len = original_proof.len();
-                Ok(StatementIndexMap {
+                Ok(StatementIndexMap::new(
                     document_map,
                     document_len,
                     proof_map,
                     proof_len,
-                })
+                ))
             },
         )
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
 
     Ok(index_map)
-}
-
-fn reorder_vc_triples(
-    vc_triples: &[VerifiableCredentialTriples],
-    index_map: &[StatementIndexMap],
-) -> Result<Vec<DisclosedVerifiableCredential>, RDFProofsError> {
-    vc_triples
-        .iter()
-        .enumerate()
-        .map(|(i, VerifiableCredentialTriples { document, proof })| {
-            let StatementIndexMap {
-                document_map,
-                proof_map,
-                document_len,
-                proof_len,
-            } = &index_map.get(i).ok_or(RDFProofsError::DeriveProofValue)?;
-
-            let mut mapped_document = document
-                .iter()
-                .enumerate()
-                .map(|(j, triple)| {
-                    let mapped_index = document_map
-                        .get(j)
-                        .ok_or(RDFProofsError::DeriveProofValue)?;
-                    Ok((*mapped_index, Some(triple.clone())))
-                })
-                .collect::<Result<BTreeMap<_, _>, RDFProofsError>>()?;
-            for i in 0..*document_len {
-                mapped_document.entry(i).or_insert(None);
-            }
-
-            let mut mapped_proof = proof
-                .iter()
-                .enumerate()
-                .map(|(j, triple)| {
-                    let mapped_index = proof_map.get(j).ok_or(RDFProofsError::DeriveProofValue)?;
-                    Ok((*mapped_index, Some(triple.clone())))
-                })
-                .collect::<Result<BTreeMap<_, _>, RDFProofsError>>()?;
-            for i in 0..*proof_len {
-                mapped_proof.entry(i).or_insert(None);
-            }
-
-            Ok(DisclosedVerifiableCredential {
-                document: mapped_document,
-                proof: mapped_proof,
-            })
-        })
-        .collect::<Result<Vec<_>, RDFProofsError>>()
 }
 
 fn derive_proof_value<R: RngCore>(
@@ -1167,142 +818,6 @@ fn serialize_proof_with_index_map(
     let proof_with_index_map_multibase =
         multibase::encode(Base::Base64Url, proof_with_index_map_cbor);
     Ok(proof_with_index_map_multibase)
-}
-
-#[serde_as]
-#[derive(Serialize, Deserialize)]
-struct ProofWithIndexMap {
-    #[serde_as(as = "Bytes")]
-    proof: Vec<u8>,
-    index_map: Vec<StatementIndexMap>,
-}
-
-#[derive(Debug)]
-struct DisclosedTerms {
-    disclosed: BTreeMap<usize, Fr>,
-    equivs: HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
-    term_count: usize,
-}
-
-fn get_disclosed_terms(
-    disclosed_vc_triples: &DisclosedVerifiableCredential,
-    vc_index: usize,
-) -> Result<DisclosedTerms, RDFProofsError> {
-    let mut disclosed_terms = BTreeMap::<usize, Fr>::new();
-    let mut equivs = HashMap::<NamedOrBlankNode, Vec<(usize, usize)>>::new();
-
-    let DisclosedVerifiableCredential {
-        document: disclosed_document,
-        proof: disclosed_proof,
-    } = disclosed_vc_triples;
-
-    for (j, disclosed_triple) in disclosed_document {
-        let subject_index = 3 * j;
-        build_disclosed_terms(
-            disclosed_triple,
-            subject_index,
-            vc_index,
-            &mut disclosed_terms,
-            &mut equivs,
-        )?;
-    }
-
-    let delimiter_index = disclosed_document.len() * 3;
-    let proof_index = delimiter_index + 1;
-    let delimiter = get_delimiter()?;
-    disclosed_terms.insert(delimiter_index, delimiter);
-
-    for (j, disclosed_triple) in disclosed_proof {
-        let subject_index = 3 * j + proof_index;
-        build_disclosed_terms(
-            disclosed_triple,
-            subject_index,
-            vc_index,
-            &mut disclosed_terms,
-            &mut equivs,
-        )?;
-    }
-    Ok(DisclosedTerms {
-        disclosed: disclosed_terms,
-        equivs,
-        term_count: (disclosed_document.len() + disclosed_proof.len()) * 3 + 1,
-    })
-}
-
-fn build_disclosed_terms(
-    disclosed_triple: &Option<Triple>,
-    subject_index: usize,
-    vc_index: usize,
-    disclosed_terms: &mut BTreeMap<usize, Fr>,
-    equivs: &mut HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
-) -> Result<(), RDFProofsError> {
-    let predicate_index = subject_index + 1;
-    let object_index = subject_index + 2;
-
-    let hasher = get_hasher();
-
-    match disclosed_triple {
-        Some(triple) => {
-            match &triple.subject {
-                Subject::BlankNode(b) => {
-                    equivs
-                        .entry(NamedOrBlankNode::BlankNode(b.clone().into()))
-                        .or_default()
-                        .push((vc_index, subject_index));
-                }
-                Subject::NamedNode(n) if is_nym(n) => {
-                    equivs
-                        .entry(NamedOrBlankNode::NamedNode(n.clone().into()))
-                        .or_default()
-                        .push((vc_index, subject_index));
-                }
-                Subject::NamedNode(n) => {
-                    let subject_fr = hash_term_to_field(n.into(), &hasher)?;
-                    disclosed_terms.insert(subject_index, subject_fr);
-                }
-                #[cfg(feature = "rdf-star")]
-                Subject::Triple(_) => return Err(RDFProofsError::RDFStarUnsupported),
-            };
-
-            if is_nym(&triple.predicate) {
-                equivs
-                    .entry(NamedOrBlankNode::NamedNode(triple.predicate.clone().into()))
-                    .or_default()
-                    .push((vc_index, predicate_index));
-            } else {
-                let predicate_fr = hash_term_to_field((&triple.predicate).into(), &hasher)?;
-                disclosed_terms.insert(predicate_index, predicate_fr);
-            };
-
-            match &triple.object {
-                Term::BlankNode(b) => {
-                    equivs
-                        .entry(NamedOrBlankNode::BlankNode(b.clone().into()))
-                        .or_default()
-                        .push((vc_index, object_index));
-                }
-                Term::NamedNode(n) if is_nym(n) => {
-                    equivs
-                        .entry(NamedOrBlankNode::NamedNode(n.clone().into()))
-                        .or_default()
-                        .push((vc_index, object_index));
-                }
-                Term::NamedNode(n) => {
-                    let object_fr = hash_term_to_field(n.into(), &hasher)?;
-                    disclosed_terms.insert(object_index, object_fr);
-                }
-                Term::Literal(v) => {
-                    let object_fr = hash_term_to_field(v.into(), &hasher)?;
-                    disclosed_terms.insert(object_index, object_fr);
-                }
-                #[cfg(feature = "rdf-star")]
-                Term::Triple(_) => return Err(RDFProofsError::DeriveProofValue),
-            };
-        }
-
-        None => {}
-    };
-    Ok(())
 }
 
 #[derive(Debug)]
@@ -1460,21 +975,18 @@ fn build_disclosed_and_undisclosed_terms(
     Ok(())
 }
 
-fn is_nym(node: &NamedNode) -> bool {
-    node.as_str().starts_with(NYM_IRI_PREFIX)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
+        derive_proof::{derive_proof, VcPair},
         error::RDFProofsError,
         key_graph::KeyGraph,
-        proof::{derive_proof, verify_proof, VcPair},
         tests::{
             get_dataset_from_nquads_str, get_deanon_map, get_graph_from_ntriples_str,
             KEY_GRAPH_NTRIPLES,
         },
         vc::VerifiableCredential,
+        verify_proof::verify_proof,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use oxrdf::{NamedOrBlankNode, Term};

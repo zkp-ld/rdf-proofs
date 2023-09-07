@@ -19,6 +19,20 @@ impl VerifiableCredential {
     }
 }
 
+impl std::fmt::Display for VerifiableCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "document:")?;
+        for t in self.document.iter() {
+            writeln!(f, "{} .", t.to_string())?;
+        }
+        writeln!(f, "proof:")?;
+        for t in self.proof.iter() {
+            writeln!(f, "{} .", t.to_string())?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct VerifiableCredentialView<'a> {
     pub document: GraphView<'a>,

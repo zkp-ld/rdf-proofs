@@ -1,18 +1,71 @@
 use crate::{
-    constants::{DELIMITER, MAP_TO_SCALAR_AS_HASH_DST},
-    context::{DATA_INTEGRITY_PROOF, VERIFICATION_METHOD},
+    constants::{DELIMITER, MAP_TO_SCALAR_AS_HASH_DST, NYM_IRI_PREFIX},
+    context::{DATA_INTEGRITY_PROOF, FILTER, PROOF, VERIFIABLE_CREDENTIAL, VERIFICATION_METHOD},
     error::RDFProofsError,
+    ordered_triple::{
+        OrderedGraphNameRef, OrderedGraphViews, OrderedVerifiableCredentialGraphViews,
+    },
+    vc::{
+        DisclosedVerifiableCredential, VerifiableCredentialTriples, VerifiableCredentialView,
+        VpGraphs,
+    },
 };
 use ark_bls12_381::{Bls12_381, G1Affine};
 use ark_ec::pairing::Pairing;
 use ark_ff::field_hashers::{DefaultFieldHasher, HashToField};
 use blake2::Blake2b512;
-use oxrdf::{vocab::rdf::TYPE, BlankNode, Graph, NamedNodeRef, SubjectRef, Term, TermRef, Triple};
+use oxrdf::{
+    dataset::GraphView, vocab::rdf::TYPE, BlankNode, Dataset, Graph, GraphNameRef, NamedNode,
+    NamedNodeRef, QuadRef, SubjectRef, Term, TermRef, Triple,
+};
 use proof_system::proof::Proof;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, Bytes};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub type Fr = <Bls12_381 as Pairing>::ScalarField;
 pub type ProofG1 = Proof<Bls12_381, G1Affine>;
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename = "0")]
+pub struct StatementIndexMap {
+    #[serde(rename = "1")]
+    document_map: Vec<usize>,
+    #[serde(rename = "2")]
+    document_len: usize,
+    #[serde(rename = "3")]
+    proof_map: Vec<usize>,
+    #[serde(rename = "4")]
+    proof_len: usize,
+}
+
+impl StatementIndexMap {
+    pub fn new(
+        document_map: Vec<usize>,
+        document_len: usize,
+        proof_map: Vec<usize>,
+        proof_len: usize,
+    ) -> Self {
+        Self {
+            document_map,
+            document_len,
+            proof_map,
+            proof_len,
+        }
+    }
+}
+
+#[serde_as]
+#[derive(Serialize, Deserialize)]
+pub struct ProofWithIndexMap {
+    #[serde_as(as = "Bytes")]
+    pub proof: Vec<u8>,
+    pub index_map: Vec<StatementIndexMap>,
+}
+
+pub fn is_nym(node: &NamedNode) -> bool {
+    node.as_str().starts_with(NYM_IRI_PREFIX)
+}
 
 pub fn get_hasher() -> DefaultFieldHasher<Blake2b512> {
     <DefaultFieldHasher<Blake2b512> as HashToField<Fr>>::new(MAP_TO_SCALAR_AS_HASH_DST)
@@ -112,4 +165,146 @@ pub fn randomize_bnodes(original_graph: &Graph, disclosed_graph: &Graph) -> (Gra
     let randomized_disclosed_graph = Graph::from_iter(disclosed_iter);
 
     (randomized_original_graph, randomized_disclosed_graph)
+}
+
+pub fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
+    let mut vp_graphs = dataset_into_ordered_graphs(vp);
+
+    // extract VP metadata (default graph)
+    let metadata = vp_graphs
+        .remove(&OrderedGraphNameRef::new(GraphNameRef::default()))
+        .ok_or(RDFProofsError::Other(
+            "VP graphs must have default graph".to_owned(),
+        ))?;
+
+    // extract VP proof graph
+    let (vp_proof_graph_name, vp_proof) = remove_graph(&mut vp_graphs, &metadata, PROOF)?;
+
+    // extract filter graphs if any
+    let filters = remove_graphs(&mut vp_graphs, &vp_proof, FILTER)?;
+
+    // extract VC graphs
+    let vcs = remove_graphs(&mut vp_graphs, &metadata, VERIFIABLE_CREDENTIAL)?;
+
+    // extract VC proof graphs
+    let disclosed_vcs = vcs
+        .into_iter()
+        .map(|(vc_graph_name, vc)| {
+            let (_, vc_proof) = remove_graph(&mut vp_graphs, &vc, PROOF)?;
+            Ok((vc_graph_name, VerifiableCredentialView::new(vc, vc_proof)))
+        })
+        .collect::<Result<OrderedVerifiableCredentialGraphViews, RDFProofsError>>()?;
+
+    // check if `vp_graphs` is empty
+    if !vp_graphs.is_empty() {
+        return Err(RDFProofsError::InvalidVP);
+    }
+
+    Ok(VpGraphs {
+        metadata,
+        proof: vp_proof,
+        proof_graph_name: vp_proof_graph_name,
+        filters,
+        disclosed_vcs,
+    })
+}
+
+fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
+    let graph_name_set = dataset
+        .iter()
+        .map(|QuadRef { graph_name, .. }| OrderedGraphNameRef::new(graph_name))
+        .collect::<BTreeSet<_>>();
+
+    graph_name_set
+        .into_iter()
+        .map(|graph_name| (graph_name.clone(), dataset.graph(graph_name)))
+        .collect()
+}
+
+// function to remove from the VP the multiple graphs that are reachable from `source` via `link`
+fn remove_graphs<'a>(
+    vp_graphs: &mut OrderedGraphViews<'a>,
+    source: &GraphView<'a>,
+    link: NamedNodeRef,
+) -> Result<OrderedGraphViews<'a>, RDFProofsError> {
+    source
+        .iter()
+        .filter(|triple| triple.predicate == link)
+        .map(|triple| {
+            Ok((
+                triple.object.try_into()?,
+                vp_graphs
+                    .remove(&triple.object.try_into()?)
+                    .ok_or(RDFProofsError::InvalidVP)?,
+            ))
+        })
+        .collect::<Result<OrderedGraphViews, RDFProofsError>>()
+}
+
+// function to remove from the VP the single graph that is reachable from `source` via `link`
+fn remove_graph<'a>(
+    vp_graphs: &mut OrderedGraphViews<'a>,
+    source: &GraphView<'a>,
+    link: NamedNodeRef,
+) -> Result<(OrderedGraphNameRef<'a>, GraphView<'a>), RDFProofsError> {
+    let mut graphs = remove_graphs(vp_graphs, source, link)?;
+    match graphs.pop_first() {
+        Some((graph_name, graph)) => {
+            if graphs.is_empty() {
+                Ok((graph_name, graph))
+            } else {
+                Err(RDFProofsError::InvalidVP)
+            }
+        }
+        None => Err(RDFProofsError::InvalidVP),
+    }
+}
+
+pub fn reorder_vc_triples(
+    vc_triples: &[VerifiableCredentialTriples],
+    index_map: &[StatementIndexMap],
+) -> Result<Vec<DisclosedVerifiableCredential>, RDFProofsError> {
+    vc_triples
+        .iter()
+        .enumerate()
+        .map(|(i, VerifiableCredentialTriples { document, proof })| {
+            let StatementIndexMap {
+                document_map,
+                proof_map,
+                document_len,
+                proof_len,
+            } = &index_map.get(i).ok_or(RDFProofsError::DeriveProofValue)?;
+
+            let mut mapped_document = document
+                .iter()
+                .enumerate()
+                .map(|(j, triple)| {
+                    let mapped_index = document_map
+                        .get(j)
+                        .ok_or(RDFProofsError::DeriveProofValue)?;
+                    Ok((*mapped_index, Some(triple.clone())))
+                })
+                .collect::<Result<BTreeMap<_, _>, RDFProofsError>>()?;
+            for i in 0..*document_len {
+                mapped_document.entry(i).or_insert(None);
+            }
+
+            let mut mapped_proof = proof
+                .iter()
+                .enumerate()
+                .map(|(j, triple)| {
+                    let mapped_index = proof_map.get(j).ok_or(RDFProofsError::DeriveProofValue)?;
+                    Ok((*mapped_index, Some(triple.clone())))
+                })
+                .collect::<Result<BTreeMap<_, _>, RDFProofsError>>()?;
+            for i in 0..*proof_len {
+                mapped_proof.entry(i).or_insert(None);
+            }
+
+            Ok(DisclosedVerifiableCredential {
+                document: mapped_document,
+                proof: mapped_proof,
+            })
+        })
+        .collect::<Result<Vec<_>, RDFProofsError>>()
 }
