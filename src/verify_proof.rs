@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        decompose_vp, get_delimiter, get_hasher, hash_term_to_field, is_nym, reorder_vc_triples,
-        Fr, ProofG1, ProofWithIndexMap,
+        decompose_vp, get_dataset_from_nquads_str, get_delimiter, get_graph_from_ntriples_str,
+        get_hasher, hash_term_to_field, is_nym, reorder_vc_triples, Fr, ProofG1, ProofWithIndexMap,
     },
     context::{CHALLENGE, PROOF_VALUE, VERIFICATION_METHOD},
     error::RDFProofsError,
@@ -204,6 +204,19 @@ pub fn verify_proof<R: RngCore>(
         nonce.map(|v| v.as_bytes().to_vec()),
         Default::default(),
     )?)
+}
+
+pub fn verify_proof_string<R: RngCore>(
+    rng: &mut R,
+    vp: &str,
+    nonce: Option<&str>,
+    key_graph: &str,
+) -> Result<(), RDFProofsError> {
+    // construct input for `verify_proof` from string-based input
+    let vp = get_dataset_from_nquads_str(vp)?;
+    let key_graph = get_graph_from_ntriples_str(key_graph)?.into();
+
+    verify_proof(rng, &vp, nonce, &key_graph)
 }
 
 #[derive(Debug)]

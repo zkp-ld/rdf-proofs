@@ -18,14 +18,21 @@ wasmer-js = ["proof_system/wasmer-js"]
 wasmer-sys = ["proof_system/wasmer-sys"]
 
 [dependencies]
+chrono = "0.4"
+regex = "1.9"
+multibase = "0.9"
+
 serde = "1.0"
 serde_cbor = "0.11"
 serde_with = "3.2"
-chrono = "0.4"
-oxrdf = { git = "https://github.com/oxigraph/oxigraph.git", rev = "f10e5a4" } # to be fixed once Oxigraph v0.4 is released
+
+oxrdf = { git = "https://github.com/oxigraph/oxigraph.git", rev = "f10e5a4" }        # to be fixed once Oxigraph v0.4 is released
+oxttl = { git = "https://github.com/oxigraph/oxigraph.git", rev = "f10e5a4" }        # will be fixed once oxttl is published on crates.io
 oxsdatatypes = { git = "https://github.com/oxigraph/oxigraph.git", rev = "f10e5a4" } # to be fixed once Oxigraph v0.4 is released
 oxiri = "0.2"
+
 rdf-canon = { git = "https://github.com/zkp-ld/rdf-canon.git", version = "0.14.0" }
+
 proof_system = { git = "https://github.com/docknetwork/crypto.git", rev = "7a238b9", version = "0.21", default-features = false }
 bbs_plus = { git = "https://github.com/docknetwork/crypto.git", rev = "7a238b9", version = "0.15", default-features = false }
 ark-ff = { version = "0.4", default-features = false }
@@ -38,7 +45,3 @@ ark-bls12-381 = { version = "0.4", default-features = false, features = [
     "curve",
 ] }
 blake2 = { version = "0.10", default-features = false }
-multibase = "0.9"
-
-[dev-dependencies]
-oxttl = { git = "https://github.com/oxigraph/oxigraph.git", rev = "f10e5a4" } # will be fixed once oxttl is published on crates.io

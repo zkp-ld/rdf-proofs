@@ -1,18 +1,9 @@
-use ark_serialize::SerializationError;
-use bbs_plus::prelude::BBSPlusError;
-use multibase;
-use oxiri::IriParseError;
-use oxrdf::BlankNodeIdParseError;
-use proof_system::prelude::ProofSystemError;
-use rdf_canon::CanonicalizationError;
-use std::error::Error;
-
 #[derive(Debug)]
 pub enum RDFProofsError {
-    Canonicalization(CanonicalizationError),
-    BBSPlus(BBSPlusError),
+    Canonicalization(rdf_canon::CanonicalizationError),
+    BBSPlus(bbs_plus::prelude::BBSPlusError),
     HashToField,
-    ArkSerialization(SerializationError),
+    ArkSerialization(ark_serialize::SerializationError),
     CBORSerialization(serde_cbor::Error),
     ProofTransformation,
     InvalidProofConfiguration,
@@ -23,18 +14,21 @@ pub enum RDFProofsError {
     MalformedProof,
     Multibase(multibase::Error),
     InvalidVCPairs,
-    IriParse(IriParseError),
+    IriParse(oxiri::IriParseError),
+    TtlParse(oxttl::ParseError),
+    InvalidDeanonMapFormat(String),
     VCWithoutProofValue,
     VCWithInvalidProofValue,
     VCWithoutVCType,
     InvalidVCGraphName,
-    BlankNodeIdParse(BlankNodeIdParseError),
+    BlankNodeIdParse(oxrdf::BlankNodeIdParseError),
+    LanguageTagParse(oxrdf::LanguageTagParseError),
     DeAnonymization,
     InvalidVP,
     BlankNodeCollision,
     DisclosedVCIsNotSubsetOfOriginalVC,
     DeriveProofValue,
-    ProofSystem(ProofSystemError),
+    ProofSystem(proof_system::prelude::ProofSystemError),
     RDFStarUnsupported,
     MissingChallengeInVP,
     MissingChallengeInRequest,
@@ -67,6 +61,10 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::Multibase(_) => write!(f, "multibase error"),
             RDFProofsError::InvalidVCPairs => write!(f, "invalid VC pairs error"),
             RDFProofsError::IriParse(_) => write!(f, "IRI parse error"),
+            RDFProofsError::TtlParse(e) => write!(f, "N-Triples / N-Quads parse error: {}", e),
+            RDFProofsError::InvalidDeanonMapFormat(e) => {
+                write!(f, "invalid deanon map error: {}", e)
+            }
             RDFProofsError::VCWithoutProofValue => write!(f, "VC without proof value error"),
             RDFProofsError::VCWithInvalidProofValue => {
                 write!(f, "VC with invalid proof value error")
@@ -74,6 +72,7 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::VCWithoutVCType => write!(f, "VC without VC type error"),
             RDFProofsError::InvalidVCGraphName => write!(f, "invalid VC graph name error"),
             RDFProofsError::BlankNodeIdParse(_) => write!(f, "blank node ID parse error"),
+            RDFProofsError::LanguageTagParse(_) => write!(f, "language tag parse error"),
             RDFProofsError::DeAnonymization => write!(f, "deanonymization error"),
             RDFProofsError::InvalidVP => write!(f, "invalid VP error"),
             RDFProofsError::BlankNodeCollision => write!(f, "blank node collision error"),
@@ -83,8 +82,13 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::DeriveProofValue => write!(f, "derive proof value error"),
             RDFProofsError::ProofSystem(_) => write!(f, "proof system error"),
             RDFProofsError::RDFStarUnsupported => write!(f, "RDF-star is not supported"),
-            RDFProofsError::MissingChallengeInVP => write!(f, "verifier's required challenge is not present in VP"),
-            RDFProofsError::MissingChallengeInRequest => write!(f, "challenge is in VP but not present in verifier's request"),
+            RDFProofsError::MissingChallengeInVP => {
+                write!(f, "verifier's required challenge is not present in VP")
+            }
+            RDFProofsError::MissingChallengeInRequest => write!(
+                f,
+                "challenge is in VP but not present in verifier's request"
+            ),
             RDFProofsError::MismatchedChallenge => {
                 write!(f, "challenge does not match the expected value")
             }
@@ -96,22 +100,22 @@ impl std::fmt::Display for RDFProofsError {
     }
 }
 
-impl Error for RDFProofsError {}
+impl std::error::Error for RDFProofsError {}
 
-impl From<CanonicalizationError> for RDFProofsError {
-    fn from(e: CanonicalizationError) -> Self {
+impl From<rdf_canon::CanonicalizationError> for RDFProofsError {
+    fn from(e: rdf_canon::CanonicalizationError) -> Self {
         Self::Canonicalization(e)
     }
 }
 
-impl From<BBSPlusError> for RDFProofsError {
-    fn from(e: BBSPlusError) -> Self {
+impl From<bbs_plus::prelude::BBSPlusError> for RDFProofsError {
+    fn from(e: bbs_plus::prelude::BBSPlusError) -> Self {
         Self::BBSPlus(e)
     }
 }
 
-impl From<SerializationError> for RDFProofsError {
-    fn from(e: SerializationError) -> Self {
+impl From<ark_serialize::SerializationError> for RDFProofsError {
+    fn from(e: ark_serialize::SerializationError) -> Self {
         Self::ArkSerialization(e)
     }
 }
@@ -128,20 +132,38 @@ impl From<multibase::Error> for RDFProofsError {
     }
 }
 
-impl From<IriParseError> for RDFProofsError {
-    fn from(e: IriParseError) -> Self {
+impl From<oxiri::IriParseError> for RDFProofsError {
+    fn from(e: oxiri::IriParseError) -> Self {
         Self::IriParse(e)
     }
 }
 
-impl From<BlankNodeIdParseError> for RDFProofsError {
-    fn from(e: BlankNodeIdParseError) -> Self {
+impl From<oxrdf::BlankNodeIdParseError> for RDFProofsError {
+    fn from(e: oxrdf::BlankNodeIdParseError) -> Self {
         Self::BlankNodeIdParse(e)
     }
 }
 
-impl From<ProofSystemError> for RDFProofsError {
-    fn from(e: ProofSystemError) -> Self {
+impl From<oxrdf::LanguageTagParseError> for RDFProofsError {
+    fn from(e: oxrdf::LanguageTagParseError) -> Self {
+        Self::LanguageTagParse(e)
+    }
+}
+
+impl From<proof_system::prelude::ProofSystemError> for RDFProofsError {
+    fn from(e: proof_system::prelude::ProofSystemError) -> Self {
         Self::ProofSystem(e)
+    }
+}
+
+impl From<oxttl::ParseError> for RDFProofsError {
+    fn from(e: oxttl::ParseError) -> Self {
+        Self::TtlParse(e)
+    }
+}
+
+impl From<regex::Error> for RDFProofsError {
+    fn from(e: regex::Error) -> Self {
+        Self::InvalidDeanonMapFormat(e.to_string())
     }
 }

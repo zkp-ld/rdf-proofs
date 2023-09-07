@@ -18,6 +18,7 @@ use oxrdf::{
     dataset::GraphView, vocab::rdf::TYPE, BlankNode, Dataset, Graph, GraphNameRef, NamedNode,
     NamedNodeRef, QuadRef, SubjectRef, Term, TermRef, Triple,
 };
+use oxttl::{NQuadsParser, NTriplesParser};
 use proof_system::proof::Proof;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, Bytes};
@@ -307,4 +308,18 @@ pub fn reorder_vc_triples(
             })
         })
         .collect::<Result<Vec<_>, RDFProofsError>>()
+}
+
+pub fn get_graph_from_ntriples_str(ntriples: &str) -> Result<Graph, RDFProofsError> {
+    let iter = NTriplesParser::new()
+        .parse_read(ntriples.as_bytes())
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Graph::from_iter(iter))
+}
+
+pub fn get_dataset_from_nquads_str(nquads: &str) -> Result<Dataset, RDFProofsError> {
+    let iter = NQuadsParser::new()
+        .parse_read(nquads.as_bytes())
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Dataset::from_iter(iter))
 }

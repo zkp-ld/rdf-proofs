@@ -51,12 +51,6 @@ pub struct VerifiableCredentialTriples {
     pub proof: Vec<Triple>,
 }
 
-impl VerifiableCredentialTriples {
-    pub fn new(document: Vec<Triple>, proof: Vec<Triple>) -> Self {
-        Self { document, proof }
-    }
-}
-
 impl From<VerifiableCredentialView<'_>> for VerifiableCredentialTriples {
     fn from(view: VerifiableCredentialView) -> Self {
         let mut document = view
@@ -161,6 +155,29 @@ impl VcPair {
                 .map(|q| format!("{} .\n", q.to_string()))
                 .collect::<String>()
         )
+    }
+}
+
+pub struct VcPairString {
+    pub original_document: String,
+    pub original_proof: String,
+    pub disclosed_document: String,
+    pub disclosed_proof: String,
+}
+
+impl VcPairString {
+    pub fn new(
+        original_document: &str,
+        original_proof: &str,
+        disclosed_document: &str,
+        disclosed_proof: &str,
+    ) -> Self {
+        Self {
+            original_document: original_document.to_string(),
+            original_proof: original_proof.to_string(),
+            disclosed_document: disclosed_document.to_string(),
+            disclosed_proof: disclosed_proof.to_string(),
+        }
     }
 }
 

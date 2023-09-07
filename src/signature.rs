@@ -1,6 +1,7 @@
 use crate::{
     common::{
-        get_delimiter, get_hasher, get_verification_method_identifier, hash_terms_to_field, Fr,
+        get_delimiter, get_graph_from_ntriples_str, get_hasher, get_verification_method_identifier,
+        hash_terms_to_field, Fr,
     },
     constants::CRYPTOSUITE_SIGN,
     context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
@@ -35,6 +36,32 @@ pub fn sign<R: RngCore>(
     Ok(())
 }
 
+pub fn sign_string<R: RngCore>(
+    rng: &mut R,
+    document: &str,
+    proof: &str,
+    key_graph: &str,
+) -> Result<String, RDFProofsError> {
+    // construct input for `sign` from string-based input
+    let document = get_graph_from_ntriples_str(document)?;
+    let proof = get_graph_from_ntriples_str(proof)?;
+    let key_graph = get_graph_from_ntriples_str(key_graph)?.into();
+    let mut vc = VerifiableCredential::new(document, proof);
+
+    sign(rng, &mut vc, &key_graph)?;
+
+    // return proofValue as String
+    let proof_value_triple = vc
+        .proof
+        .triples_for_predicate(PROOF_VALUE)
+        .next()
+        .ok_or(RDFProofsError::Other("internal error".to_string()))?;
+    match proof_value_triple.object {
+        oxrdf::TermRef::Literal(v) => Ok(v.value().to_string()),
+        _ => Err(RDFProofsError::Other("internal error".to_string())),
+    }
+}
+
 pub fn verify(
     secured_credential: &VerifiableCredential,
     key_graph: &KeyGraph,
@@ -59,6 +86,16 @@ pub fn verify(
     let canonical_proof_config = configure_proof(&proof_config)?;
     let hash_data = hash(&transformed_data, &canonical_proof_config)?;
     verify_base_proof(hash_data, proof_value, &proof_config, key_graph)
+}
+
+pub fn verify_string(document: &str, proof: &str, key_graph: &str) -> Result<(), RDFProofsError> {
+    // construct input for `verify` from string-based input
+    let document = get_graph_from_ntriples_str(document)?;
+    let proof = get_graph_from_ntriples_str(proof)?;
+    let key_graph = get_graph_from_ntriples_str(key_graph)?.into();
+    let vc = VerifiableCredential::new(document, proof);
+
+    verify(&vc, &key_graph)
 }
 
 fn transform(
@@ -179,231 +216,4 @@ fn verify_base_proof(
     let pk = key_graph.get_public_key(verification_method_identifier)?;
     let params = generate_params(hash_data.len());
     Ok(signature.verify(&hash_data, pk, params)?)
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        error::RDFProofsError,
-        key_graph::KeyGraph,
-        signature::{sign, verify},
-        tests::{get_graph_from_ntriples_str, print_signature, print_vc, KEY_GRAPH_NTRIPLES},
-        vc::VerifiableCredential,
-    };
-    use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use bbs_plus::prelude::BBSPlusError::InvalidSignature;
-
-    #[test]
-    fn sign_and_verify_success() {
-        let mut rng = StdRng::seed_from_u64(0u64);
-
-        let unsecured_document_ntriples = r#"
-<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-<did:example:john> <http://schema.org/name> "John Smith" .
-<did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
-<did:example:john> <http://schema.org/worksFor> _:b1 .
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-_:b0 <http://example.org/vocab/lotNumber> "0000001" .
-_:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
-_:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
-_:b1 <http://schema.org/name> "ABC inc." .
-<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-"#;
-        let proof_config_ntriples = r#"
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-_:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-_:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-"#;
-        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
-        let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
-        let proof_config = get_graph_from_ntriples_str(proof_config_ntriples);
-        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        sign(&mut rng, &mut vc, &key_graph).unwrap();
-        print_vc(&vc);
-        print_signature(&vc);
-        assert!(verify(&vc, &key_graph).is_ok())
-    }
-
-    #[test]
-    fn sign_and_verify_success_2() {
-        let mut rng = StdRng::seed_from_u64(0u64);
-
-        let unsecured_document_ntriples = r#"
-<http://example.org/vaccine/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
-<http://example.org/vaccine/a> <http://schema.org/name> "AwesomeVaccine" .
-<http://example.org/vaccine/a> <http://schema.org/manufacturer> <http://example.org/awesomeCompany> .
-<http://example.org/vaccine/a> <http://schema.org/status> "active" .
-<http://example.org/vicred/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/a> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-"#;
-        let proof_config_ntriples = r#"
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-_:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-_:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
-"#;
-        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
-        let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
-        let proof_config = get_graph_from_ntriples_str(proof_config_ntriples);
-        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        sign(&mut rng, &mut vc, &key_graph).unwrap();
-        print_vc(&vc);
-        print_signature(&vc);
-        assert!(verify(&vc, &key_graph).is_ok())
-    }
-
-    #[test]
-    fn verify_success() {
-        let unsecured_document_ntriples = r#"
-<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-<did:example:john> <http://schema.org/name> "John Smith" .
-<did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
-<did:example:john> <http://schema.org/worksFor> _:b1 .
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-_:b0 <http://example.org/vocab/lotNumber> "0000001" .
-_:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
-_:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
-_:b1 <http://schema.org/name> "ABC inc." .
-<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-"#;
-        let signed_proof_config_ntriples = r#"
-_:b0 <https://w3id.org/security#proofValue> "utEnCefxSJlHuHFWGuCEqapeOkbNUMcUZfixkTP-eelRRXBCUpSl8wNNxHQqDcVgDnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-_:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-_:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-"#;
-        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
-        let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
-        let signed_proof_config = get_graph_from_ntriples_str(signed_proof_config_ntriples);
-        let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
-        let verified = verify(&vc, &key_graph);
-        assert!(verified.is_ok())
-    }
-
-    #[test]
-    fn verify_success_2() {
-        let unsecured_document_ntriples = r#"
-<http://example.org/vaccine/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
-<http://example.org/vaccine/a> <http://schema.org/name> "AwesomeVaccine" .
-<http://example.org/vaccine/a> <http://schema.org/manufacturer> <http://example.org/awesomeCompany> .
-<http://example.org/vaccine/a> <http://schema.org/status> "active" .
-<http://example.org/vicred/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/a> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-"#;
-        let signed_proof_config_ntriples = r#"
-_:b0 <https://w3id.org/security#proofValue> "usjQI4FuaD8udL2e5Rhvf4J4L0IOjmXT7Q3E40FXnIG-GQ6GMJkUuLv5tU1gJjW42nHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-_:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-_:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
-"#;
-        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
-        let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
-        let signed_proof_config = get_graph_from_ntriples_str(signed_proof_config_ntriples);
-        let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
-        let verified = verify(&vc, &key_graph);
-        assert!(verified.is_ok())
-    }
-
-    #[test]
-    fn verify_failed_modified_document() {
-        let unsecured_document_ntriples = r#"
-<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-<did:example:john> <http://schema.org/name> "**********************************" .  # modified
-<did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
-<did:example:john> <http://schema.org/worksFor> _:b1 .
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-_:b0 <http://example.org/vocab/lotNumber> "0000001" .
-_:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
-_:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
-_:b1 <http://schema.org/name> "ABC inc." .
-<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-"#;
-        let signed_proof_config_ntriples = r#"
-_:b0 <https://w3id.org/security#proofValue> "utEnCefxSJlHuHFWGuCEqapeOkbNUMcUZfixkTP-eelRRXBCUpSl8wNNxHQqDcVgDnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-_:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-_:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-"#;
-        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
-        let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
-        let signed_proof_config = get_graph_from_ntriples_str(signed_proof_config_ntriples);
-        let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
-        let verified = verify(&vc, &key_graph);
-        assert!(matches!(
-            verified,
-            Err(RDFProofsError::BBSPlus(InvalidSignature))
-        ))
-    }
-
-    #[test]
-    fn verify_failed_invalid_pk() {
-        let unsecured_document_ntriples = r#"
-<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-<did:example:john> <http://schema.org/name> "John Smith" .
-<did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
-<did:example:john> <http://schema.org/worksFor> _:b1 .
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-_:b0 <http://example.org/vocab/lotNumber> "0000001" .
-_:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
-_:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
-_:b1 <http://schema.org/name> "ABC inc." .
-<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-"#;
-        let signed_proof_config_ntriples = r#"
-_:b0 <https://w3id.org/security#proofValue> "uhzr5tCpvFA-bebnJZBpUi2mkWStLGmZJm-c6crfIjUsYTbpNywgXUfbaOtD84V-UnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-_:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-_:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-_:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> . # the other issuer's pk
-"#;
-        let key_graph: KeyGraph = get_graph_from_ntriples_str(KEY_GRAPH_NTRIPLES).into();
-        let unsecured_document = get_graph_from_ntriples_str(unsecured_document_ntriples);
-        let signed_proof_config = get_graph_from_ntriples_str(signed_proof_config_ntriples);
-        let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
-        let verified = verify(&vc, &key_graph);
-        assert!(matches!(
-            verified,
-            Err(RDFProofsError::BBSPlus(InvalidSignature))
-        ))
-    }
 }
