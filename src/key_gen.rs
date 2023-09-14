@@ -9,7 +9,7 @@ use bbs_plus::{
 use blake2::Blake2b512;
 use multibase::Base;
 
-pub fn generate_params(message_count: usize) -> BBSSignatureParamsG1<Bls12_381> {
+pub fn generate_params(message_count: u32) -> BBSSignatureParamsG1<Bls12_381> {
     // TODO: to be fixed
     BBSSignatureParamsG1::<Bls12_381>::new::<Blake2b512>(GENERATOR_SEED, message_count)
 }

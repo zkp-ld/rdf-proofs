@@ -34,6 +34,7 @@ pub enum RDFProofsError {
     MissingChallengeInRequest,
     MismatchedChallenge,
     InvalidChallengeDatatype,
+    MessageSizeOverflow,
     Other(String),
 }
 
@@ -94,6 +95,9 @@ impl std::fmt::Display for RDFProofsError {
             }
             RDFProofsError::InvalidChallengeDatatype => {
                 write!(f, "challenge in VP has invalid datatype")
+            }
+            RDFProofsError::MessageSizeOverflow => {
+                write!(f, "message size exceed 32-bit integer limit")
             }
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
         }

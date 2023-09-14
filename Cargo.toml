@@ -33,8 +33,8 @@ oxiri = "0.2"
 
 rdf-canon = { git = "https://github.com/zkp-ld/rdf-canon.git", version = "0.14.0" }
 
-proof_system = { git = "https://github.com/docknetwork/crypto.git", rev = "7a238b9", version = "0.21", default-features = false }
-bbs_plus = { git = "https://github.com/docknetwork/crypto.git", rev = "7a238b9", version = "0.15", default-features = false }
+proof_system = { version = "0.22", default-features = false }
+bbs_plus = { version = "0.16", default-features = false }
 ark-ff = { version = "0.4", default-features = false }
 ark-ec = { version = "0.4", default-features = false }
 ark-std = { version = "0.4", default-features = false }

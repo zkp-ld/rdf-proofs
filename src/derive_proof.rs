@@ -794,10 +794,19 @@ fn derive_proof_value<R: RngCore>(
     );
     println!("proof values: {:?}", proof_values);
 
-    let params_and_pks = disclosed_and_undisclosed_terms
+    let term_counts = disclosed_and_undisclosed_terms
+        .iter()
+        .map(|t| {
+            t.term_count
+                .try_into()
+                .map_err(|_| RDFProofsError::MessageSizeOverflow)
+        })
+        .collect::<Result<Vec<u32>, _>>()?;
+
+    let params_and_pks = term_counts
         .iter()
         .zip(public_keys)
-        .map(|(t, pk)| (generate_params(t.term_count), pk));
+        .map(|(t, pk)| (generate_params(*t), pk));
 
     // merge each partial equivs
     let mut equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> = BTreeMap::new();

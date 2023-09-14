@@ -171,7 +171,10 @@ fn serialize_proof<R: RngCore>(
     proof_options: &Graph,
     key_graph: &KeyGraph,
 ) -> Result<String, RDFProofsError> {
-    let message_count = hash_data.len();
+    let message_count = hash_data
+        .len()
+        .try_into()
+        .map_err(|_| RDFProofsError::MessageSizeOverflow)?;
 
     let verification_method_identifier = get_verification_method_identifier(proof_options)?;
     let (secret_key, _public_key) = key_graph.get_keypair(verification_method_identifier)?;
@@ -213,6 +216,11 @@ fn verify_base_proof(
     let signature = BBSSignatureG1::<Bls12_381>::deserialize_compressed(&*proof_value_bytes)?;
     let verification_method_identifier = get_verification_method_identifier(proof_config)?;
     let pk = key_graph.get_public_key(verification_method_identifier)?;
-    let params = generate_params(hash_data.len());
+    let params = generate_params(
+        hash_data
+            .len()
+            .try_into()
+            .map_err(|_| RDFProofsError::MessageSizeOverflow)?,
+    );
     Ok(signature.verify(&hash_data, pk, params)?)
 }
