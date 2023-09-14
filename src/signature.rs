@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        get_delimiter, get_graph_from_ntriples_str, get_hasher, get_verification_method_identifier,
-        hash_terms_to_field, Fr,
+        canonicalize_graph, get_delimiter, get_graph_from_ntriples_str, get_hasher,
+        get_verification_method_identifier, hash_terms_to_field, Fr,
     },
     constants::CRYPTOSUITE_SIGN,
     context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
@@ -144,8 +144,7 @@ fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, RDFProofsError> {
 }
 
 fn _canonicalize_into_terms(graph: &Graph) -> Result<Vec<Term>, RDFProofsError> {
-    let issued_identifiers_map = &rdf_canon::issue_graph(graph)?;
-    let canonicalized_graph = rdf_canon::relabel_graph(graph, issued_identifiers_map)?;
+    let (canonicalized_graph, _) = canonicalize_graph(graph)?;
     let canonicalized_triples = rdf_canon::sort_graph(&canonicalized_graph);
     Ok(canonicalized_triples
         .into_iter()

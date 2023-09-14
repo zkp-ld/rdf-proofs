@@ -1,9 +1,9 @@
 use super::constants::CRYPTOSUITE_PROOF;
 use crate::{
     common::{
-        decompose_vp, get_delimiter, get_graph_from_ntriples_str, get_hasher, hash_term_to_field,
-        is_nym, randomize_bnodes, reorder_vc_triples, Fr, ProofG1, ProofWithIndexMap,
-        StatementIndexMap,
+        canonicalize_graph, decompose_vp, get_delimiter, get_graph_from_ntriples_str, get_hasher,
+        hash_term_to_field, is_nym, randomize_bnodes, reorder_vc_triples, Fr, ProofG1,
+        ProofWithIndexMap, StatementIndexMap,
     },
     context::{
         ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF,
@@ -414,7 +414,8 @@ fn canonicalize_vcs(
     let canonicalized_vcs = vcs
         .iter()
         .map(|VerifiableCredential { document, proof }| {
-            let document_bnode_map = rdf_canon::issue_graph(&document)?;
+            let (canonicalized_document, document_bnode_map) = canonicalize_graph(document)?;
+            let (canonicalized_proof, proof_bnode_map) = canonicalize_graph(proof)?;
             for (k, v) in &document_bnode_map {
                 if bnode_map.contains_key(k) {
                     return Err(RDFProofsError::BlankNodeCollision);
@@ -422,7 +423,6 @@ fn canonicalize_vcs(
                     bnode_map.insert(k.to_string(), v.to_string());
                 }
             }
-            let proof_bnode_map = rdf_canon::issue_graph(&proof)?;
             for (k, v) in &proof_bnode_map {
                 if bnode_map.contains_key(k) {
                     return Err(RDFProofsError::BlankNodeCollision);
@@ -431,8 +431,6 @@ fn canonicalize_vcs(
                 }
             }
 
-            let canonicalized_document = rdf_canon::relabel_graph(&document, &document_bnode_map)?;
-            let canonicalized_proof = rdf_canon::relabel_graph(&proof, &proof_bnode_map)?;
             Ok(VerifiableCredential::new(
                 canonicalized_document,
                 canonicalized_proof,

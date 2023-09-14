@@ -14,6 +14,7 @@ use ark_bls12_381::{Bls12_381, G1Affine};
 use ark_ec::pairing::Pairing;
 use ark_ff::field_hashers::{DefaultFieldHasher, HashToField};
 use blake2::Blake2b512;
+use multibase::Base;
 use oxrdf::{
     dataset::GraphView, vocab::rdf::TYPE, BlankNode, Dataset, Graph, GraphNameRef, NamedNode,
     NamedNodeRef, QuadRef, SubjectRef, Term, TermRef, Triple,
@@ -22,6 +23,7 @@ use oxttl::{NQuadsParser, NTriplesParser};
 use proof_system::proof::Proof;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, Bytes};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub type Fr = <Bls12_381 as Pairing>::ScalarField;
@@ -66,6 +68,27 @@ pub struct ProofWithIndexMap {
 
 pub fn is_nym(node: &NamedNode) -> bool {
     node.as_str().starts_with(NYM_IRI_PREFIX)
+}
+
+pub fn hash_str_to_str(s: &str) -> String {
+    multibase::encode(Base::Base64Url, Sha256::digest(s.as_bytes()))
+}
+
+pub fn canonicalize_graph(
+    graph: &Graph,
+) -> Result<(Graph, HashMap<String, String>), RDFProofsError> {
+    let serialized_canonical_form = rdf_canon::canonicalize_graph(graph)?;
+    let postfix = hash_str_to_str(&serialized_canonical_form);
+
+    let issued_identifiers_map = &rdf_canon::issue_graph(graph)?;
+    let global_issued_identifiers_map = issued_identifiers_map
+        .iter()
+        .map(|(k, v)| (k.clone(), format!("{}.{}", v, postfix)))
+        .collect::<HashMap<_, _>>();
+
+    let canonicalized_graph = rdf_canon::relabel_graph(graph, &global_issued_identifiers_map)?;
+
+    Ok((canonicalized_graph, global_issued_identifiers_map))
 }
 
 pub fn get_hasher() -> DefaultFieldHasher<Blake2b512> {
