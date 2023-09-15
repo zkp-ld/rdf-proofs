@@ -13,6 +13,10 @@ use crate::{
 use ark_bls12_381::{Bls12_381, G1Affine};
 use ark_ec::pairing::Pairing;
 use ark_ff::field_hashers::{DefaultFieldHasher, HashToField};
+use bbs_plus::{
+    setup::{KeypairG2, PublicKeyG2, SecretKey, SignatureParamsG1},
+    signature::SignatureG1,
+};
 use blake2::Blake2b512;
 use multibase::Base;
 use oxrdf::{
@@ -20,14 +24,26 @@ use oxrdf::{
     NamedNodeRef, QuadRef, SubjectRef, Term, TermRef, Triple,
 };
 use oxttl::{NQuadsParser, NTriplesParser};
-use proof_system::proof::Proof;
+use proof_system::{
+    proof::Proof as ProofOrig, statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
+    statement::Statements as StatementsOrig, witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
+};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, Bytes};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub type Fr = <Bls12_381 as Pairing>::ScalarField;
-pub type ProofG1 = Proof<Bls12_381, G1Affine>;
+pub type Proof = ProofOrig<Bls12_381, G1Affine>;
+pub type Statements = StatementsOrig<Bls12_381, <Bls12_381 as Pairing>::G1Affine>;
+pub type BBSPlusHash = Blake2b512;
+pub type BBSPlusParams = SignatureParamsG1<Bls12_381>;
+pub type BBSPlusKeypair = KeypairG2<Bls12_381>;
+pub type BBSPlusSecretKey = SecretKey<Fr>;
+pub type BBSPlusPublicKey = PublicKeyG2<Bls12_381>;
+pub type BBSPlusSignature = SignatureG1<Bls12_381>;
+pub type PoKBBSPlusStmt<E> = PoKBBSSignatureG1Stmt<E>;
+pub type PoKBBSPlusWit<E> = PoKBBSSignatureG1Wit<E>;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename = "0")]

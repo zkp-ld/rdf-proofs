@@ -1,11 +1,9 @@
 use crate::{
-    common::Fr,
+    common::{BBSPlusPublicKey, BBSPlusSecretKey},
     context::{PUBLIC_KEY_MULTIBASE, SECRET_KEY_MULTIBASE},
     error::RDFProofsError,
     key_gen::{deserialize_public_key, deserialize_secret_key},
 };
-use ark_bls12_381::Bls12_381;
-use bbs_plus::setup::{PublicKeyG2 as BBSPublicKeyG2, SecretKey as BBSSecretKey};
 use oxrdf::{Graph, NamedNodeRef, TermRef, Triple};
 
 pub struct KeyGraph {
@@ -41,7 +39,7 @@ impl KeyGraph {
     pub fn get_secret_key(
         &self,
         verification_method_identifier: NamedNodeRef,
-    ) -> Result<BBSSecretKey<Fr>, RDFProofsError> {
+    ) -> Result<BBSPlusSecretKey, RDFProofsError> {
         let verification_method =
             self.retrieve_verification_method(verification_method_identifier)?;
 
@@ -59,7 +57,7 @@ impl KeyGraph {
     pub fn get_public_key(
         &self,
         verification_method_identifier: NamedNodeRef,
-    ) -> Result<BBSPublicKeyG2<Bls12_381>, RDFProofsError> {
+    ) -> Result<BBSPlusPublicKey, RDFProofsError> {
         let verification_method =
             self.retrieve_verification_method(verification_method_identifier)?;
 
@@ -77,7 +75,7 @@ impl KeyGraph {
     pub fn get_keypair(
         &self,
         verification_method_identifier: NamedNodeRef,
-    ) -> Result<(BBSSecretKey<Fr>, BBSPublicKeyG2<Bls12_381>), RDFProofsError> {
+    ) -> Result<(BBSPlusSecretKey, BBSPlusPublicKey), RDFProofsError> {
         let secret_key = self.get_secret_key(verification_method_identifier)?;
         let public_key = self.get_public_key(verification_method_identifier)?;
         Ok((secret_key, public_key))
