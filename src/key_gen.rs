@@ -8,12 +8,14 @@ use ark_std::rand::RngCore;
 use multibase::Base;
 
 pub fn generate_params(message_count: u32) -> BBSPlusParams {
-    // TODO: to be fixed
+    // Note: Parameters here are shared among all the issuers.
     BBSPlusParams::new::<BBSPlusHash>(GENERATOR_SEED, message_count)
 }
 
 pub fn generate_keypair<R: RngCore>(rng: &mut R) -> Result<BBSPlusKeypair, RDFProofsError> {
-    let base_params = generate_params(1); // TODO: to be justified
+    // generate parameters to get `g_2` for generating public key in G2
+    // Note: We do not need `h_i` here but `message_count` cannot be omitted so just set it `1`.
+    let base_params = generate_params(1);
 
     Ok(BBSPlusKeypair::generate_using_rng(rng, &base_params))
 }
