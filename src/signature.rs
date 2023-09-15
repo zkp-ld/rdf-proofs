@@ -1,7 +1,7 @@
 use crate::{
     common::{
         canonicalize_graph, get_delimiter, get_graph_from_ntriples_str, get_hasher,
-        get_verification_method_identifier, hash_terms_to_field, Fr,
+        get_verification_method_identifier, hash_terms_to_field, BBSPlusSignature, Fr,
     },
     constants::CRYPTOSUITE_SIGN,
     context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
@@ -10,10 +10,8 @@ use crate::{
     key_graph::KeyGraph,
     vc::VerifiableCredential,
 };
-use ark_bls12_381::Bls12_381;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
-use bbs_plus::prelude::SignatureG1 as BBSSignatureG1;
 use multibase::Base;
 use oxrdf::{
     vocab::{self, rdf::TYPE},
@@ -181,7 +179,7 @@ fn serialize_proof<R: RngCore>(
 
     let params = generate_params(message_count);
 
-    let signature = BBSSignatureG1::<Bls12_381>::new(rng, hash_data, &secret_key, &params)?;
+    let signature = BBSPlusSignature::new(rng, hash_data, &secret_key, &params)?;
 
     let mut signature_bytes = Vec::new();
     signature.serialize_compressed(&mut signature_bytes)?;
@@ -213,7 +211,7 @@ fn verify_base_proof(
     key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
     let (_, proof_value_bytes) = multibase::decode(proof_value)?;
-    let signature = BBSSignatureG1::<Bls12_381>::deserialize_compressed(&*proof_value_bytes)?;
+    let signature = BBSPlusSignature::deserialize_compressed(&*proof_value_bytes)?;
     let verification_method_identifier = get_verification_method_identifier(proof_config)?;
     let pk = key_graph.get_public_key(verification_method_identifier)?;
     let params = generate_params(

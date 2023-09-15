@@ -1,7 +1,8 @@
 use crate::{
     common::{
         decompose_vp, get_dataset_from_nquads_str, get_delimiter, get_graph_from_ntriples_str,
-        get_hasher, hash_term_to_field, is_nym, reorder_vc_triples, Fr, ProofG1, ProofWithIndexMap,
+        get_hasher, hash_term_to_field, is_nym, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey,
+        Fr, PoKBBSPlusStmt, Proof, ProofWithIndexMap, Statements,
     },
     context::{CHALLENGE, PROOF_VALUE, VERIFICATION_METHOD},
     error::RDFProofsError,
@@ -10,19 +11,14 @@ use crate::{
     ordered_triple::OrderedNamedOrBlankNode,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples, VpGraphs},
 };
-use ark_bls12_381::Bls12_381;
-use ark_ec::pairing::Pairing;
 use ark_serialize::CanonicalDeserialize;
 use ark_std::rand::RngCore;
-use bbs_plus::prelude::PublicKeyG2 as BBSPublicKeyG2;
-use blake2::Blake2b512;
 use oxrdf::{
     dataset::GraphView, Dataset, GraphNameRef, NamedOrBlankNode, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
     prelude::{EqualWitnesses, MetaStatements},
     proof_spec::ProofSpec,
-    statement::{bbs_plus::PoKBBSSignatureG1, Statements},
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -124,7 +120,7 @@ pub fn verify_proof<R: RngCore>(
         proof: proof_bytes,
         index_map,
     } = serde_cbor::from_slice(&proof_value_bytes)?;
-    let proof = ProofG1::deserialize_compressed(&*proof_bytes)?;
+    let proof = Proof::deserialize_compressed(&*proof_bytes)?;
     println!("proof:\n{:#?}\n", proof);
     println!("index_map:\n{:#?}\n", index_map);
 
@@ -175,11 +171,11 @@ pub fn verify_proof<R: RngCore>(
         equivs.into_iter().filter(|(_, v)| v.len() > 1).collect();
 
     // build statements
-    let mut statements = Statements::<Bls12_381, <Bls12_381 as Pairing>::G1Affine>::new();
+    let mut statements = Statements::new();
     for (DisclosedTerms { disclosed, .. }, (params, public_key)) in
         disclosed_terms.iter().zip(params_and_pks)
     {
-        statements.add(PoKBBSSignatureG1::new_statement_from_params(
+        statements.add(PoKBBSPlusStmt::new_statement_from_params(
             params,
             public_key,
             disclosed.clone(),
@@ -206,7 +202,7 @@ pub fn verify_proof<R: RngCore>(
     proof_spec.validate()?;
 
     // verify proof
-    Ok(proof.verify::<R, Blake2b512>(
+    Ok(proof.verify::<R, BBSPlusHash>(
         rng,
         proof_spec,
         nonce.map(|v| v.as_bytes().to_vec()),
@@ -359,7 +355,7 @@ fn build_disclosed_terms(
 fn get_public_keys_from_graphview(
     proof_graph: &GraphView,
     key_graph: &KeyGraph,
-) -> Result<BBSPublicKeyG2<Bls12_381>, RDFProofsError> {
+) -> Result<BBSPlusPublicKey, RDFProofsError> {
     let vm_triple = proof_graph
         .triples_for_predicate(VERIFICATION_METHOD)
         .next()

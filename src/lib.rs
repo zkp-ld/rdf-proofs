@@ -19,14 +19,13 @@ pub use verify_proof::{verify_proof, verify_proof_string};
 #[cfg(test)]
 mod tests {
     use crate::{
-        context::PROOF_VALUE, derive_proof, derive_proof::get_deanon_map_from_string,
-        derive_proof_string, error::RDFProofsError, sign, sign_string, verify, verify_proof,
-        verify_proof_string, verify_string, KeyGraph, VcPair, VcPairString, VerifiableCredential,
+        common::BBSPlusSignature, context::PROOF_VALUE, derive_proof,
+        derive_proof::get_deanon_map_from_string, derive_proof_string, error::RDFProofsError, sign,
+        sign_string, verify, verify_proof, verify_proof_string, verify_string, KeyGraph, VcPair,
+        VcPairString, VerifiableCredential,
     };
-    use ark_bls12_381::Bls12_381;
     use ark_serialize::CanonicalDeserialize;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use bbs_plus::prelude::SignatureG1 as BBSSignatureG1;
     use oxrdf::{Dataset, Graph, NamedOrBlankNode, Term, TermRef};
     use oxttl::{NQuadsParser, NTriplesParser};
     use std::{collections::HashMap, io::Cursor};
@@ -79,8 +78,7 @@ mod tests {
         if let TermRef::Literal(v) = proof_value_triple.object {
             let proof_value = v.value();
             let (_, proof_value_bytes) = multibase::decode(proof_value).unwrap();
-            let signature =
-                BBSSignatureG1::<Bls12_381>::deserialize_compressed(&*proof_value_bytes).unwrap();
+            let signature = BBSPlusSignature::deserialize_compressed(&*proof_value_bytes).unwrap();
             println!("decoded signature:\n{:#?}\n", signature);
         }
     }

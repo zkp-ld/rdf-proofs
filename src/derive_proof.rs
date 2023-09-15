@@ -2,8 +2,9 @@ use super::constants::CRYPTOSUITE_PROOF;
 use crate::{
     common::{
         canonicalize_graph, decompose_vp, get_delimiter, get_graph_from_ntriples_str, get_hasher,
-        hash_term_to_field, is_nym, randomize_bnodes, reorder_vc_triples, Fr, ProofG1,
-        ProofWithIndexMap, StatementIndexMap,
+        hash_term_to_field, is_nym, randomize_bnodes, reorder_vc_triples, BBSPlusHash,
+        BBSPlusPublicKey, BBSPlusSignature, Fr, PoKBBSPlusStmt, PoKBBSPlusWit, Proof,
+        ProofWithIndexMap, StatementIndexMap, Statements,
     },
     context::{
         ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF,
@@ -21,12 +22,8 @@ use crate::{
     },
     VcPairString,
 };
-use ark_bls12_381::Bls12_381;
-use ark_ec::pairing::Pairing;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
-use bbs_plus::prelude::{PublicKeyG2 as BBSPublicKeyG2, SignatureG1 as BBSSignatureG1};
-use blake2::Blake2b512;
 use chrono::offset::Utc;
 use multibase::Base;
 use oxrdf::{
@@ -37,8 +34,7 @@ use oxrdf::{
 use proof_system::{
     prelude::{EqualWitnesses, MetaStatements},
     proof_spec::ProofSpec,
-    statement::{bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, Statements},
-    witness::{PoKBBSSignatureG1 as PoKBBSSignatureG1Wit, Witnesses},
+    witness::Witnesses,
 };
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -327,7 +323,7 @@ pub(crate) fn get_deanon_map_from_string(
 fn get_public_keys(
     proof_graph: &Graph,
     key_graph: &KeyGraph,
-) -> Result<BBSPublicKeyG2<Bls12_381>, RDFProofsError> {
+) -> Result<BBSPlusPublicKey, RDFProofsError> {
     let vm_triple = proof_graph
         .triples_for_predicate(VERIFICATION_METHOD)
         .next()
@@ -766,7 +762,7 @@ fn derive_proof_value<R: RngCore>(
     rng: &mut R,
     original_vc_triples: Vec<VerifiableCredentialTriples>,
     disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
-    public_keys: Vec<BBSPublicKeyG2<Bls12_381>>,
+    public_keys: Vec<BBSPlusPublicKey>,
     proof_values: Vec<String>,
     index_map: Vec<StatementIndexMap>,
     canonicalized_vp: &Dataset,
@@ -827,11 +823,11 @@ fn derive_proof_value<R: RngCore>(
         equivs.into_iter().filter(|(_, v)| v.len() > 1).collect();
 
     // build statements
-    let mut statements = Statements::<Bls12_381, <Bls12_381 as Pairing>::G1Affine>::new();
+    let mut statements = Statements::new();
     for (DisclosedAndUndisclosedTerms { disclosed, .. }, (params, public_key)) in
         disclosed_and_undisclosed_terms.iter().zip(params_and_pks)
     {
-        statements.add(PoKBBSSignatureG1Stmt::new_statement_from_params(
+        statements.add(PoKBBSPlusStmt::new_statement_from_params(
             params,
             public_key,
             disclosed.clone(),
@@ -863,8 +859,8 @@ fn derive_proof_value<R: RngCore>(
         disclosed_and_undisclosed_terms.iter().zip(proof_values)
     {
         let (_, proof_value_bytes) = multibase::decode(proof_value)?;
-        let signature = BBSSignatureG1::<Bls12_381>::deserialize_compressed(&*proof_value_bytes)?;
-        witnesses.add(PoKBBSSignatureG1Wit::new_as_witness(
+        let signature = BBSPlusSignature::deserialize_compressed(&*proof_value_bytes)?;
+        witnesses.add(PoKBBSPlusWit::new_as_witness(
             signature,
             undisclosed.clone(),
         ));
@@ -872,7 +868,7 @@ fn derive_proof_value<R: RngCore>(
     println!("witnesses:\n{:#?}\n", witnesses);
 
     // build proof
-    let proof = ProofG1::new::<R, Blake2b512>(
+    let proof = Proof::new::<R, BBSPlusHash>(
         rng,
         proof_spec,
         witnesses,
@@ -887,7 +883,7 @@ fn derive_proof_value<R: RngCore>(
 }
 
 fn serialize_proof_with_index_map(
-    proof: ProofG1,
+    proof: Proof,
     index_map: &Vec<StatementIndexMap>,
 ) -> Result<String, RDFProofsError> {
     // TODO: optimize
