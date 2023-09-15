@@ -19,10 +19,15 @@ pub use verify_proof::{verify_proof, verify_proof_string};
 #[cfg(test)]
 mod tests {
     use crate::{
-        common::BBSPlusSignature, context::PROOF_VALUE, derive_proof,
-        derive_proof::get_deanon_map_from_string, derive_proof_string, error::RDFProofsError, sign,
-        sign_string, verify, verify_proof, verify_proof_string, verify_string, KeyGraph, VcPair,
-        VcPairString, VerifiableCredential,
+        common::BBSPlusSignature,
+        context::PROOF_VALUE,
+        derive_proof,
+        derive_proof::get_deanon_map_from_string,
+        derive_proof_string,
+        error::RDFProofsError,
+        key_gen::{generate_keypair, generate_params},
+        sign, sign_string, verify, verify_proof, verify_proof_string, verify_string, KeyGraph,
+        VcPair, VcPairString, VerifiableCredential,
     };
     use ark_serialize::CanonicalDeserialize;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
@@ -81,6 +86,28 @@ mod tests {
             let signature = BBSPlusSignature::deserialize_compressed(&*proof_value_bytes).unwrap();
             println!("decoded signature:\n{:#?}\n", signature);
         }
+    }
+
+    // tests for parameter and key generation
+    #[test]
+    fn params_gen_success() {
+        let params1 = generate_params(1);
+        let params2 = generate_params(2);
+        let params3 = generate_params(3);
+        println!("{:#?}", params1);
+        println!("{:#?}", params2);
+        println!("{:#?}", params3);
+    }
+
+    #[test]
+    fn key_gen_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let keypair1 = generate_keypair(&mut rng);
+        let keypair2 = generate_keypair(&mut rng);
+        let keypair3 = generate_keypair(&mut rng);
+        assert!(keypair1.is_ok());
+        assert!(keypair2.is_ok());
+        assert!(keypair3.is_ok());
     }
 
     // tests for sign & verify
