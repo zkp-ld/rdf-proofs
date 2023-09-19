@@ -4,3 +4,4 @@ pub const NYM_IRI_PREFIX: &str = "urn:nym:";
 pub const GENERATOR_SEED: &[u8; 28] = b"BBS_*_MESSAGE_GENERATOR_SEED"; // TODO: fix it later
 pub const MAP_TO_SCALAR_AS_HASH_DST: &[u8; 32] = b"BBS_*_MAP_MSG_TO_SCALAR_AS_HASH_"; // TODO: fix it later
 pub const DELIMITER: &[u8; 13] = b"__DELIMITER__"; // TODO: fix it later
+pub const BLIND_SIG_REQUEST_CONTEXT: &[u8; 23] = b"BBS_*_BLIND_SIG_REQUEST"; // TODO: fix it later
