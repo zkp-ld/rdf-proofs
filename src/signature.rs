@@ -5,7 +5,7 @@ use crate::{
         BBSPlusSignature, Fr,
     },
     constants::CRYPTOSUITE_SIGN,
-    context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
+    context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PROOF_VALUE},
     error::RDFProofsError,
     key_gen::generate_params,
     key_graph::KeyGraph,
@@ -16,7 +16,7 @@ use ark_std::rand::RngCore;
 use multibase::Base;
 use oxrdf::{
     vocab::{self, rdf::TYPE},
-    Graph, Literal, Term, TermRef, Triple, TripleRef,
+    Graph, Literal, Term, TermRef, TripleRef,
 };
 use oxsdatatypes::DateTime;
 use std::str::FromStr;
@@ -27,7 +27,7 @@ pub fn sign<R: RngCore>(
     key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
     let proof_value = sign_core(rng, unsecured_credential, key_graph)?;
-    add_proof_value(unsecured_credential, proof_value)?;
+    unsecured_credential.add_proof_value(proof_value)?;
     Ok(())
 }
 
@@ -184,22 +184,6 @@ fn serialize_proof<R: RngCore>(
     let signature_base64url = multibase::encode(Base::Base64Url, signature_bytes);
 
     Ok(signature_base64url)
-}
-
-pub fn add_proof_value(
-    unsecured_credential: &mut VerifiableCredential,
-    proof_value: String,
-) -> Result<(), RDFProofsError> {
-    let VerifiableCredential { proof, .. } = unsecured_credential;
-    let proof_subject = proof
-        .subject_for_predicate_object(vocab::rdf::TYPE, DATA_INTEGRITY_PROOF)
-        .ok_or(RDFProofsError::InvalidProofConfiguration)?;
-    proof.insert(&Triple::new(
-        proof_subject,
-        PROOF_VALUE,
-        Literal::new_typed_literal(proof_value, MULTIBASE),
-    ));
-    Ok(())
 }
 
 fn verify_base_proof(
