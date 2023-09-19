@@ -1,10 +1,10 @@
 use super::constants::CRYPTOSUITE_PROOF;
 use crate::{
     common::{
-        canonicalize_graph, decompose_vp, get_delimiter, get_graph_from_ntriples, get_hasher,
-        get_vc_from_ntriples, hash_term_to_field, is_nym, randomize_bnodes, reorder_vc_triples,
-        BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr, PoKBBSPlusStmt, PoKBBSPlusWit, Proof,
-        ProofWithIndexMap, StatementIndexMap, Statements,
+        canonicalize_graph, decompose_vp, generate_proof_spec_context, get_delimiter,
+        get_graph_from_ntriples, get_hasher, get_vc_from_ntriples, hash_term_to_field, is_nym,
+        randomize_bnodes, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr,
+        PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap, StatementIndexMap, Statements,
     },
     context::{
         ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF,
@@ -22,7 +22,7 @@ use crate::{
     },
     VcPairString,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::CanonicalDeserialize;
 use ark_std::rand::RngCore;
 use chrono::offset::Utc;
 use multibase::Base;
@@ -828,15 +828,8 @@ fn derive_proof_value<R: RngCore>(
         meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
     }
 
-    // build context
-    let serialized_vp = rdf_canon::serialize(canonicalized_vp).into_bytes();
-    let serialized_vp_with_index_map = ProofWithIndexMap {
-        proof: serialized_vp,
-        index_map: index_map.clone(),
-    };
-    let context = serde_cbor::to_vec(&serialized_vp_with_index_map)?;
-
     // build proof spec
+    let context = generate_proof_spec_context(&canonicalized_vp, &index_map)?;
     let proof_spec = ProofSpec::new(statements, meta_statements, vec![], Some(context));
     proof_spec.validate()?;
 
@@ -875,11 +868,8 @@ fn serialize_proof_with_index_map(
 ) -> Result<String, RDFProofsError> {
     // TODO: optimize
     // TODO: use multicodec
-    let mut proof_bytes_compressed = Vec::new();
-    proof.serialize_compressed(&mut proof_bytes_compressed)?;
-
     let proof_with_index_map = ProofWithIndexMap {
-        proof: proof_bytes_compressed,
+        proof,
         index_map: index_map.clone(),
     };
     let proof_with_index_map_cbor = serde_cbor::to_vec(&proof_with_index_map)?;

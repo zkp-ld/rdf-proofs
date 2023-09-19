@@ -31,7 +31,6 @@ use proof_system::{
     statement::Statements as StatementsOrig, witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
 };
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, Bytes};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -64,16 +63,27 @@ pub fn deserialize_ark<'de, D: serde::Deserializer<'de>, A: CanonicalDeserialize
     A::deserialize_compressed(s).map_err(serde::de::Error::custom)
 }
 
+#[derive(Serialize)]
+struct ProofSpecContext(pub String, pub Vec<StatementIndexMap>);
+
+pub(crate) fn generate_proof_spec_context(
+    vp: &Dataset,
+    statement_index_map: &Vec<StatementIndexMap>,
+) -> Result<Vec<u8>, RDFProofsError> {
+    let serialized_vp = rdf_canon::serialize(&vp);
+    let serialized_vp_with_index_map = ProofSpecContext(serialized_vp, statement_index_map.clone());
+    Ok(serde_cbor::to_vec(&serialized_vp_with_index_map)?) // TODO: CBOR is overkill as we do not need deserialization
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename = "0")]
 pub struct StatementIndexMap {
-    #[serde(rename = "1")]
+    #[serde(rename = "a")]
     document_map: Vec<usize>,
-    #[serde(rename = "2")]
+    #[serde(rename = "b")]
     document_len: usize,
-    #[serde(rename = "3")]
+    #[serde(rename = "c")]
     proof_map: Vec<usize>,
-    #[serde(rename = "4")]
+    #[serde(rename = "d")]
     proof_len: usize,
 }
 
@@ -93,11 +103,15 @@ impl StatementIndexMap {
     }
 }
 
-#[serde_as]
 #[derive(Serialize, Deserialize)]
 pub struct ProofWithIndexMap {
-    #[serde_as(as = "Bytes")]
-    pub proof: Vec<u8>,
+    #[serde(
+        rename = "a",
+        serialize_with = "serialize_ark",
+        deserialize_with = "deserialize_ark"
+    )]
+    pub proof: Proof,
+    #[serde(rename = "b")]
     pub index_map: Vec<StatementIndexMap>,
 }
 

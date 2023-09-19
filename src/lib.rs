@@ -339,43 +339,43 @@ mod tests {
         get_deanon_map_from_string(&get_example_deanon_map_string()).unwrap()
     }
     const VP_NQUADS: &str = r#"
-    _:c14n10 <http://example.org/vocab/vaccine> _:c14n5 _:c14n6 .
-    _:c14n10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n6 .
-    _:c14n12 <http://purl.org/dc/terms/created> "2023-09-14T12:48:56.852413787Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n1 .
-    _:c14n12 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n1 .
-    _:c14n12 <https://w3id.org/security#challenge> "abcde" _:c14n1 .
-    _:c14n12 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n1 .
-    _:c14n12 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n1 .
-    _:c14n12 <https://w3id.org/security#proofValue> "uomVwcm9vZlkJ2gIAAAAAAAAAAI96UbiqqR7bGtMc4isKy2SIRvlNMnGKf5qHse3ZdWOaeTWbgOSdUOrmzE01SIlzsrVkt2o-aSHXPtxue9bZ4FOM4dvUEx1IJeLSddsAVUp-m1BS3L5U0vYNpMgAYMQpUaTgzIgmx29ofN0QXb6nFvZvi5ShvK1G61DoSV1DEj1Lyc8ZhrsCiGZGzYQXPCm1i4_rEHtRgqPHxPt9IQQYLDrTv1ma57gZugjiDxj3CIPn3lTqa2YhvQ64EE_ax3q4ygIAAAAAAAAAWL6fScreFUDNQwfmEh21baSp_fGgmLJ6tSYHQN-_6WtFADIiFIM9656JXxVF-jJW3sqtImKMEuE8P79uL6UzPqvhlEiyzHuCns7cgcLrlGTCDfBcbf_bQ8XMKlACcr7yHI65ImcY5-usSRBT9m3cSyUAAAAAAAAACWylJlERihdXI7-lSqw_x_--rAP4J-phuBXKnx2GHiqisCJy05ayYHvH8NX_zOU3XuPhwE5MjVq5WPAwtHVpHibRwKbSIDRkp66dRzY1hwbsOzhTDF00BQ3s3wFxZxYUyqmJp9yVCfZ7yDjMvy-z7HCEX_82BLu77WNMXoQz0Ds-mAvrtpXKpK8kzfBnXAeCr6FFbXtX9FniapWKGotuCKTGOl02epJYv824A2TY4CF1MV8u14TDu81PnAst4RBeJTOWSkut0DTWC6hsz6F2RRrOXrsaM7jw5gbP92H5c2Em0cCm0iA0ZKeunUc2NYcG7Ds4UwxdNAUN7N8BcWcWFEwtFM6RJ5LxLYYx8Fzpgl8cg7l5m2NY8I3ddF2pXMBSJtHAptIgNGSnrp1HNjWHBuw7OFMMXTQFDezfAXFnFhRdkGSQ_VnNIN9Qy5gq13c4ezRWOq2Fqny_i9xxSuTuOl2QZJD9Wc0g31DLmCrXdzh7NFY6rYWqfL-L3HFK5O46JtHAptIgNGSnrp1HNjWHBuw7OFMMXTQFDezfAXFnFhRdkGSQ_VnNIN9Qy5gq13c4ezRWOq2Fqny_i9xxSuTuOl2QZJD9Wc0g31DLmCrXdzh7NFY6rYWqfL-L3HFK5O46XZBkkP1ZzSDfUMuYKtd3OHs0Vjqthap8v4vccUrk7jp-2MXyHhHRTDIf08qwZW23GuNliH2e1iqlaKyeiUh3K-niDS8CebTcZU7sZjVj6uSPzGjZN4mEuxmoa3AR8LgRkkqhs6tgPoBHflmHhlnJ0TaXWiFgUunfi6Mw1p3ZTnFMLRTOkSeS8S2GMfBc6YJfHIO5eZtjWPCN3XRdqVzAUt92i5EP3U24AXQRUfbiUAvUspILkEeNfxYZnxB06cUowHrVXHJiXhOf0okBQLohUF81d7y1e-EweE1MGfFrVCbFFrFa_wKjSfIgIlN7NYRI2bFlfUToSjVKZLmR1Es5VnZEmOhyepJkrn4j0sY2DUN-tblDRimnBpdQ1pOpRgkg9wNxzI63UfIMnnV-0I2o0ZLlcVc0kH7CTcGyUBGfK29ywHWAHsD-1Ou6-0oQzoPYZ1SxEy2zq91sBlBy0VGICMqpiafclQn2e8g4zL8vs-xwhF__NgS7u-1jTF6EM9A7H7nVVVS8cOLn6c2tqHFkHJEd6IHWKSzfyf6GFB95z0O9fNdru7It9D36Sib6dvOcao7icaYOYT-t64M_Yq7LYHi4WVarIREIX-2y-8tRVvwh-zUpBMTXMoBIRYvv0ZVRGUMM8iHvjcaJ7nlCDi5PsOpJlXGnmB9pZQ2PZ27ybznKqYmn3JUJ9nvIOMy_L7PscIRf_zYEu7vtY0xehDPQO-uGUnnyp7PoM-ChHzGCE1qi3C1KGLWiwl4UBtLCAwU564ZSefKns-gz4KEfMYITWqLcLUoYtaLCXhQG0sIDBTnrhlJ58qez6DPgoR8xghNaotwtShi1osJeFAbSwgMFOeuGUnnyp7PoM-ChHzGCE1qi3C1KGLWiwl4UBtLCAwU564ZSefKns-gz4KEfMYITWqLcLUoYtaLCXhQG0sIDBTkAjguPHM_g-aysY1tfWEAHi_wZ9FWXi5iYuyOFJeJPTv1X4dooBAGFpLm_csR8QRXjk5MElUoPhAgn8Lr76kVn2Dupo-rpm90r5T3gzsgmtMGFaPWLwxdPo7HPCJdlPjY2ixO-34KcqlQaNPHiZnr774zX2FIPQrd6ZWOlYG1QjGVOo2sMHUCFigd2PubbNVG1pgVSBzu0VbvXrBqaTaQsrw5YIoFkUkqZWXV_DsII5fUQKVENiglPUL4HP1aCat94AgAAAAAAAACuAXLgOyzhP-NwLyHsa_R2A3PlCswBPF-QX5us8V_QWT5BEW-5RzPSxGfDl9ZbKdR1WGVYjRPZRes15Ud-twJEpz2dEnt9P8X-Q3gMGOgYd6C1ZhOXvtV-WDFSnzkmQ3eaW6sZ7c2BJwP2c9QBE0oGFQAAAAAAAAAgjrLQ_ER09q92TKdGOj-fTyKCmW_Qr4vgl9p6Ar8VFfAKrvu1fZZO0NdyFcyPKoNzAyzRBCUnrDpt9--suZQsdcS1B00B3ey_gEMnFC7dPh37BZ4api4M3pCTUcz2wxIFI7qePf83PCzSMit5rI9ffdDzO1LKpEehtJhKzLSqI_6EOGhqjWwR02HThRlKWg1h_o2T3zhUb721OJAMHQYaa-DVy9Ytmm8RfkfirHhirJKyDPjUPzKF0p6kgwtQYlwWN7o_d6X0Vaos8BdqnmIZsATIuOFrPrHIGmEAkk_QE7l_sF3_3unDXNXRg7JT1TmFFwDvbNnLqSgn51QmsjonH7nVVVS8cOLn6c2tqHFkHJEd6IHWKSzfyf6GFB95z0MfudVVVLxw4ufpza2ocWQckR3ogdYpLN_J_oYUH3nPQ9QXg67xZZu5POD8e051qTjFMwjVwB3eUSQ8ZLX1nxIX1BeDrvFlm7k84Px7TnWpOMUzCNXAHd5RJDxktfWfEhcfudVVVLxw4ufpza2ocWQckR3ogdYpLN_J_oYUH3nPQ9QXg67xZZu5POD8e051qTjFMwjVwB3eUSQ8ZLX1nxIX1BeDrvFlm7k84Px7TnWpOMUzCNXAHd5RJDxktfWfEhfUF4Ou8WWbuTzg_HtOdak4xTMI1cAd3lEkPGS19Z8SF_TbWASPcaNHrGaMFp2NZSKhXmnFV9q_b8sgVcLnGr1H9NtYBI9xo0esZowWnY1lIqFeacVX2r9vyyBVwucavUf021gEj3GjR6xmjBadjWUioV5pxVfav2_LIFXC5xq9R_TbWASPcaNHrGaMFp2NZSKhXmnFV9q_b8sgVcLnGr1H9NtYBI9xo0esZowWnY1lIqFeacVX2r9vyyBVwucavUcBBQAAAAAAAABhYmNkZQAAaWluZGV4X21hcIKkYTGLDQ8AAgMEBQYHCAphMhBhM4UAAQIDBGE0BaRhMYcCAwQFBgcIYTIJYTOFAAECAwRhNAU"^^<https://w3id.org/security#multibase> _:c14n1 .
-    _:c14n13 <http://example.org/vocab/isPatientOf> _:c14n10 _:c14n6 .
-    _:c14n13 <http://schema.org/worksFor> _:c14n8 _:c14n6 .
-    _:c14n13 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n6 .
-    _:c14n14 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n6 .
-    _:c14n14 <https://w3id.org/security#proof> _:c14n11 _:c14n6 .
-    _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n13 _:c14n6 .
-    _:c14n14 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
-    _:c14n14 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
-    _:c14n14 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n6 .
-    _:c14n2 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n11 .
-    _:c14n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n11 .
-    _:c14n2 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n11 .
-    _:c14n2 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n11 .
-    _:c14n2 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n11 .
-    _:c14n3 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
-    _:c14n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
-    _:c14n3 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n0 .
-    _:c14n3 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
-    _:c14n3 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n0 .
-    _:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
-    _:c14n4 <https://w3id.org/security#proof> _:c14n1 .
-    _:c14n4 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n6 .
-    _:c14n4 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n7 .
-    _:c14n5 <http://schema.org/status> "active" _:c14n7 .
-    _:c14n5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n7 .
-    _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n6 .
+    _:c14n1 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n12 .
+    _:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n12 .
+    _:c14n1 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n12 .
+    _:c14n1 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n12 .
+    _:c14n1 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n12 .
+    _:c14n10 <http://example.org/vocab/vaccine> _:c14n4 _:c14n5 .
+    _:c14n10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n5 .
+    _:c14n11 <http://purl.org/dc/terms/created> "2023-09-19T11:52:13.344145635Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
+    _:c14n11 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n6 .
+    _:c14n11 <https://w3id.org/security#challenge> "abcde" _:c14n6 .
+    _:c14n11 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n6 .
+    _:c14n11 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n6 .
+    _:c14n11 <https://w3id.org/security#proofValue> "uomFhWQnaAgAAAAAAAAAAj3pRuKqpHtsa0xziKwrLZIhG-U0ycYp_moex7dl1Y5p5NZuA5J1Q6ubMTTVIiXOytWS3aj5pIdc-3G571tngU4zh29QTHUgl4tJ12wBVSn6bUFLcvlTS9g2kyABgxClRpODMiCbHb2h83RBdvqcW9m-LlKG8rUbrUOhJXUMSPUvJzxmGuwKIZkbNhBc8KbWLj-sQe1GCo8fE-30hBBgsOtO_WZrnuBm6COIPGPcIg-feVOprZiG9DrgQT9rHerjKAgAAAAAAAAB2t2flGvbGCAXAnvgmZ2pd9SwdwE3sFCUVQ813PhkjSgdNfBrATCRC50LekfDB3am9peay3FphlBN4vU0acZsDj7yIdhcBfXOJ4lRktyApz1axji5vP4pjtr0YXbnlJYJQbGddU2sFhfro3-0awRfGJQAAAAAAAAA6SfboKj6RRx5BT7QIWJ9zVbfbacNUmtiW7sqy86OnK3ipeb_RnZENbKqHarJwl4vCvGUDxPnUB2bEQ2HSX7YERO5OpcOW-7Rak_g3LIoo-_b3opn6i1hdDzOqCvc4kD2MYycMpBVNvN6kf9ItVFgB9-xiFxIXecupWWqNkfC1IgGdnm0y6dB_ZkEmUqc79iNSYhBZuDGJ23I5Av6P7KlBgj1T8CYvS9oKQ--eM492wzr5N5H3JM5c5aQIqR7Nw1XYgGyvvkVtm69ypDz3Xp7ThIt3uTPkKZQgtmvWA1D6WETuTqXDlvu0WpP4NyyKKPv296KZ-otYXQ8zqgr3OJA9wyZ_tdDWew_SWxM8NOVleEYGt5XSG42_caM00Juv3FdE7k6lw5b7tFqT-Dcsiij79veimfqLWF0PM6oK9ziQPb9jZbHUDy-L-ANUBNoMnnVeR3kDAoPv2XRkmSY_dy1zv2NlsdQPL4v4A1QE2gyedV5HeQMCg-_ZdGSZJj93LXNE7k6lw5b7tFqT-Dcsiij79veimfqLWF0PM6oK9ziQPb9jZbHUDy-L-ANUBNoMnnVeR3kDAoPv2XRkmSY_dy1zv2NlsdQPL4v4A1QE2gyedV5HeQMCg-_ZdGSZJj93LXO_Y2Wx1A8vi_gDVATaDJ51Xkd5AwKD79l0ZJkmP3ctc_XRMNpdwLpq1vS0FohhUNBEZmOktFYL-ogubBF8m5Mwx1kmwvItbV6xwyICBRqAhlWUQTxYKY9cMf3XDQPcawno3bY4yCwyt7LY5Uls6qTAFCua45NuypzQgcADlJhxQsMmf7XQ1nsP0lsTPDTlZXhGBreV0huNv3GjNNCbr9xXpiGkVmCBO3gDSrBPXAz93aSx3EX2UUB5PyGCiPZqKw_m4ZB8MHTnoatMfrxd_vIdK7hdWfNFul_ULap8cB5uMcXxZiEKwEyputX-gyW271pg2ODBHpyEfvNcUuYt9BQlPe-wrcMegCSwVMLQLGC5FU-0A36sM1oAwFi5CyzIbgam0Ez8YaXyBmCaVVcbRHs8nm9KPxw3ni-XTIPdukctGY4dCTNGaZIXwJa8bFhGypJ0tF1pJ7uyayu-PVvDNRACjGMnDKQVTbzepH_SLVRYAffsYhcSF3nLqVlqjZHwtSLPXzXchDAsN0B_Q1hGfzINZGHAZ9rXKU135OARPSLjQ4Qn8DAMVxu0P9DpJGCgn287jSysDBkUOdbzZrfkLzFHMa65ct2xcuwNZYXF8JnpJDnn518gx_WWM-7_2oqt2w5TkYWq2MYl9WKzXEGj1Zd4SC6Q4Gk7fhV-ZZmagJEwKIxjJwykFU283qR_0i1UWAH37GIXEhd5y6lZao2R8LUi5_N8dI68FU5h1H34Gm4kF0svbKxUWnVCmgKysIXZbD7n83x0jrwVTmHUffgabiQXSy9srFRadUKaArKwhdlsPufzfHSOvBVOYdR9-BpuJBdLL2ysVFp1QpoCsrCF2Ww-5_N8dI68FU5h1H34Gm4kF0svbKxUWnVCmgKysIXZbD7n83x0jrwVTmHUffgabiQXSy9srFRadUKaArKwhdlsPgCOC48cz-D5rKxjW19YQAeL_Bn0VZeLmJi7I4Ul4k9O_Vfh2igEAYWkub9yxHxBFeOTkwSVSg-ECCfwuvvqRWfYO6mj6umb3SvlPeDOyCa0wYVo9YvDF0-jsc8Il2U-NjaLE77fgpyqVBo08eJmevvvjNfYUg9Ct3plY6VgbVCMZU6jawwdQIWKB3Y-5ts1UbWmBVIHO7RVu9esGppNpCyvDlgigWRSSplZdX8Owgjl9RApUQ2KCU9Qvgc_VoJq33gCAAAAAAAAAMz6OXyMQ5IIG-3GMwC2qWZU9gTZeFWeCfB7YeRQuQk46Q7qzTRr5c1maBQdpU9S_4ZtCV3fpC-aPPDi4RERMkCnPZ0Se30_xf5DeAwY6Bh3oLVmE5e-1X5YMVKfOSZDd5pbqxntzYEnA_Zz1AETSgYVAAAAAAAAABzJX81dMnvwMh2kM1n9dq-WedfBtga0P3X7cg-gruprrYFcXH2LUI_R59jIzSHcSjAPLnF23MNOoDks_gZSszAlaxWOfXWYQRgWudGxO6sv8D7egx5ULHqLdu1O6p_XEkrqV0RHXU-uJ0XaOA1OGx7p6ibtBZ1-dLTBYcQuK4k2EHLVeCQxzyY8QdBPgcu3eTkwAe3JOrAHNOuCGX7_xQYbhzVSB6JVxGkTvYxKhjCdZfbk3djtL_N_hP6AKfl1XPSt0tJnWq3X9aEmszlV-Lp1zKAbAgxJUuBvzZ2DO4MLpuKuXMzjLI3KyrLA6eri5yOfrAcI6WMIU37FIespdkvPXzXchDAsN0B_Q1hGfzINZGHAZ9rXKU135OARPSLjQ89fNdyEMCw3QH9DWEZ_Mg1kYcBn2tcpTXfk4BE9IuNDNk2_cs9iVCnAOHbYBjFyoN1pmwR8uj5Y3C0T7wSodRk2Tb9yz2JUKcA4dtgGMXKg3WmbBHy6PljcLRPvBKh1Gc9fNdyEMCw3QH9DWEZ_Mg1kYcBn2tcpTXfk4BE9IuNDNk2_cs9iVCnAOHbYBjFyoN1pmwR8uj5Y3C0T7wSodRk2Tb9yz2JUKcA4dtgGMXKg3WmbBHy6PljcLRPvBKh1GTZNv3LPYlQpwDh22AYxcqDdaZsEfLo-WNwtE-8EqHUZdqUe0sBve1wU-lghuRS6lX96JLx4a0EGu2OMaphLZzF2pR7SwG97XBT6WCG5FLqVf3okvHhrQQa7Y4xqmEtnMXalHtLAb3tcFPpYIbkUupV_eiS8eGtBBrtjjGqYS2cxdqUe0sBve1wU-lghuRS6lX96JLx4a0EGu2OMaphLZzF2pR7SwG97XBT6WCG5FLqVf3okvHhrQQa7Y4xqmEtnMQEFAAAAAAAAAGFiY2RlAABhYoKkYWGLDQ8AAgMEBQYHCAphYhBhY4UAAQIDBGFkBaRhYYcCAwQFBgcIYWIJYWOFAAECAwRhZAU"^^<https://w3id.org/security#multibase> _:c14n6 .
+    _:c14n13 <http://example.org/vocab/isPatientOf> _:c14n10 _:c14n5 .
+    _:c14n13 <http://schema.org/worksFor> _:c14n8 _:c14n5 .
+    _:c14n13 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n5 .
+    _:c14n14 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n5 .
+    _:c14n14 <https://w3id.org/security#proof> _:c14n12 _:c14n5 .
+    _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n13 _:c14n5 .
+    _:c14n14 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
+    _:c14n14 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
+    _:c14n14 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n5 .
+    _:c14n2 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
+    _:c14n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
+    _:c14n2 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n0 .
+    _:c14n2 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
+    _:c14n2 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n0 .
+    _:c14n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
+    _:c14n3 <https://w3id.org/security#proof> _:c14n6 .
+    _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n5 .
+    _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n7 .
+    _:c14n4 <http://schema.org/status> "active" _:c14n7 .
+    _:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n7 .
+    _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n5 .
     _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n7 .
     _:c14n9 <https://w3id.org/security#proof> _:c14n0 _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n5 _:c14n7 .
+    _:c14n9 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n4 _:c14n7 .
     _:c14n9 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n7 .
     _:c14n9 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n7 .
     _:c14n9 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n7 .
