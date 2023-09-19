@@ -1,8 +1,8 @@
 use crate::{
     common::{
-        decompose_vp, get_dataset_from_nquads, get_delimiter, get_graph_from_ntriples,
-        get_hasher, hash_term_to_field, is_nym, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey,
-        Fr, PoKBBSPlusStmt, Proof, ProofWithIndexMap, Statements,
+        decompose_vp, generate_proof_spec_context, get_dataset_from_nquads, get_delimiter,
+        get_graph_from_ntriples, get_hasher, hash_term_to_field, is_nym, reorder_vc_triples,
+        BBSPlusHash, BBSPlusPublicKey, Fr, PoKBBSPlusStmt, ProofWithIndexMap, Statements,
     },
     context::{CHALLENGE, PROOF_VALUE, VERIFICATION_METHOD},
     error::RDFProofsError,
@@ -11,7 +11,6 @@ use crate::{
     ordered_triple::OrderedNamedOrBlankNode,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples, VpGraphs},
 };
-use ark_serialize::CanonicalDeserialize;
 use ark_std::rand::RngCore;
 use oxrdf::{
     dataset::GraphView, Dataset, GraphNameRef, NamedOrBlankNode, Subject, Term, TermRef, Triple,
@@ -116,11 +115,7 @@ pub fn verify_proof<R: RngCore>(
 
     // deserialize proof value into proof and index_map
     let (_, proof_value_bytes) = multibase::decode(proof_value_encoded)?;
-    let ProofWithIndexMap {
-        proof: proof_bytes,
-        index_map,
-    } = serde_cbor::from_slice(&proof_value_bytes)?;
-    let proof = Proof::deserialize_compressed(&*proof_bytes)?;
+    let ProofWithIndexMap { proof, index_map } = serde_cbor::from_slice(&proof_value_bytes)?;
     println!("proof:\n{:#?}\n", proof);
     println!("index_map:\n{:#?}\n", index_map);
 
@@ -189,15 +184,8 @@ pub fn verify_proof<R: RngCore>(
         meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
     }
 
-    // build context
-    let serialized_vp = rdf_canon::serialize(&canonicalized_vp).into_bytes();
-    let serialized_vp_with_index_map = ProofWithIndexMap {
-        proof: serialized_vp,
-        index_map: index_map.clone(),
-    };
-    let context = serde_cbor::to_vec(&serialized_vp_with_index_map)?;
-
     // build proof spec
+    let context = generate_proof_spec_context(&canonicalized_vp, &index_map)?;
     let proof_spec = ProofSpec::new(statements, meta_statements, vec![], Some(context));
     proof_spec.validate()?;
 
