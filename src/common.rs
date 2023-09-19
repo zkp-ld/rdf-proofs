@@ -14,6 +14,7 @@ use crate::{
 use ark_bls12_381::{Bls12_381, G1Affine};
 use ark_ec::pairing::Pairing;
 use ark_ff::field_hashers::{DefaultFieldHasher, HashToField};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bbs_plus::{
     setup::{KeypairG2, PublicKeyG2, SecretKey, SignatureParamsG1},
     signature::SignatureG1,
@@ -45,6 +46,23 @@ pub type BBSPlusPublicKey = PublicKeyG2<Bls12_381>;
 pub type BBSPlusSignature = SignatureG1<Bls12_381>;
 pub type PoKBBSPlusStmt<E> = PoKBBSSignatureG1Stmt<E>;
 pub type PoKBBSPlusWit<E> = PoKBBSSignatureG1Wit<E>;
+
+pub fn serialize_ark<S: serde::Serializer, A: CanonicalSerialize>(
+    ark: &A,
+    ser: S,
+) -> Result<S::Ok, S::Error> {
+    let mut bytes = vec![];
+    ark.serialize_compressed(&mut bytes)
+        .map_err(serde::ser::Error::custom)?;
+    ser.serialize_bytes(&bytes)
+}
+
+pub fn deserialize_ark<'de, D: serde::Deserializer<'de>, A: CanonicalDeserialize>(
+    de: D,
+) -> Result<A, D::Error> {
+    let s: &[u8] = serde::Deserialize::deserialize(de)?;
+    A::deserialize_compressed(s).map_err(serde::de::Error::custom)
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename = "0")]
@@ -128,6 +146,16 @@ pub fn hash_term_to_field(
 ) -> Result<Fr, RDFProofsError> {
     hasher
         .hash_to_field(term.to_string().as_bytes(), 1)
+        .pop()
+        .ok_or(RDFProofsError::HashToField)
+}
+
+pub fn hash_byte_to_field(
+    byte: &[u8],
+    hasher: &DefaultFieldHasher<Blake2b512>,
+) -> Result<Fr, RDFProofsError> {
+    hasher
+        .hash_to_field(byte, 1)
         .pop()
         .ok_or(RDFProofsError::HashToField)
 }
