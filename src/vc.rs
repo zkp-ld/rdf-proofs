@@ -1,10 +1,11 @@
 use crate::{
-    context::PROOF,
+    context::{DATA_INTEGRITY_PROOF, MULTIBASE, PROOF, PROOF_VALUE},
+    error::RDFProofsError,
     ordered_triple::{
         OrderedGraphNameRef, OrderedGraphViews, OrderedVerifiableCredentialGraphViews,
     },
 };
-use oxrdf::{dataset::GraphView, Graph, Triple};
+use oxrdf::{dataset::GraphView, vocab, Graph, Literal, Triple};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
@@ -16,6 +17,19 @@ pub struct VerifiableCredential {
 impl VerifiableCredential {
     pub fn new(document: Graph, proof: Graph) -> Self {
         Self { document, proof }
+    }
+
+    pub fn add_proof_value(self: &mut Self, proof_value: String) -> Result<(), RDFProofsError> {
+        let VerifiableCredential { proof, .. } = self;
+        let proof_subject = proof
+            .subject_for_predicate_object(vocab::rdf::TYPE, DATA_INTEGRITY_PROOF)
+            .ok_or(RDFProofsError::InvalidProofConfiguration)?;
+        proof.insert(&Triple::new(
+            proof_subject,
+            PROOF_VALUE,
+            Literal::new_typed_literal(proof_value, MULTIBASE),
+        ));
+        Ok(())
     }
 }
 
