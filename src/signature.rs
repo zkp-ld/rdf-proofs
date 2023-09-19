@@ -1,7 +1,8 @@
 use crate::{
     common::{
-        canonicalize_graph, get_delimiter, get_graph_from_ntriples_str, get_hasher,
-        get_verification_method_identifier, hash_terms_to_field, BBSPlusSignature, Fr,
+        canonicalize_graph, get_delimiter, get_graph_from_ntriples, get_hasher,
+        get_vc_from_ntriples, get_verification_method_identifier, hash_terms_to_field,
+        BBSPlusSignature, Fr,
     },
     constants::CRYPTOSUITE_SIGN,
     context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
@@ -15,7 +16,7 @@ use ark_std::rand::RngCore;
 use multibase::Base;
 use oxrdf::{
     vocab::{self, rdf::TYPE},
-    Graph, Literal, Term, TermRef, Triple,
+    Graph, Literal, Term, TermRef, Triple, TripleRef,
 };
 use oxsdatatypes::DateTime;
 use std::str::FromStr;
@@ -25,11 +26,7 @@ pub fn sign<R: RngCore>(
     unsecured_credential: &mut VerifiableCredential,
     key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
-    let VerifiableCredential { document, proof } = unsecured_credential;
-    let transformed_data = transform(document, proof)?;
-    let canonical_proof_config = configure_proof(proof)?;
-    let hash_data = hash(&transformed_data, &canonical_proof_config)?;
-    let proof_value = serialize_proof(rng, &hash_data, proof, key_graph)?;
+    let proof_value = sign_core(rng, unsecured_credential, key_graph)?;
     add_proof_value(unsecured_credential, proof_value)?;
     Ok(())
 }
@@ -40,24 +37,23 @@ pub fn sign_string<R: RngCore>(
     proof: &str,
     key_graph: &str,
 ) -> Result<String, RDFProofsError> {
-    // construct input for `sign` from string-based input
-    let document = get_graph_from_ntriples_str(document)?;
-    let proof = get_graph_from_ntriples_str(proof)?;
-    let key_graph = get_graph_from_ntriples_str(key_graph)?.into();
-    let mut vc = VerifiableCredential::new(document, proof);
+    let unsecured_credential = get_vc_from_ntriples(document, proof)?;
+    let key_graph = get_graph_from_ntriples(key_graph)?.into();
+    let proof_value = sign_core(rng, &unsecured_credential, &key_graph)?;
+    Ok(proof_value)
+}
 
-    sign(rng, &mut vc, &key_graph)?;
-
-    // return proofValue as String
-    let proof_value_triple = vc
-        .proof
-        .triples_for_predicate(PROOF_VALUE)
-        .next()
-        .ok_or(RDFProofsError::Other("internal error".to_string()))?;
-    match proof_value_triple.object {
-        oxrdf::TermRef::Literal(v) => Ok(v.value().to_string()),
-        _ => Err(RDFProofsError::Other("internal error".to_string())),
-    }
+fn sign_core<R: RngCore>(
+    rng: &mut R,
+    unsecured_credential: &VerifiableCredential,
+    key_graph: &KeyGraph,
+) -> Result<String, RDFProofsError> {
+    let VerifiableCredential { document, proof } = unsecured_credential;
+    let transformed_data = transform(document, proof)?;
+    let canonical_proof_config = configure_proof(proof)?;
+    let hash_data = hash(&transformed_data, &canonical_proof_config)?;
+    let proof_value = serialize_proof(rng, &hash_data, proof, key_graph)?;
+    Ok(proof_value)
 }
 
 pub fn verify(
@@ -88,57 +84,59 @@ pub fn verify(
 
 pub fn verify_string(document: &str, proof: &str, key_graph: &str) -> Result<(), RDFProofsError> {
     // construct input for `verify` from string-based input
-    let document = get_graph_from_ntriples_str(document)?;
-    let proof = get_graph_from_ntriples_str(proof)?;
-    let key_graph = get_graph_from_ntriples_str(key_graph)?.into();
-    let vc = VerifiableCredential::new(document, proof);
+    let vc = get_vc_from_ntriples(document, proof)?;
+    let key_graph = get_graph_from_ntriples(key_graph)?.into();
 
     verify(&vc, &key_graph)
 }
 
-fn transform(
+pub(crate) fn transform(
     unsecured_document: &Graph,
     _proof_options: &Graph,
 ) -> Result<Vec<Term>, RDFProofsError> {
     _canonicalize_into_terms(unsecured_document)
 }
 
-fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, RDFProofsError> {
+pub(crate) fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, RDFProofsError> {
+    let mut proof_config = proof_options.clone();
+
     // if `proof_options.type` is not set to `DataIntegrityProof`
-    // and `proof_options.cryptosuite` is not set to `bbs-termwise-signature-2023`
     // then `INVALID_PROOF_CONFIGURATION_ERROR` must be raised
     let proof_options_subject = proof_options
         .subject_for_predicate_object(TYPE, DATA_INTEGRITY_PROOF)
         .ok_or(RDFProofsError::InvalidProofConfiguration)?;
-    let cryptosuite = proof_options
-        .object_for_subject_predicate(proof_options_subject, CRYPTOSUITE)
-        .ok_or(RDFProofsError::InvalidProofConfiguration)?;
-    if let TermRef::Literal(v) = cryptosuite {
+
+    // if `proof_options.cryptosuite` is given and its value is not CRYPTOSUITE_SIGN
+    // then `INVALID_PROOF_CONFIGURATION_ERROR` must be raised
+    let cryptosuite =
+        proof_options.object_for_subject_predicate(proof_options_subject, CRYPTOSUITE);
+    if let Some(TermRef::Literal(v)) = cryptosuite {
         if v.value() != CRYPTOSUITE_SIGN {
             return Err(RDFProofsError::InvalidProofConfiguration);
         }
     } else {
-        return Err(RDFProofsError::InvalidProofConfiguration);
+        proof_config.insert(TripleRef::new(
+            proof_options_subject,
+            CRYPTOSUITE,
+            TermRef::from(&Literal::new_simple_literal(CRYPTOSUITE_SIGN)),
+        ));
     }
 
     // if `proof_options.created` is not a valid xsd:dateTime,
     // `INVALID_PROOF_DATETIME_ERROR` must be raised
-    let created = proof_options
-        .object_for_subject_predicate(proof_options_subject, CREATED)
-        .ok_or(RDFProofsError::InvalidProofDatetime)?;
-    match created {
-        TermRef::Literal(v) => {
-            let (datetime, typ, _) = v.destruct();
-            if DateTime::from_str(datetime).is_err()
-                || !typ.is_some_and(|t| t == vocab::xsd::DATE_TIME)
-            {
-                return Err(RDFProofsError::InvalidProofDatetime);
-            }
+    let created = proof_options.object_for_subject_predicate(proof_options_subject, CREATED);
+    if let Some(TermRef::Literal(v)) = created {
+        let (datetime, typ, _) = v.destruct();
+        if DateTime::from_str(datetime).is_err() || !typ.is_some_and(|t| t == vocab::xsd::DATE_TIME)
+        {
+            return Err(RDFProofsError::InvalidProofDatetime);
         }
-        _ => return Err(RDFProofsError::InvalidProofDatetime),
+    } else {
+        // TODO: generate current datetime
+        return Err(RDFProofsError::InvalidProofDatetime);
     }
 
-    _canonicalize_into_terms(proof_options)
+    _canonicalize_into_terms(&proof_config)
 }
 
 fn _canonicalize_into_terms(graph: &Graph) -> Result<Vec<Term>, RDFProofsError> {
@@ -150,7 +148,7 @@ fn _canonicalize_into_terms(graph: &Graph) -> Result<Vec<Term>, RDFProofsError> 
         .collect())
 }
 
-fn hash(
+pub(crate) fn hash(
     transformed_document: &Vec<Term>,
     canonical_proof_config: &Vec<Term>,
 ) -> Result<Vec<Fr>, RDFProofsError> {
@@ -188,7 +186,7 @@ fn serialize_proof<R: RngCore>(
     Ok(signature_base64url)
 }
 
-fn add_proof_value(
+pub fn add_proof_value(
     unsecured_credential: &mut VerifiableCredential,
     proof_value: String,
 ) -> Result<(), RDFProofsError> {

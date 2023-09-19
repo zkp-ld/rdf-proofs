@@ -1,9 +1,9 @@
 use super::constants::CRYPTOSUITE_PROOF;
 use crate::{
     common::{
-        canonicalize_graph, decompose_vp, get_delimiter, get_graph_from_ntriples_str, get_hasher,
-        hash_term_to_field, is_nym, randomize_bnodes, reorder_vc_triples, BBSPlusHash,
-        BBSPlusPublicKey, BBSPlusSignature, Fr, PoKBBSPlusStmt, PoKBBSPlusWit, Proof,
+        canonicalize_graph, decompose_vp, get_delimiter, get_graph_from_ntriples, get_hasher,
+        get_vc_from_ntriples, hash_term_to_field, is_nym, randomize_bnodes, reorder_vc_triples,
+        BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr, PoKBBSPlusStmt, PoKBBSPlusWit, Proof,
         ProofWithIndexMap, StatementIndexMap, Statements,
     },
     context::{
@@ -255,28 +255,15 @@ pub fn derive_proof_string<R: RngCore>(
     // construct input for `derive_proof` from string-based input
     let vc_pairs = vc_pairs
         .iter()
-        .map(
-            |VcPairString {
-                 original_document,
-                 original_proof,
-                 disclosed_document,
-                 disclosed_proof,
-             }| {
-                Ok(VcPair::new(
-                    VerifiableCredential::new(
-                        get_graph_from_ntriples_str(original_document)?,
-                        get_graph_from_ntriples_str(original_proof)?,
-                    ),
-                    VerifiableCredential::new(
-                        get_graph_from_ntriples_str(disclosed_document)?,
-                        get_graph_from_ntriples_str(disclosed_proof)?,
-                    ),
-                ))
-            },
-        )
+        .map(|pair| {
+            Ok(VcPair::new(
+                get_vc_from_ntriples(&pair.original_document, &pair.original_proof)?,
+                get_vc_from_ntriples(&pair.disclosed_document, &pair.disclosed_proof)?,
+            ))
+        })
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
     let deanon_map = get_deanon_map_from_string(deanon_map)?;
-    let key_graph = get_graph_from_ntriples_str(key_graph)?.into();
+    let key_graph = get_graph_from_ntriples(key_graph)?.into();
 
     let proof_dataset = derive_proof(rng, &vc_pairs, &deanon_map, nonce, &key_graph)?;
 

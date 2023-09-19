@@ -7,7 +7,7 @@ use crate::{
 use oxrdf::{dataset::GraphView, Graph, Triple};
 use std::collections::BTreeMap;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct VerifiableCredential {
     pub document: Graph,
     pub proof: Graph,

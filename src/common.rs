@@ -9,6 +9,7 @@ use crate::{
         DisclosedVerifiableCredential, VerifiableCredentialTriples, VerifiableCredentialView,
         VpGraphs,
     },
+    VerifiableCredential,
 };
 use ark_bls12_381::{Bls12_381, G1Affine};
 use ark_ec::pairing::Pairing;
@@ -349,16 +350,25 @@ pub fn reorder_vc_triples(
         .collect::<Result<Vec<_>, RDFProofsError>>()
 }
 
-pub fn get_graph_from_ntriples_str(ntriples: &str) -> Result<Graph, RDFProofsError> {
+pub fn get_graph_from_ntriples(ntriples: &str) -> Result<Graph, RDFProofsError> {
     let iter = NTriplesParser::new()
         .parse_read(ntriples.as_bytes())
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Graph::from_iter(iter))
 }
 
-pub fn get_dataset_from_nquads_str(nquads: &str) -> Result<Dataset, RDFProofsError> {
+pub fn get_dataset_from_nquads(nquads: &str) -> Result<Dataset, RDFProofsError> {
     let iter = NQuadsParser::new()
         .parse_read(nquads.as_bytes())
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Dataset::from_iter(iter))
+}
+
+pub fn get_vc_from_ntriples(
+    document: &str,
+    proof: &str,
+) -> Result<VerifiableCredential, RDFProofsError> {
+    let document = get_graph_from_ntriples(document)?;
+    let proof = get_graph_from_ntriples(proof)?;
+    Ok(VerifiableCredential::new(document, proof))
 }
