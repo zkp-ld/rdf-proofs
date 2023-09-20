@@ -1,13 +1,13 @@
 use crate::{
     common::{
-        deserialize_ark, get_graph_from_ntriples, get_hasher, get_vc_from_ntriples,
-        get_verification_method_identifier, hash_byte_to_field, serialize_ark, BBSPlusSignature,
-        Fr, Proof, Statements,
+        configure_proof_core, deserialize_ark, get_graph_from_ntriples, get_hasher,
+        get_vc_from_ntriples, get_verification_method_identifier, hash_byte_to_field,
+        serialize_ark, BBSPlusSignature, Fr, Proof, Statements,
     },
-    constants::BLIND_SIG_REQUEST_CONTEXT,
+    constants::{BLIND_SIG_REQUEST_CONTEXT, CRYPTOSUITE_BLIND_SIGN},
     error::RDFProofsError,
     key_gen::generate_params,
-    signature::{configure_proof, hash, transform},
+    signature::{hash, transform},
     KeyGraph, VerifiableCredential,
 };
 use ark_bls12_381::G1Affine;
@@ -15,7 +15,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, UniformRand};
 use blake2::Blake2b512;
 use multibase::Base;
-use oxrdf::Graph;
+use oxrdf::{Graph, Term};
 use proof_system::{
     prelude::MetaStatements,
     proof_spec::ProofSpec,
@@ -163,6 +163,10 @@ fn blind_sign_core<R: RngCore>(
     Ok(proof_value)
 }
 
+fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, RDFProofsError> {
+    configure_proof_core(proof_options, CRYPTOSUITE_BLIND_SIGN)
+}
+
 fn verify_blind_sig_request<R: RngCore>(
     rng: &mut R,
     commitment: G1Affine,
@@ -273,7 +277,7 @@ fn unblind_core(
 mod tests {
     use crate::{
         blind_sig_request_string, blind_sign_string, blind_signature::blind_sign,
-        common::get_graph_from_ntriples, context::PROOF_VALUE, tests::KEY_GRAPH_NTRIPLES, unblind,
+        common::get_graph_from_ntriples, context::PROOF_VALUE, tests::KEY_GRAPH, unblind,
         unblind_string, KeyGraph, VerifiableCredential,
     };
 
@@ -304,7 +308,7 @@ mod tests {
         println!("{:#?}", request);
     }
 
-    const VC_NTRIPLES_1: &str = r#"
+    const VC_1: &str = r#"
     <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
     <did:example:john> <http://schema.org/name> "John Smith" .
     <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
@@ -322,9 +326,22 @@ mod tests {
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
-    const VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1: &str = r#"
+    const VC_PROOF_WITHOUT_PROOFVALUE_1: &str = r#"
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE: &str = r#"
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-blind-signature-2023" . # valid cryptosuite
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_INVALID_CRYPTOSUITE: &str = r#"
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" . # invalid cryptosuite
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
@@ -337,15 +354,48 @@ mod tests {
         let nonce = "NONCE";
         let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
 
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
-        let unsecured_document = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let proof_config = get_graph_from_ntriples(VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1).unwrap();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
         let result = blind_sign(&mut rng, request.request, Some(nonce), &mut vc, &key_graph);
         assert!(result.is_ok());
 
         println!("{}", rdf_canon::canonicalize_graph(&vc.document).unwrap());
         println!("{}", rdf_canon::canonicalize_graph(&vc.proof).unwrap());
+    }
+
+    #[test]
+    fn blind_sign_with_cryptosuite_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let secret = b"SECRET";
+        let nonce = "NONCE";
+        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config =
+            get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE).unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        let result = blind_sign(&mut rng, request.request, Some(nonce), &mut vc, &key_graph);
+        assert!(result.is_ok())
+    }
+
+    #[test]
+    fn blind_sign_with_invalid_cryptosuite_failure() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let secret = b"SECRET";
+        let nonce = "NONCE";
+        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config =
+            get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_INVALID_CRYPTOSUITE)
+                .unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        let result = blind_sign(&mut rng, request.request, Some(nonce), &mut vc, &key_graph);
+        assert!(result.is_err())
     }
 
     #[test]
@@ -359,9 +409,9 @@ mod tests {
             &mut rng,
             &request.0,
             Some(nonce),
-            VC_NTRIPLES_1,
-            VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1,
-            KEY_GRAPH_NTRIPLES,
+            VC_1,
+            VC_PROOF_WITHOUT_PROOFVALUE_1,
+            KEY_GRAPH,
         );
         println!("result: {:#?}", result);
         assert!(result.is_ok())
@@ -374,9 +424,9 @@ mod tests {
         let nonce = "NONCE";
         let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
 
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
-        let unsecured_document = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let proof_config = get_graph_from_ntriples(VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1).unwrap();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
         blind_sign(&mut rng, request.request, Some(nonce), &mut vc, &key_graph).unwrap();
 
@@ -398,9 +448,9 @@ mod tests {
             &mut rng,
             &request.0,
             Some(nonce),
-            VC_NTRIPLES_1,
-            VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1,
-            KEY_GRAPH_NTRIPLES,
+            VC_1,
+            VC_PROOF_WITHOUT_PROOFVALUE_1,
+            KEY_GRAPH,
         )
         .unwrap();
 
@@ -408,10 +458,10 @@ mod tests {
             r#"{}
         _:b0 <https://w3id.org/security#proofValue> "{}"^^<https://w3id.org/security#multibase> .
         "#,
-            VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1, blinded_signature
+            VC_PROOF_WITHOUT_PROOFVALUE_1, blinded_signature
         );
 
-        let result = unblind_string(VC_NTRIPLES_1, &vc_proof_with_blinded_signature, &request.1);
+        let result = unblind_string(VC_1, &vc_proof_with_blinded_signature, &request.1);
 
         println!("result: {:?}", result);
         assert!(result.is_ok());

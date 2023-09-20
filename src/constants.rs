@@ -1,4 +1,5 @@
 pub const CRYPTOSUITE_SIGN: &str = "bbs-termwise-signature-2023";
+pub const CRYPTOSUITE_BLIND_SIGN: &str = "bbs-termwise-blind-signature-2023";
 pub const CRYPTOSUITE_PROOF: &str = "bbs-termwise-proof-2023";
 pub const NYM_IRI_PREFIX: &str = "urn:nym:";
 pub const GENERATOR_SEED: &[u8; 28] = b"BBS_*_MESSAGE_GENERATOR_SEED"; // TODO: fix it later
