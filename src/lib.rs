@@ -12,7 +12,8 @@ mod vc;
 mod verify_proof;
 
 pub use blind_signature::{
-    blind_sig_request, blind_sig_request_string, blind_sign, blind_sign_string,
+    blind_sig_request, blind_sig_request_string, blind_sign, blind_sign_string, unblind,
+    unblind_string,
 };
 pub use derive_proof::{derive_proof, derive_proof_string};
 pub use key_graph::KeyGraph;
@@ -170,7 +171,8 @@ mod tests {
         sign(&mut rng, &mut vc, &key_graph).unwrap();
         println!("vc: {}", vc);
         print_signature(&vc);
-        assert!(verify(&vc, &key_graph).is_ok())
+        assert!(verify(&vc, &key_graph).is_ok());
+        assert_eq!(vc.proof.triples_for_predicate(PROOF_VALUE).count(), 1)
     }
 
     #[test]

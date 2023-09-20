@@ -7,7 +7,7 @@ use crate::{
 };
 use oxrdf::{
     dataset::GraphView, vocab, Dataset, Graph, GraphNameRef, Literal, NamedNodeRef, QuadRef,
-    TermRef, Triple,
+    TermRef, Triple, TripleRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,6 +33,30 @@ impl VerifiableCredential {
             proof_subject,
             PROOF_VALUE,
             Literal::new_typed_literal(proof_value, MULTIBASE),
+        ));
+        Ok(())
+    }
+
+    pub fn replace_proof_value(self: &mut Self, proof_value: String) -> Result<(), RDFProofsError> {
+        let VerifiableCredential { proof, .. } = self;
+
+        let proof_subject = proof
+            .subject_for_predicate_object(vocab::rdf::TYPE, DATA_INTEGRITY_PROOF)
+            .ok_or(RDFProofsError::InvalidProofConfiguration)?
+            .into_owned();
+        let existing_proof_value = proof
+            .object_for_subject_predicate(&proof_subject, PROOF_VALUE)
+            .ok_or(RDFProofsError::VCWithoutProofValue)?
+            .into_owned();
+        proof.insert(TripleRef::new(
+            &proof_subject,
+            PROOF_VALUE,
+            &Literal::new_typed_literal(proof_value, MULTIBASE),
+        ));
+        proof.remove(TripleRef::new(
+            &proof_subject,
+            PROOF_VALUE,
+            &existing_proof_value,
         ));
         Ok(())
     }
