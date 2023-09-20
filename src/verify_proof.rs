@@ -1,6 +1,6 @@
 use crate::{
     common::{
-        decompose_vp, generate_proof_spec_context, get_dataset_from_nquads, get_delimiter,
+        generate_proof_spec_context, get_dataset_from_nquads, get_delimiter,
         get_graph_from_ntriples, get_hasher, hash_term_to_field, is_nym, reorder_vc_triples,
         BBSPlusHash, BBSPlusPublicKey, Fr, PoKBBSPlusStmt, ProofWithIndexMap, Statements,
     },
@@ -9,12 +9,10 @@ use crate::{
     key_gen::generate_params,
     key_graph::KeyGraph,
     ordered_triple::OrderedNamedOrBlankNode,
-    vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples, VpGraphs},
+    vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples, VerifiablePresentation},
 };
 use ark_std::rand::RngCore;
-use oxrdf::{
-    dataset::GraphView, Dataset, GraphNameRef, NamedOrBlankNode, Subject, Term, TermRef, Triple,
-};
+use oxrdf::{dataset::GraphView, Dataset, NamedOrBlankNode, Subject, Term, TermRef, Triple};
 use proof_system::{
     prelude::{EqualWitnesses, MetaStatements},
     proof_spec::ProofSpec,
@@ -24,40 +22,29 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 /// verify VP
 pub fn verify_proof<R: RngCore>(
     rng: &mut R,
-    vp: &Dataset,
+    vp_dataset: &Dataset,
     nonce: Option<&str>,
     key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
-    println!("VP:\n{}", rdf_canon::serialize(&vp));
+    println!("VP:\n{}", rdf_canon::serialize(vp_dataset));
 
-    // decompose VP into graphs to identify VP proof and proof graph name
-    let VpGraphs {
-        proof: vp_proof_with_value,
-        proof_graph_name,
-        ..
-    } = decompose_vp(vp)?;
-    let proof_graph_name: GraphNameRef = proof_graph_name.into();
+    // decompose VP into graphs
+    let vp: VerifiablePresentation = vp_dataset.try_into()?;
 
     // get proof value
-    let proof_value_triple = vp_proof_with_value
-        .triples_for_predicate(PROOF_VALUE)
-        .next()
-        .ok_or(RDFProofsError::InvalidVP)?;
-    let proof_value_encoded = match proof_value_triple.object {
-        TermRef::Literal(v) => Ok(v.value()),
-        _ => Err(RDFProofsError::InvalidVP),
-    }?;
+    let proof_value_encoded = vp.get_proof_value()?;
 
     // drop proof value from VP proof before canonicalization
     // (otherwise it could differ from the prover's canonicalization)
     let vp_without_proof_value = Dataset::from_iter(
-        vp.iter()
-            .filter(|q| !(q.predicate == PROOF_VALUE && q.graph_name == proof_graph_name)),
+        vp_dataset
+            .iter()
+            .filter(|q| !(q.predicate == PROOF_VALUE && q.graph_name == vp.proof_graph_name)),
     );
 
     // nonce check
     let get_nonce = || {
-        let nonce_in_vp_triple = vp_proof_with_value.triples_for_predicate(CHALLENGE).next();
+        let nonce_in_vp_triple = vp.proof.triples_for_predicate(CHALLENGE).next();
         if let Some(triple) = nonce_in_vp_triple {
             if let TermRef::Literal(v) = triple.object {
                 Ok(Some(v.value()))
@@ -89,16 +76,14 @@ pub fn verify_proof<R: RngCore>(
         rdf_canon::serialize(&canonicalized_vp)
     );
 
-    // TODO: check VP
-
     // decompose canonicalized VP into graphs
-    let VpGraphs {
-        metadata: _,
+    let VerifiablePresentation {
+        metadata: _, // TODO: validate VP metadata
         proof: _,
         proof_graph_name: _,
         filters: _filters_graph,
         disclosed_vcs: c14n_disclosed_vc_graphs,
-    } = decompose_vp(&canonicalized_vp)?;
+    } = (&canonicalized_vp).try_into()?;
 
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
