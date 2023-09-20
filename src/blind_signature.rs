@@ -11,7 +11,7 @@ use crate::{
     KeyGraph, VerifiableCredential,
 };
 use ark_bls12_381::G1Affine;
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, UniformRand};
 use blake2::Blake2b512;
 use multibase::Base;
@@ -232,11 +232,49 @@ fn serialize_proof_with_comitted_messages<R: RngCore>(
     Ok(blinded_signature_base64url)
 }
 
+pub fn unblind(
+    blinded_credential: &mut VerifiableCredential,
+    blinding: &Fr,
+) -> Result<(), RDFProofsError> {
+    let proof_value = unblind_core(blinded_credential, blinding)?;
+    blinded_credential.replace_proof_value(proof_value)?;
+    Ok(())
+}
+
+pub fn unblind_string(
+    document: &str,
+    proof: &str,
+    blinding: &str,
+) -> Result<String, RDFProofsError> {
+    let (_, blinding_bytes) = multibase::decode(blinding)?;
+    let blinding = Fr::deserialize_compressed(&*blinding_bytes)?;
+    let blinded_credential = get_vc_from_ntriples(document, proof)?;
+    let proof_value = unblind_core(&blinded_credential, &blinding)?;
+    Ok(proof_value)
+}
+
+fn unblind_core(
+    blinded_credential: &VerifiableCredential,
+    blinding: &Fr,
+) -> Result<String, RDFProofsError> {
+    let proof_value = blinded_credential.get_proof_value()?;
+    let (_, blinded_signature_bytes) = multibase::decode(proof_value)?;
+    let blinded_signature = BBSPlusSignature::deserialize_compressed(&*blinded_signature_bytes)?;
+
+    let signature = blinded_signature.unblind(blinding);
+
+    let mut signature_bytes = Vec::new();
+    signature.serialize_compressed(&mut signature_bytes)?;
+    let signature_base64url = multibase::encode(Base::Base64Url, signature_bytes);
+    Ok(signature_base64url)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         blind_sig_request_string, blind_sign_string, blind_signature::blind_sign,
-        common::get_graph_from_ntriples, tests::KEY_GRAPH_NTRIPLES, KeyGraph, VerifiableCredential,
+        common::get_graph_from_ntriples, context::PROOF_VALUE, tests::KEY_GRAPH_NTRIPLES, unblind,
+        unblind_string, KeyGraph, VerifiableCredential,
     };
 
     use super::blind_sig_request;
@@ -326,6 +364,56 @@ mod tests {
             KEY_GRAPH_NTRIPLES,
         );
         println!("result: {:#?}", result);
+        assert!(result.is_ok())
+    }
+
+    #[test]
+    fn blind_sign_and_unblind_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let secret = b"SECRET";
+        let nonce = "NONCE";
+        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
+        let proof_config = get_graph_from_ntriples(VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1).unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        blind_sign(&mut rng, request.request, Some(nonce), &mut vc, &key_graph).unwrap();
+
+        let result = unblind(&mut vc, &request.blinding);
+
+        println!("unblinded vc: {}", vc);
+        assert!(result.is_ok());
+        assert_eq!(vc.proof.triples_for_predicate(PROOF_VALUE).count(), 1)
+    }
+
+    #[test]
+    fn blind_sign_and_unblind_string_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let secret = b"SECRET";
+        let nonce = "NONCE";
+        let request = blind_sig_request_string(&mut rng, secret, Some(nonce)).unwrap();
+
+        let blinded_signature = blind_sign_string(
+            &mut rng,
+            &request.0,
+            Some(nonce),
+            VC_NTRIPLES_1,
+            VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1,
+            KEY_GRAPH_NTRIPLES,
+        )
+        .unwrap();
+
+        let vc_proof_with_blinded_signature = format!(
+            r#"{}
+        _:b0 <https://w3id.org/security#proofValue> "{}"^^<https://w3id.org/security#multibase> .
+        "#,
+            VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1, blinded_signature
+        );
+
+        let result = unblind_string(VC_NTRIPLES_1, &vc_proof_with_blinded_signature, &request.1);
+
+        println!("result: {:?}", result);
         assert!(result.is_ok());
     }
 }
