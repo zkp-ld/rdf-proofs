@@ -39,7 +39,7 @@ mod tests {
     use oxrdf::{NamedOrBlankNode, Term, TermRef};
     use std::collections::HashMap;
 
-    pub(crate) const KEY_GRAPH_NTRIPLES: &str = r#"
+    pub(crate) const KEY_GRAPH: &str = r#"
 # issuer0
 <did:example:issuer0> <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
 <did:example:issuer0#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
@@ -100,7 +100,7 @@ mod tests {
 
     // tests for sign & verify
 
-    const VC_NTRIPLES_1: &str = r#"
+    const VC_1: &str = r#"
     <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
     <did:example:john> <http://schema.org/name> "John Smith" .
     <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
@@ -118,14 +118,27 @@ mod tests {
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
-    const VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1: &str = r#"
+    const VC_PROOF_WITHOUT_PROOFVALUE_1: &str = r#"
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
     "#;
-    const VC_PROOF_NTRIPLES_1: &str = r#"
+    const VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE: &str = r#"
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" . # valid cryptosuite
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_INVALID_CRYPTOSUITE: &str = r#"
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-blind-signature-2023" . # invalid cryptosuite
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const VC_PROOF_1: &str = r#"
     _:b0 <https://w3id.org/security#proofValue> "uqIjm2ha4dq0-ftyWfevkWKuHWnC9vKQvsUlARU-16hybNr2X3WLMSnLJWP5r3OSLnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
@@ -133,7 +146,7 @@ mod tests {
     _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
     "#;
-    const VC_NTRIPLES_1_MODIFIED: &str = r#"
+    const VC_1_MODIFIED: &str = r#"
     <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
     <did:example:john> <http://schema.org/name> "**********************************" .  # modified
     <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
@@ -151,7 +164,7 @@ mod tests {
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
-    const VC_PROOF_NTRIPLES_1_MODIFIED: &str = r#"
+    const VC_PROOF_1_MODIFIED: &str = r#"
     _:b0 <https://w3id.org/security#proofValue> "uqIjm2ha4dq0-ftyWfevkWKuHWnC9vKQvsUlARU-16hybNr2X3WLMSnLJWP5r3OSLnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
@@ -164,44 +177,65 @@ mod tests {
     fn sign_and_verify_success() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
-        let unsecured_document = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let proof_config = get_graph_from_ntriples(VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1).unwrap();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
         sign(&mut rng, &mut vc, &key_graph).unwrap();
         println!("vc: {}", vc);
         print_signature(&vc);
-        assert!(verify(&vc, &key_graph).is_ok());
-        assert_eq!(vc.proof.triples_for_predicate(PROOF_VALUE).count(), 1)
+        assert!(verify(&vc, &key_graph).is_ok())
+    }
+
+    #[test]
+    fn sign_and_verify_with_cryptosuite_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config =
+            get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE).unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        sign(&mut rng, &mut vc, &key_graph).unwrap();
+        assert!(verify(&vc, &key_graph).is_ok())
+    }
+
+    #[test]
+    fn sign_and_verify_with_invalid_cryptosuite_failure() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config =
+            get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_INVALID_CRYPTOSUITE)
+                .unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        let result = sign(&mut rng, &mut vc, &key_graph);
+        assert!(result.is_err())
     }
 
     #[test]
     fn sign_and_verify_string_success() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
-        let proof_value = sign_string(
-            &mut rng,
-            VC_NTRIPLES_1,
-            VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1,
-            KEY_GRAPH_NTRIPLES,
-        )
-        .unwrap();
+        let proof_value =
+            sign_string(&mut rng, VC_1, VC_PROOF_WITHOUT_PROOFVALUE_1, KEY_GRAPH).unwrap();
 
         let vc_proof_with_proofvalue = format!(
             r#"{}
         _:b0 <https://w3id.org/security#proofValue> "{}"^^<https://w3id.org/security#multibase> .
         "#,
-            VC_PROOF_NTRIPLES_WITHOUT_PROOFVALUE_1, proof_value
+            VC_PROOF_WITHOUT_PROOFVALUE_1, proof_value
         );
 
-        assert!(verify_string(VC_NTRIPLES_1, &vc_proof_with_proofvalue, KEY_GRAPH_NTRIPLES).is_ok())
+        assert!(verify_string(VC_1, &vc_proof_with_proofvalue, KEY_GRAPH).is_ok())
     }
 
     #[test]
     fn verify_success() {
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
-        let unsecured_document = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let signed_proof_config = get_graph_from_ntriples(VC_PROOF_NTRIPLES_1).unwrap();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let signed_proof_config = get_graph_from_ntriples(VC_PROOF_1).unwrap();
         let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
         let verified = verify(&vc, &key_graph);
         assert!(verified.is_ok())
@@ -209,14 +243,14 @@ mod tests {
 
     #[test]
     fn verify_string_success() {
-        assert!(verify_string(VC_NTRIPLES_1, VC_PROOF_NTRIPLES_1, KEY_GRAPH_NTRIPLES).is_ok())
+        assert!(verify_string(VC_1, VC_PROOF_1, KEY_GRAPH).is_ok())
     }
 
     #[test]
     fn verify_failed_modified_document() {
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
-        let unsecured_document = get_graph_from_ntriples(VC_NTRIPLES_1_MODIFIED).unwrap();
-        let signed_proof_config = get_graph_from_ntriples(VC_PROOF_NTRIPLES_1).unwrap();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1_MODIFIED).unwrap();
+        let signed_proof_config = get_graph_from_ntriples(VC_PROOF_1).unwrap();
         let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
         let verified = verify(&vc, &key_graph);
         assert!(matches!(
@@ -229,11 +263,7 @@ mod tests {
 
     #[test]
     fn verify_string_failed_modified_document() {
-        let verified = verify_string(
-            VC_NTRIPLES_1_MODIFIED,
-            VC_PROOF_NTRIPLES_1,
-            KEY_GRAPH_NTRIPLES,
-        );
+        let verified = verify_string(VC_1_MODIFIED, VC_PROOF_1, KEY_GRAPH);
         assert!(matches!(
             verified,
             Err(RDFProofsError::BBSPlus(
@@ -244,9 +274,9 @@ mod tests {
 
     #[test]
     fn verify_failed_invalid_pk() {
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
-        let unsecured_document = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let signed_proof_config = get_graph_from_ntriples(VC_PROOF_NTRIPLES_1_MODIFIED).unwrap();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let signed_proof_config = get_graph_from_ntriples(VC_PROOF_1_MODIFIED).unwrap();
         let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
         let verified = verify(&vc, &key_graph);
         assert!(matches!(
@@ -259,11 +289,7 @@ mod tests {
 
     #[test]
     fn verify_string_failed_invalid_pk() {
-        let verified = verify_string(
-            VC_NTRIPLES_1,
-            VC_PROOF_NTRIPLES_1_MODIFIED,
-            KEY_GRAPH_NTRIPLES,
-        );
+        let verified = verify_string(VC_1, VC_PROOF_1_MODIFIED, KEY_GRAPH);
         assert!(matches!(
             verified,
             Err(RDFProofsError::BBSPlus(
@@ -274,7 +300,7 @@ mod tests {
 
     // tests for derive_proof & verify_proof
 
-    const VC_NTRIPLES_2: &str = r#"
+    const VC_2: &str = r#"
     <http://example.org/vaccine/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
     <http://example.org/vaccine/a> <http://schema.org/name> "AwesomeVaccine" .
     <http://example.org/vaccine/a> <http://schema.org/manufacturer> <http://example.org/awesomeCompany> .
@@ -285,7 +311,7 @@ mod tests {
     <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
-    const VC_PROOF_NTRIPLES_2: &str = r#"
+    const VC_PROOF_2: &str = r#"
     _:b0 <https://w3id.org/security#proofValue> "utRsO4PnUVwYae2BpwXQ74zFcLgBhuvJ2xBzw0gOwlRRvG4CoPPhRxg1jarO-zYNQnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
@@ -293,7 +319,7 @@ mod tests {
     _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
     "#;
-    const DISCLOSED_VC_NTRIPLES_1: &str = r#"
+    const DISCLOSED_VC_1: &str = r#"
     _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
     _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
     _:e0 <http://schema.org/worksFor> _:b1 .
@@ -306,14 +332,14 @@ mod tests {
     _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
-    const DISCLOSED_VC_PROOF_NTRIPLES_1: &str = r#"
+    const DISCLOSED_VC_PROOF_1: &str = r#"
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
     "#;
-    const DISCLOSED_VC_NTRIPLES_2: &str = r#"
+    const DISCLOSED_VC_2: &str = r#"
     _:e1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
     _:e1 <http://schema.org/status> "active" .
     _:e3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
@@ -322,7 +348,7 @@ mod tests {
     _:e3 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     _:e3 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
-    const DISCLOSED_VC_PROOF_NTRIPLES_2: &str = r#"
+    const DISCLOSED_VC_PROOF_2: &str = r#"
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -344,7 +370,7 @@ mod tests {
     fn get_example_deanon_map() -> HashMap<NamedOrBlankNode, Term> {
         get_deanon_map_from_string(&get_example_deanon_map_string()).unwrap()
     }
-    const VP_NQUADS: &str = r#"
+    const VP: &str = r#"
     _:c14n1 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n12 .
     _:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n12 .
     _:c14n1 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n12 .
@@ -390,22 +416,22 @@ mod tests {
     #[test]
     fn derive_and_verify_proof_success() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
 
-        let vc_doc_1 = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_NTRIPLES_1).unwrap();
+        let vc_doc_1 = get_graph_from_ntriples(VC_1).unwrap();
+        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_1).unwrap();
         let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
 
-        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_1).unwrap();
-        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_1).unwrap();
+        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_1).unwrap();
+        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_1).unwrap();
         let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
 
-        let vc_doc_2 = get_graph_from_ntriples(VC_NTRIPLES_2).unwrap();
-        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_NTRIPLES_2).unwrap();
+        let vc_doc_2 = get_graph_from_ntriples(VC_2).unwrap();
+        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_2).unwrap();
         let vc_2 = VerifiableCredential::new(vc_doc_2, vc_proof_2);
 
-        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_2).unwrap();
-        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_2).unwrap();
+        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_2).unwrap();
+        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_2).unwrap();
         let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
 
         let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
@@ -429,44 +455,27 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
         let vc_pairs = vec![
-            VcPairString::new(
-                VC_NTRIPLES_1,
-                VC_PROOF_NTRIPLES_1,
-                DISCLOSED_VC_NTRIPLES_1,
-                DISCLOSED_VC_PROOF_NTRIPLES_1,
-            ),
-            VcPairString::new(
-                VC_NTRIPLES_2,
-                VC_PROOF_NTRIPLES_2,
-                DISCLOSED_VC_NTRIPLES_2,
-                DISCLOSED_VC_PROOF_NTRIPLES_2,
-            ),
+            VcPairString::new(VC_1, VC_PROOF_1, DISCLOSED_VC_1, DISCLOSED_VC_PROOF_1),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
         ];
 
         let deanon_map = get_example_deanon_map_string();
 
         let nonce = "abcde";
 
-        let derived_proof = derive_proof_string(
-            &mut rng,
-            &vc_pairs,
-            &deanon_map,
-            Some(nonce),
-            KEY_GRAPH_NTRIPLES,
-        )
-        .unwrap();
+        let derived_proof =
+            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, Some(nonce), KEY_GRAPH).unwrap();
         println!("derived_proof: {}", derived_proof);
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH_NTRIPLES);
+        let verified = verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
     fn verify_proof_success() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
-        let vp = get_dataset_from_nquads(VP_NQUADS).unwrap();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let vp = get_dataset_from_nquads(VP).unwrap();
         let nonce = "abcde";
         let verified = verify_proof(&mut rng, &vp, Some(nonce), &key_graph);
         assert!(verified.is_ok(), "{:?}", verified)
@@ -476,29 +485,29 @@ mod tests {
     fn verify_proof_string_success() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let nonce = "abcde";
-        let verified = verify_proof_string(&mut rng, VP_NQUADS, Some(nonce), KEY_GRAPH_NTRIPLES);
+        let verified = verify_proof_string(&mut rng, VP, Some(nonce), KEY_GRAPH);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
     fn derive_and_verify_proof_without_nonce() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
 
-        let vc_doc_1 = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_NTRIPLES_1).unwrap();
+        let vc_doc_1 = get_graph_from_ntriples(VC_1).unwrap();
+        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_1).unwrap();
         let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
 
-        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_1).unwrap();
-        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_1).unwrap();
+        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_1).unwrap();
+        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_1).unwrap();
         let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
 
-        let vc_doc_2 = get_graph_from_ntriples(VC_NTRIPLES_2).unwrap();
-        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_NTRIPLES_2).unwrap();
+        let vc_doc_2 = get_graph_from_ntriples(VC_2).unwrap();
+        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_2).unwrap();
         let vc_2 = VerifiableCredential::new(vc_doc_2, vc_proof_2);
 
-        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_2).unwrap();
-        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_2).unwrap();
+        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_2).unwrap();
+        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_2).unwrap();
         let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
 
         let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
@@ -521,18 +530,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
         let vc_pairs = vec![
-            VcPairString::new(
-                VC_NTRIPLES_1,
-                VC_PROOF_NTRIPLES_1,
-                DISCLOSED_VC_NTRIPLES_1,
-                DISCLOSED_VC_PROOF_NTRIPLES_1,
-            ),
-            VcPairString::new(
-                VC_NTRIPLES_2,
-                VC_PROOF_NTRIPLES_2,
-                DISCLOSED_VC_NTRIPLES_2,
-                DISCLOSED_VC_PROOF_NTRIPLES_2,
-            ),
+            VcPairString::new(VC_1, VC_PROOF_1, DISCLOSED_VC_1, DISCLOSED_VC_PROOF_1),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
         ];
 
         let deanon_map = get_example_deanon_map_string();
@@ -540,10 +539,9 @@ mod tests {
         let nonce = None;
 
         let derived_proof =
-            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, nonce, KEY_GRAPH_NTRIPLES)
-                .unwrap();
+            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, nonce, KEY_GRAPH).unwrap();
 
-        let verified = verify_proof_string(&mut rng, &derived_proof, nonce, KEY_GRAPH_NTRIPLES);
+        let verified = verify_proof_string(&mut rng, &derived_proof, nonce, KEY_GRAPH);
 
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -551,22 +549,22 @@ mod tests {
     #[test]
     fn derive_without_nonce_and_verify_proof_with_nonce() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
 
-        let vc_doc_1 = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_NTRIPLES_1).unwrap();
+        let vc_doc_1 = get_graph_from_ntriples(VC_1).unwrap();
+        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_1).unwrap();
         let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
 
-        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_1).unwrap();
-        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_1).unwrap();
+        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_1).unwrap();
+        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_1).unwrap();
         let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
 
-        let vc_doc_2 = get_graph_from_ntriples(VC_NTRIPLES_2).unwrap();
-        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_NTRIPLES_2).unwrap();
+        let vc_doc_2 = get_graph_from_ntriples(VC_2).unwrap();
+        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_2).unwrap();
         let vc_2 = VerifiableCredential::new(vc_doc_2, vc_proof_2);
 
-        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_2).unwrap();
-        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_2).unwrap();
+        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_2).unwrap();
+        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_2).unwrap();
         let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
 
         let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
@@ -591,30 +589,18 @@ mod tests {
     fn derive_without_nonce_and_verify_proof_with_nonce_string() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let vc_pairs = vec![
-            VcPairString::new(
-                VC_NTRIPLES_1,
-                VC_PROOF_NTRIPLES_1,
-                DISCLOSED_VC_NTRIPLES_1,
-                DISCLOSED_VC_PROOF_NTRIPLES_1,
-            ),
-            VcPairString::new(
-                VC_NTRIPLES_2,
-                VC_PROOF_NTRIPLES_2,
-                DISCLOSED_VC_NTRIPLES_2,
-                DISCLOSED_VC_PROOF_NTRIPLES_2,
-            ),
+            VcPairString::new(VC_1, VC_PROOF_1, DISCLOSED_VC_1, DISCLOSED_VC_PROOF_1),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
         ];
 
         let deanon_map = get_example_deanon_map_string();
 
         let derived_proof =
-            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, None, KEY_GRAPH_NTRIPLES)
-                .unwrap();
+            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, None, KEY_GRAPH).unwrap();
 
         let nonce = "abcde";
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH_NTRIPLES);
+        let verified = verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH);
 
         assert!(matches!(
             verified,
@@ -625,22 +611,22 @@ mod tests {
     #[test]
     fn derive_with_nonce_and_verify_proof_without_nonce() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
 
-        let vc_doc_1 = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_NTRIPLES_1).unwrap();
+        let vc_doc_1 = get_graph_from_ntriples(VC_1).unwrap();
+        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_1).unwrap();
         let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
 
-        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_1).unwrap();
-        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_1).unwrap();
+        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_1).unwrap();
+        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_1).unwrap();
         let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
 
-        let vc_doc_2 = get_graph_from_ntriples(VC_NTRIPLES_2).unwrap();
-        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_NTRIPLES_2).unwrap();
+        let vc_doc_2 = get_graph_from_ntriples(VC_2).unwrap();
+        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_2).unwrap();
         let vc_2 = VerifiableCredential::new(vc_doc_2, vc_proof_2);
 
-        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_2).unwrap();
-        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_2).unwrap();
+        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_2).unwrap();
+        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_2).unwrap();
         let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
 
         let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
@@ -666,34 +652,18 @@ mod tests {
     fn derive_with_nonce_and_verify_proof_without_nonce_string() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let vc_pairs = vec![
-            VcPairString::new(
-                VC_NTRIPLES_1,
-                VC_PROOF_NTRIPLES_1,
-                DISCLOSED_VC_NTRIPLES_1,
-                DISCLOSED_VC_PROOF_NTRIPLES_1,
-            ),
-            VcPairString::new(
-                VC_NTRIPLES_2,
-                VC_PROOF_NTRIPLES_2,
-                DISCLOSED_VC_NTRIPLES_2,
-                DISCLOSED_VC_PROOF_NTRIPLES_2,
-            ),
+            VcPairString::new(VC_1, VC_PROOF_1, DISCLOSED_VC_1, DISCLOSED_VC_PROOF_1),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
         ];
 
         let deanon_map = get_example_deanon_map_string();
 
         let nonce = "abcde";
 
-        let derived_proof = derive_proof_string(
-            &mut rng,
-            &vc_pairs,
-            &deanon_map,
-            Some(nonce),
-            KEY_GRAPH_NTRIPLES,
-        )
-        .unwrap();
+        let derived_proof =
+            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, Some(nonce), KEY_GRAPH).unwrap();
 
-        let verified = verify_proof_string(&mut rng, &derived_proof, None, KEY_GRAPH_NTRIPLES);
+        let verified = verify_proof_string(&mut rng, &derived_proof, None, KEY_GRAPH);
 
         assert!(matches!(
             verified,
@@ -701,7 +671,7 @@ mod tests {
         ))
     }
 
-    const DISCLOSED_VC_NTRIPLES_1_WITH_HIDDEN_LITERALS: &str = r#"
+    const DISCLOSED_VC_1_WITH_HIDDEN_LITERALS: &str = r#"
     _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
     _:e0 <http://schema.org/name> _:e4 .
     _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
@@ -736,18 +706,18 @@ mod tests {
     #[test]
     fn derive_and_verify_proof_with_hidden_literals() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
 
         let mut deanon_map = get_example_deanon_map();
         deanon_map.extend(get_example_deanon_map_with_hidden_literal());
 
-        let vc_doc_1 = get_graph_from_ntriples(VC_NTRIPLES_1).unwrap();
-        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_NTRIPLES_1).unwrap();
+        let vc_doc_1 = get_graph_from_ntriples(VC_1).unwrap();
+        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_1).unwrap();
         let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
 
         let disclosed_vc_doc_1 =
-            get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_1_WITH_HIDDEN_LITERALS).unwrap();
-        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_1).unwrap();
+            get_graph_from_ntriples(DISCLOSED_VC_1_WITH_HIDDEN_LITERALS).unwrap();
+        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_1).unwrap();
         let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
 
         let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
@@ -768,10 +738,10 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
         let vc_pairs = vec![VcPairString::new(
-            VC_NTRIPLES_1,
-            VC_PROOF_NTRIPLES_1,
-            DISCLOSED_VC_NTRIPLES_1,
-            DISCLOSED_VC_PROOF_NTRIPLES_1,
+            VC_1,
+            VC_PROOF_1,
+            DISCLOSED_VC_1,
+            DISCLOSED_VC_PROOF_1,
         )];
 
         let mut deanon_map = get_example_deanon_map_string();
@@ -779,17 +749,10 @@ mod tests {
 
         let nonce = "abcde";
 
-        let derived_proof = derive_proof_string(
-            &mut rng,
-            &vc_pairs,
-            &deanon_map,
-            Some(nonce),
-            KEY_GRAPH_NTRIPLES,
-        )
-        .unwrap();
+        let derived_proof =
+            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, Some(nonce), KEY_GRAPH).unwrap();
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH_NTRIPLES);
+        let verified = verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH);
 
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -797,7 +760,7 @@ mod tests {
     #[test]
     fn derive_proof_failed_invalid_vc() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH_NTRIPLES).unwrap().into();
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
 
         let vc_ntriples = r#"
 <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
@@ -819,11 +782,11 @@ _:b1 <http://schema.org/name> "ABC inc." .
 "#;
 
         let vc_doc = get_graph_from_ntriples(vc_ntriples).unwrap();
-        let vc_proof = get_graph_from_ntriples(VC_PROOF_NTRIPLES_1).unwrap();
+        let vc_proof = get_graph_from_ntriples(VC_PROOF_1).unwrap();
         let vc = VerifiableCredential::new(vc_doc, vc_proof);
 
-        let disclosed_vc_doc = get_graph_from_ntriples(DISCLOSED_VC_NTRIPLES_1).unwrap();
-        let disclosed_vc_proof = get_graph_from_ntriples(DISCLOSED_VC_PROOF_NTRIPLES_1).unwrap();
+        let disclosed_vc_doc = get_graph_from_ntriples(DISCLOSED_VC_1).unwrap();
+        let disclosed_vc_proof = get_graph_from_ntriples(DISCLOSED_VC_PROOF_1).unwrap();
         let disclosed = VerifiableCredential::new(disclosed_vc_doc, disclosed_vc_proof);
 
         let vc_with_disclosed = VcPair::new(vc, disclosed);
@@ -847,23 +810,18 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
         let vc_pairs = vec![VcPairString::new(
-            VC_NTRIPLES_1_MODIFIED,
-            VC_PROOF_NTRIPLES_1,
-            DISCLOSED_VC_NTRIPLES_1,
-            DISCLOSED_VC_PROOF_NTRIPLES_1,
+            VC_1_MODIFIED,
+            VC_PROOF_1,
+            DISCLOSED_VC_1,
+            DISCLOSED_VC_PROOF_1,
         )];
 
         let deanon_map = get_example_deanon_map_string();
 
         let nonce = "abcde";
 
-        let derived_proof = derive_proof_string(
-            &mut rng,
-            &vc_pairs,
-            &deanon_map,
-            Some(nonce),
-            KEY_GRAPH_NTRIPLES,
-        );
+        let derived_proof =
+            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, Some(nonce), KEY_GRAPH);
 
         assert!(matches!(
             derived_proof,

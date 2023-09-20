@@ -1,11 +1,10 @@
 use crate::{
     common::{
-        canonicalize_graph, get_delimiter, get_graph_from_ntriples, get_hasher,
-        get_vc_from_ntriples, get_verification_method_identifier, hash_terms_to_field,
-        BBSPlusSignature, Fr,
+        canonicalize_graph_into_terms, configure_proof_core, get_delimiter,
+        get_graph_from_ntriples, get_hasher, get_vc_from_ntriples,
+        get_verification_method_identifier, hash_terms_to_field, BBSPlusSignature, Fr,
     },
     constants::CRYPTOSUITE_SIGN,
-    context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF},
     error::RDFProofsError,
     key_gen::generate_params,
     key_graph::KeyGraph,
@@ -14,12 +13,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
 use multibase::Base;
-use oxrdf::{
-    vocab::{self, rdf::TYPE},
-    Graph, Literal, Term, TermRef, TripleRef,
-};
-use oxsdatatypes::DateTime;
-use std::str::FromStr;
+use oxrdf::{Graph, Term};
 
 pub fn sign<R: RngCore>(
     rng: &mut R,
@@ -82,58 +76,11 @@ pub(crate) fn transform(
     unsecured_document: &Graph,
     _proof_options: &Graph,
 ) -> Result<Vec<Term>, RDFProofsError> {
-    _canonicalize_into_terms(unsecured_document)
+    canonicalize_graph_into_terms(unsecured_document)
 }
 
-pub(crate) fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, RDFProofsError> {
-    let mut proof_config = proof_options.clone();
-
-    // if `proof_options.type` is not set to `DataIntegrityProof`
-    // then `INVALID_PROOF_CONFIGURATION_ERROR` must be raised
-    let proof_options_subject = proof_options
-        .subject_for_predicate_object(TYPE, DATA_INTEGRITY_PROOF)
-        .ok_or(RDFProofsError::InvalidProofConfiguration)?;
-
-    // if `proof_options.cryptosuite` is given and its value is not CRYPTOSUITE_SIGN
-    // then `INVALID_PROOF_CONFIGURATION_ERROR` must be raised
-    let cryptosuite =
-        proof_options.object_for_subject_predicate(proof_options_subject, CRYPTOSUITE);
-    if let Some(TermRef::Literal(v)) = cryptosuite {
-        if v.value() != CRYPTOSUITE_SIGN {
-            return Err(RDFProofsError::InvalidProofConfiguration);
-        }
-    } else {
-        proof_config.insert(TripleRef::new(
-            proof_options_subject,
-            CRYPTOSUITE,
-            TermRef::from(&Literal::new_simple_literal(CRYPTOSUITE_SIGN)),
-        ));
-    }
-
-    // if `proof_options.created` is not a valid xsd:dateTime,
-    // `INVALID_PROOF_DATETIME_ERROR` must be raised
-    let created = proof_options.object_for_subject_predicate(proof_options_subject, CREATED);
-    if let Some(TermRef::Literal(v)) = created {
-        let (datetime, typ, _) = v.destruct();
-        if DateTime::from_str(datetime).is_err() || !typ.is_some_and(|t| t == vocab::xsd::DATE_TIME)
-        {
-            return Err(RDFProofsError::InvalidProofDatetime);
-        }
-    } else {
-        // TODO: generate current datetime
-        return Err(RDFProofsError::InvalidProofDatetime);
-    }
-
-    _canonicalize_into_terms(&proof_config)
-}
-
-fn _canonicalize_into_terms(graph: &Graph) -> Result<Vec<Term>, RDFProofsError> {
-    let (canonicalized_graph, _) = canonicalize_graph(graph)?;
-    let canonicalized_triples = rdf_canon::sort_graph(&canonicalized_graph);
-    Ok(canonicalized_triples
-        .into_iter()
-        .flat_map(|t| vec![t.subject.into(), t.predicate.into(), t.object])
-        .collect())
+fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, RDFProofsError> {
+    configure_proof_core(proof_options, CRYPTOSUITE_SIGN)
 }
 
 pub(crate) fn hash(
