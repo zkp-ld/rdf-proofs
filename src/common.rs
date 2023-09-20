@@ -1,14 +1,8 @@
 use crate::{
     constants::{DELIMITER, MAP_TO_SCALAR_AS_HASH_DST, NYM_IRI_PREFIX},
-    context::{DATA_INTEGRITY_PROOF, FILTER, PROOF, VERIFIABLE_CREDENTIAL, VERIFICATION_METHOD},
+    context::{DATA_INTEGRITY_PROOF, VERIFICATION_METHOD},
     error::RDFProofsError,
-    ordered_triple::{
-        OrderedGraphNameRef, OrderedGraphViews, OrderedVerifiableCredentialGraphViews,
-    },
-    vc::{
-        DisclosedVerifiableCredential, VerifiableCredentialTriples, VerifiableCredentialView,
-        VpGraphs,
-    },
+    vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples},
     VerifiableCredential,
 };
 use ark_bls12_381::{Bls12_381, G1Affine};
@@ -22,8 +16,8 @@ use bbs_plus::{
 use blake2::Blake2b512;
 use multibase::Base;
 use oxrdf::{
-    dataset::GraphView, vocab::rdf::TYPE, BlankNode, Dataset, Graph, GraphNameRef, NamedNode,
-    NamedNodeRef, QuadRef, SubjectRef, Term, TermRef, Triple,
+    vocab::rdf::TYPE, BlankNode, Dataset, Graph, NamedNode, NamedNodeRef, SubjectRef, Term,
+    TermRef, Triple,
 };
 use oxttl::{NQuadsParser, NTriplesParser};
 use proof_system::{
@@ -32,7 +26,7 @@ use proof_system::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 pub type Fr = <Bls12_381 as Pairing>::ScalarField;
 pub type Proof = ProofOrig<Bls12_381, G1Affine>;
@@ -248,99 +242,6 @@ pub fn randomize_bnodes(original_graph: &Graph, disclosed_graph: &Graph) -> (Gra
     let randomized_disclosed_graph = Graph::from_iter(disclosed_iter);
 
     (randomized_original_graph, randomized_disclosed_graph)
-}
-
-pub fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, RDFProofsError> {
-    let mut vp_graphs = dataset_into_ordered_graphs(vp);
-
-    // extract VP metadata (default graph)
-    let metadata = vp_graphs
-        .remove(&OrderedGraphNameRef::new(GraphNameRef::default()))
-        .ok_or(RDFProofsError::Other(
-            "VP graphs must have default graph".to_owned(),
-        ))?;
-
-    // extract VP proof graph
-    let (vp_proof_graph_name, vp_proof) = remove_graph(&mut vp_graphs, &metadata, PROOF)?;
-
-    // extract filter graphs if any
-    let filters = remove_graphs(&mut vp_graphs, &vp_proof, FILTER)?;
-
-    // extract VC graphs
-    let vcs = remove_graphs(&mut vp_graphs, &metadata, VERIFIABLE_CREDENTIAL)?;
-
-    // extract VC proof graphs
-    let disclosed_vcs = vcs
-        .into_iter()
-        .map(|(vc_graph_name, vc)| {
-            let (_, vc_proof) = remove_graph(&mut vp_graphs, &vc, PROOF)?;
-            Ok((vc_graph_name, VerifiableCredentialView::new(vc, vc_proof)))
-        })
-        .collect::<Result<OrderedVerifiableCredentialGraphViews, RDFProofsError>>()?;
-
-    // check if `vp_graphs` is empty
-    if !vp_graphs.is_empty() {
-        return Err(RDFProofsError::InvalidVP);
-    }
-
-    Ok(VpGraphs {
-        metadata,
-        proof: vp_proof,
-        proof_graph_name: vp_proof_graph_name,
-        filters,
-        disclosed_vcs,
-    })
-}
-
-fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
-    let graph_name_set = dataset
-        .iter()
-        .map(|QuadRef { graph_name, .. }| OrderedGraphNameRef::new(graph_name))
-        .collect::<BTreeSet<_>>();
-
-    graph_name_set
-        .into_iter()
-        .map(|graph_name| (graph_name.clone(), dataset.graph(graph_name)))
-        .collect()
-}
-
-// function to remove from the VP the multiple graphs that are reachable from `source` via `link`
-fn remove_graphs<'a>(
-    vp_graphs: &mut OrderedGraphViews<'a>,
-    source: &GraphView<'a>,
-    link: NamedNodeRef,
-) -> Result<OrderedGraphViews<'a>, RDFProofsError> {
-    source
-        .iter()
-        .filter(|triple| triple.predicate == link)
-        .map(|triple| {
-            Ok((
-                triple.object.try_into()?,
-                vp_graphs
-                    .remove(&triple.object.try_into()?)
-                    .ok_or(RDFProofsError::InvalidVP)?,
-            ))
-        })
-        .collect::<Result<OrderedGraphViews, RDFProofsError>>()
-}
-
-// function to remove from the VP the single graph that is reachable from `source` via `link`
-fn remove_graph<'a>(
-    vp_graphs: &mut OrderedGraphViews<'a>,
-    source: &GraphView<'a>,
-    link: NamedNodeRef,
-) -> Result<(OrderedGraphNameRef<'a>, GraphView<'a>), RDFProofsError> {
-    let mut graphs = remove_graphs(vp_graphs, source, link)?;
-    match graphs.pop_first() {
-        Some((graph_name, graph)) => {
-            if graphs.is_empty() {
-                Ok((graph_name, graph))
-            } else {
-                Err(RDFProofsError::InvalidVP)
-            }
-        }
-        None => Err(RDFProofsError::InvalidVP),
-    }
 }
 
 pub fn reorder_vc_triples(

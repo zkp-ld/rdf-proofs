@@ -5,7 +5,7 @@ use crate::{
         BBSPlusSignature, Fr,
     },
     constants::CRYPTOSUITE_SIGN,
-    context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PROOF_VALUE},
+    context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF},
     error::RDFProofsError,
     key_gen::generate_params,
     key_graph::KeyGraph,
@@ -61,25 +61,13 @@ pub fn verify(
     key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
     let VerifiableCredential { document, proof } = secured_credential;
-    let proof_value_triple = proof
-        .triples_for_predicate(PROOF_VALUE)
-        .next()
-        .ok_or(RDFProofsError::MalformedProof)?;
-    let proof_value = match proof_value_triple.object {
-        TermRef::Literal(v) => v.value(),
-        _ => return Err(RDFProofsError::MalformedProof),
-    };
-    let proof_config = Graph::from_iter(
-        proof
-            .iter()
-            .filter(|t| t.predicate != PROOF_VALUE)
-            .collect::<Vec<_>>(),
-    );
+    let proof_config = secured_credential.get_proof_config();
+    let proof_value = secured_credential.get_proof_value()?;
     // TODO: validate proof_config
     let transformed_data = transform(document, proof)?;
     let canonical_proof_config = configure_proof(&proof_config)?;
     let hash_data = hash(&transformed_data, &canonical_proof_config)?;
-    verify_base_proof(hash_data, proof_value, &proof_config, key_graph)
+    verify_base_proof(hash_data, &proof_value, &proof_config, key_graph)
 }
 
 pub fn verify_string(document: &str, proof: &str, key_graph: &str) -> Result<(), RDFProofsError> {

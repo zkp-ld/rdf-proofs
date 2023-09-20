@@ -1,10 +1,10 @@
 use super::constants::CRYPTOSUITE_PROOF;
 use crate::{
     common::{
-        canonicalize_graph, decompose_vp, generate_proof_spec_context, get_delimiter,
-        get_graph_from_ntriples, get_hasher, get_vc_from_ntriples, hash_term_to_field, is_nym,
-        randomize_bnodes, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr,
-        PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap, StatementIndexMap, Statements,
+        canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
+        get_hasher, get_vc_from_ntriples, hash_term_to_field, is_nym, randomize_bnodes,
+        reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr, PoKBBSPlusStmt,
+        PoKBBSPlusWit, Proof, ProofWithIndexMap, StatementIndexMap, Statements,
     },
     context::{
         ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF,
@@ -18,7 +18,7 @@ use crate::{
     signature::verify,
     vc::{
         DisclosedVerifiableCredential, VcPair, VerifiableCredential, VerifiableCredentialTriples,
-        VpGraphs,
+        VerifiablePresentation,
     },
     VcPairString,
 };
@@ -112,33 +112,22 @@ pub fn derive_proof<R: RngCore>(
     let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) = build_vp(disclosed_vcs, &nonce)?;
 
     // decompose VP draft into graphs
-    let VpGraphs {
+    let VerifiablePresentation {
         metadata: _vp_metadata_graph,
         proof: vp_proof_graph,
         proof_graph_name: vp_proof_graph_name,
         disclosed_vcs: canonicalized_disclosed_vc_graphs,
         filters: _filters_graph,
-    } = decompose_vp(&vp_draft)?;
+    } = (&vp_draft).try_into()?;
 
     // extract `proofValue`s from original VCs
     let (original_vcs_without_proof_value, vc_proof_values): (Vec<_>, Vec<_>) = original_vcs
         .iter()
-        .map(|VerifiableCredential { document, proof }| {
-            // get `proofValue`s from original VCs
-            let proof_value_triple = proof
-                .iter()
-                .find(|t| t.predicate == PROOF_VALUE)
-                .ok_or(RDFProofsError::VCWithoutProofValue)?;
-            let proof_value = match proof_value_triple.object {
-                TermRef::Literal(l) => Ok(l.value()),
-                _ => Err(RDFProofsError::VCWithInvalidProofValue),
-            }?;
+        .map(|original_vc| {
+            let proof_config = original_vc.get_proof_config();
+            let proof_value = original_vc.get_proof_value()?;
             Ok((
-                VerifiableCredential::new(
-                    // clone document and proof without `proofValue`
-                    Graph::from_iter(document),
-                    Graph::from_iter(proof.iter().filter(|t| t.predicate != PROOF_VALUE)),
-                ),
+                VerifiableCredential::new(original_vc.document.clone(), proof_config),
                 proof_value,
             ))
         })
@@ -168,7 +157,7 @@ pub fn derive_proof<R: RngCore>(
     // according to the order of canonicalized graph names of disclosed VCs
     let (original_vc_vec, disclosed_vc_vec, vc_proof_values_vec) = reorder_vc_graphs(
         &canonicalized_original_vcs,
-        &vc_proof_values,
+        &vc_proof_values.iter().map(|s| s.as_str()).collect(),
         &canonicalized_disclosed_vc_graphs,
         &extended_deanon_map,
         &vc_document_graph_names,
@@ -481,53 +470,50 @@ fn build_vp(
     let mut disclosed_vc_document_graph_names = Vec::with_capacity(disclosed_vcs.len());
     let disclosed_vc_quads = disclosed_vcs
         .iter()
-        .map(
-            |VerifiableCredential {
-                 document: disclosed_vc_document,
-                 proof: disclosed_vc_proof,
-             }| {
-                // generate random blank nodes as graph names
-                let disclosed_vc_document_graph_name = BlankNode::default();
-                let disclosed_vc_proof_graph_name = BlankNode::default();
+        .map(|disclosed_vc| {
+            // generate random blank nodes as graph names
+            let disclosed_vc_document_graph_name = BlankNode::default();
+            let disclosed_vc_proof_graph_name = BlankNode::default();
 
-                disclosed_vc_document_graph_names.push(disclosed_vc_document_graph_name.clone());
+            disclosed_vc_document_graph_names.push(disclosed_vc_document_graph_name.clone());
 
-                let disclosed_vc_document_id = disclosed_vc_document
-                    .subject_for_predicate_object(TYPE, VERIFIABLE_CREDENTIAL_TYPE)
-                    .ok_or(RDFProofsError::VCWithoutVCType)?;
+            let disclosed_vc_document_id = disclosed_vc
+                .document
+                .subject_for_predicate_object(TYPE, VERIFIABLE_CREDENTIAL_TYPE)
+                .ok_or(RDFProofsError::VCWithoutVCType)?;
 
-                let mut disclosed_vc_document_quads: Vec<Quad> = disclosed_vc_document
-                    .iter()
-                    .map(|t| {
-                        t.into_owned()
-                            .in_graph(disclosed_vc_document_graph_name.clone())
-                    })
-                    .collect();
+            let mut disclosed_vc_document_quads: Vec<Quad> = disclosed_vc
+                .document
+                .iter()
+                .map(|t| {
+                    t.into_owned()
+                        .in_graph(disclosed_vc_document_graph_name.clone())
+                })
+                .collect();
 
-                // add `proof` link from VC document to VC proof graph
-                disclosed_vc_document_quads.push(Quad::new(
-                    disclosed_vc_document_id,
-                    PROOF,
-                    disclosed_vc_proof_graph_name.clone(),
-                    disclosed_vc_document_graph_name.clone(),
-                ));
+            // add `proof` link from VC document to VC proof graph
+            disclosed_vc_document_quads.push(Quad::new(
+                disclosed_vc_document_id,
+                PROOF,
+                disclosed_vc_proof_graph_name.clone(),
+                disclosed_vc_document_graph_name.clone(),
+            ));
 
-                let mut proof_quads: Vec<Quad> = disclosed_vc_proof
-                    .iter()
-                    .filter(|t| t.predicate != PROOF_VALUE) // remove `proofValue` if exists
-                    .map(|t| {
-                        t.into_owned()
-                            .in_graph(disclosed_vc_proof_graph_name.clone())
-                    })
-                    .collect();
-                disclosed_vc_document_quads.append(&mut proof_quads);
+            let mut proof_quads: Vec<Quad> = disclosed_vc
+                .get_proof_config()
+                .iter()
+                .map(|t| {
+                    t.into_owned()
+                        .in_graph(disclosed_vc_proof_graph_name.clone())
+                })
+                .collect();
+            disclosed_vc_document_quads.append(&mut proof_quads);
 
-                Ok((
-                    disclosed_vc_document_graph_name,
-                    disclosed_vc_document_quads,
-                ))
-            },
-        )
+            Ok((
+                disclosed_vc_document_graph_name,
+                disclosed_vc_document_quads,
+            ))
+        })
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
 
     // merge VC dataset into VP draft

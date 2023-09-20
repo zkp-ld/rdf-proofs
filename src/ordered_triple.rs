@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::{error::RDFProofsError, vc::VerifiableCredentialView};
-use oxrdf::{
-    dataset::GraphView, GraphNameRef, NamedOrBlankNode, NamedOrBlankNodeRef, TermRef,
-};
+use oxrdf::{dataset::GraphView, GraphNameRef, NamedOrBlankNode, NamedOrBlankNodeRef, TermRef};
 
 /// `oxrdf::triple::GraphNameRef` with string-based ordering
 #[derive(Eq, PartialEq, Clone)]
