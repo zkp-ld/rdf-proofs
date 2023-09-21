@@ -310,7 +310,8 @@ mod tests {
     use crate::{
         blind_sign_request, blind_sign_request_string, blind_sign_string,
         blind_signature::blind_sign, blind_verify, common::get_graph_from_ntriples,
-        context::PROOF_VALUE, unblind, unblind_string, KeyGraph, VerifiableCredential,
+        context::PROOF_VALUE, error::RDFProofsError, unblind, unblind_string, KeyGraph,
+        VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
 
@@ -346,11 +347,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-
         let request = blind_sign_request(&mut rng, secret, Some(nonce));
-
         assert!(request.is_ok());
-        println!("{:#?}", request);
     }
 
     #[test]
@@ -358,11 +356,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-
         let request = blind_sign_request_string(&mut rng, secret, Some(nonce));
-
         assert!(request.is_ok());
-        println!("{:#?}", request);
     }
 
     const VC_1: &str = r#"
@@ -417,9 +412,6 @@ mod tests {
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
         let result = blind_sign(&mut rng, request.request, Some(nonce), &mut vc, &key_graph);
         assert!(result.is_ok());
-
-        println!("{}", rdf_canon::canonicalize_graph(&vc.document).unwrap());
-        println!("{}", rdf_canon::canonicalize_graph(&vc.proof).unwrap());
     }
 
     #[test]
@@ -452,7 +444,10 @@ mod tests {
                 .unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
         let result = blind_sign(&mut rng, request.request, Some(nonce), &mut vc, &key_graph);
-        assert!(result.is_err())
+        assert!(matches!(
+            result,
+            Err(RDFProofsError::InvalidProofConfiguration)
+        ))
     }
 
     #[test]
@@ -470,7 +465,6 @@ mod tests {
             VC_PROOF_WITHOUT_PROOFVALUE_1,
             KEY_GRAPH,
         );
-        println!("result: {:#?}", result);
         assert!(result.is_ok())
     }
 
@@ -489,7 +483,6 @@ mod tests {
 
         let result = unblind(&mut vc, &request.blinding);
 
-        println!("unblinded vc: {}", vc);
         assert!(result.is_ok());
         assert_eq!(vc.proof.triples_for_predicate(PROOF_VALUE).count(), 1)
     }
@@ -512,8 +505,6 @@ mod tests {
         .unwrap();
 
         let result = unblind_string(VC_1, &proof, &request.1);
-
-        println!("result: {:?}", result);
         assert!(result.is_ok());
     }
 
@@ -533,7 +524,6 @@ mod tests {
         unblind(&mut vc, &request.blinding).unwrap();
 
         let result = blind_verify(&vc, secret, &key_graph);
-
         assert!(result.is_ok());
     }
 
@@ -555,7 +545,11 @@ mod tests {
         // verify with invalid secret
         let secret = b"INVALID";
         let result = blind_verify(&vc, secret, &key_graph);
-
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(RDFProofsError::BBSPlus(
+                bbs_plus::prelude::BBSPlusError::InvalidSignature
+            ))
+        ))
     }
 }
