@@ -167,3 +167,242 @@ pub(crate) fn verify_base_proof(
     );
     Ok(signature.verify(&hash_data, pk, params)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        common::{get_graph_from_ntriples, BBSPlusSignature},
+        context::PROOF_VALUE,
+        error::RDFProofsError,
+        sign, sign_string, verify, verify_string, KeyGraph, VerifiableCredential,
+    };
+    use ark_serialize::CanonicalDeserialize;
+    use ark_std::rand::{rngs::StdRng, SeedableRng};
+    use oxrdf::TermRef;
+
+    const KEY_GRAPH: &str = r#"
+    # issuer0
+    <did:example:issuer0> <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    <did:example:issuer0#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
+    <did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer0> .
+    <did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uekl-7abY7R84yTJEJ6JRqYohXxPZPDoTinJ7XCcBkmk" .
+    <did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "ukiiQxfsSfV0E2QyBlnHTK2MThnd7_-Fyf6u76BUd24uxoDF4UjnXtxUo8b82iuPZBOa8BXd1NpE20x3Rfde9udcd8P8nPVLr80Xh6WLgI9SYR6piNzbHhEVIfgd_Vo9P" .
+    # issuer1
+    <did:example:issuer1> <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .
+    <did:example:issuer1#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
+    <did:example:issuer1#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer1> .
+    <did:example:issuer1#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uQkpZn0SW42c2tlYa0IIFXyabAYHbwc0z3l_GvXQbWSg" .
+    <did:example:issuer1#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "usFM3CcvBMl_Dg5ixhQkHKGdqzY3GU9Uck6lj2i8vpbzLFOiZnjDNOpsItrkbNf2iCku-SZu5kO3nbLis-fuRhz_QwFcKw9IBpbPRPwXNQTX3zzcFsoNzs_wo8tkLQlcS" .
+    # issuer2
+    <did:example:issuer2> <https://w3id.org/security#verificationMethod> <did:example:issuer2#bls12_381-g2-pub001> .
+    <did:example:issuer2#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
+    <did:example:issuer2#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer2> .
+    <did:example:issuer2#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "u4nmBsiSwvHj7i_gBu1L6Cug0OXXhVPF6NWLfkQbCZiU" .
+    <did:example:issuer2#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "uo_yMZWlZwQzLqEe6hEsORbsV5cSHQEQHNI0EOe_eUJdHsgCRxtpWMcxxcdshH5pAAUxt_ni6_cQCud3CdMcjAUN8yOvzhuzeIW_H-Dyncdrc3w0f2WxdH3oRcnvPTwrb" .
+    # issuer3
+    <did:example:issuer3> <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
+    <did:example:issuer3#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
+    <did:example:issuer3#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer3> .
+    <did:example:issuer3#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uH1yGFG6C1pJd_N45wkOPrSNdvILdLm0c_0AXXRDGZy8" .
+    <did:example:issuer3#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "uidSE_Urr5MFE4SoqV3TZTBHPHM-tkpdRhBPrYeIbsudglVV_cddyEstHJOmSkfPOFsvEuA9qtWjFNpBebVSS4DPxBfNNWESSCz_vrnH62hbfpWdJSFR8YbqjborvpgM6" .
+    "#;
+
+    const VC_1: &str = r#"
+    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+    <did:example:john> <http://schema.org/name> "John Smith" .
+    <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
+    <did:example:john> <http://schema.org/worksFor> _:b1 .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+    _:b0 <http://example.org/vocab/lotNumber> "0000001" .
+    _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
+    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
+    _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
+    _:b1 <http://schema.org/name> "ABC inc." .
+    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
+    const VC_PROOF_WITHOUT_PROOFVALUE_1: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE: &str = r#"
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" . # valid cryptosuite
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_INVALID_CRYPTOSUITE: &str = r#"
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-blind-signature-2023" . # invalid cryptosuite
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const VC_PROOF_1: &str = r#"
+    _:b0 <https://w3id.org/security#proofValue> "ulyXJi_kpGXb2nUqVCRTzw03zFZyswkPLszC47yoRvUbGSkw2-v6GnY7X31hRYt4AnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const VC_1_MODIFIED: &str = r#"
+    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+    <did:example:john> <http://schema.org/name> "**********************************" .  # modified
+    <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
+    <did:example:john> <http://schema.org/worksFor> _:b1 .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+    _:b0 <http://example.org/vocab/lotNumber> "0000001" .
+    _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
+    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
+    _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
+    _:b1 <http://schema.org/name> "ABC inc." .
+    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
+    const VC_PROOF_1_MODIFIED: &str = r#"
+    _:b0 <https://w3id.org/security#proofValue> "ulyXJi_kpGXb2nUqVCRTzw03zFZyswkPLszC47yoRvUbGSkw2-v6GnY7X31hRYt4AnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> . # the other issuer's pk
+    "#;
+
+    fn print_signature(vc: &VerifiableCredential) {
+        let proof_value_triple = vc.proof.triples_for_predicate(PROOF_VALUE).next().unwrap();
+        if let TermRef::Literal(v) = proof_value_triple.object {
+            let proof_value = v.value();
+            let (_, proof_value_bytes) = multibase::decode(proof_value).unwrap();
+            let signature = BBSPlusSignature::deserialize_compressed(&*proof_value_bytes).unwrap();
+            println!("decoded signature:\n{:#?}\n", signature);
+        }
+    }
+
+    #[test]
+    fn sign_and_verify_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        sign(&mut rng, &mut vc, &key_graph).unwrap();
+        println!("vc: {}", vc);
+        print_signature(&vc);
+        assert!(verify(&vc, &key_graph).is_ok())
+    }
+
+    #[test]
+    fn sign_and_verify_with_cryptosuite_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config =
+            get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE).unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        sign(&mut rng, &mut vc, &key_graph).unwrap();
+        assert!(verify(&vc, &key_graph).is_ok())
+    }
+
+    #[test]
+    fn sign_and_verify_with_invalid_cryptosuite_failure() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config =
+            get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_INVALID_CRYPTOSUITE)
+                .unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        let result = sign(&mut rng, &mut vc, &key_graph);
+        assert!(result.is_err())
+    }
+
+    #[test]
+    fn sign_and_verify_string_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let proof = sign_string(&mut rng, VC_1, VC_PROOF_WITHOUT_PROOFVALUE_1, KEY_GRAPH).unwrap();
+        assert!(verify_string(VC_1, &proof, KEY_GRAPH).is_ok())
+    }
+
+    #[test]
+    fn verify_success() {
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let signed_proof_config = get_graph_from_ntriples(VC_PROOF_1).unwrap();
+        let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
+        let verified = verify(&vc, &key_graph);
+        assert!(verified.is_ok())
+    }
+
+    #[test]
+    fn verify_string_success() {
+        assert!(verify_string(VC_1, VC_PROOF_1, KEY_GRAPH).is_ok())
+    }
+
+    #[test]
+    fn verify_failed_modified_document() {
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1_MODIFIED).unwrap();
+        let signed_proof_config = get_graph_from_ntriples(VC_PROOF_1).unwrap();
+        let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
+        let verified = verify(&vc, &key_graph);
+        assert!(matches!(
+            verified,
+            Err(RDFProofsError::BBSPlus(
+                bbs_plus::prelude::BBSPlusError::InvalidSignature
+            ))
+        ))
+    }
+
+    #[test]
+    fn verify_string_failed_modified_document() {
+        let verified = verify_string(VC_1_MODIFIED, VC_PROOF_1, KEY_GRAPH);
+        assert!(matches!(
+            verified,
+            Err(RDFProofsError::BBSPlus(
+                bbs_plus::prelude::BBSPlusError::InvalidSignature
+            ))
+        ))
+    }
+
+    #[test]
+    fn verify_failed_invalid_pk() {
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let signed_proof_config = get_graph_from_ntriples(VC_PROOF_1_MODIFIED).unwrap();
+        let vc = VerifiableCredential::new(unsecured_document, signed_proof_config);
+        let verified = verify(&vc, &key_graph);
+        assert!(matches!(
+            verified,
+            Err(RDFProofsError::BBSPlus(
+                bbs_plus::error::BBSPlusError::InvalidSignature
+            ))
+        ))
+    }
+
+    #[test]
+    fn verify_string_failed_invalid_pk() {
+        let verified = verify_string(VC_1, VC_PROOF_1_MODIFIED, KEY_GRAPH);
+        assert!(matches!(
+            verified,
+            Err(RDFProofsError::BBSPlus(
+                bbs_plus::prelude::BBSPlusError::InvalidSignature
+            ))
+        ))
+    }
+}
