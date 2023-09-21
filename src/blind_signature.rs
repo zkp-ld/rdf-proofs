@@ -5,9 +5,10 @@ use crate::{
         serialize_ark, BBSPlusSignature, Fr, Proof, Statements,
     },
     constants::{BLIND_SIG_REQUEST_CONTEXT, CRYPTOSUITE_BLIND_SIGN},
+    context::{DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
     error::RDFProofsError,
     key_gen::generate_params,
-    signature::{hash, transform},
+    signature::{hash, transform, verify_base_proof},
     KeyGraph, VerifiableCredential,
 };
 use ark_bls12_381::G1Affine;
@@ -15,7 +16,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, UniformRand};
 use blake2::Blake2b512;
 use multibase::Base;
-use oxrdf::{Graph, Term};
+use oxrdf::{vocab::rdf::TYPE, Graph, LiteralRef, TripleRef};
 use proof_system::{
     prelude::MetaStatements,
     proof_spec::ProofSpec,
@@ -118,8 +119,8 @@ pub fn blind_sign<R: RngCore>(
     unsecured_credential: &mut VerifiableCredential,
     key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
-    let proof_value = blind_sign_core(rng, request, nonce, unsecured_credential, key_graph)?;
-    unsecured_credential.add_proof_value(proof_value)?;
+    let proof = blind_sign_core(rng, request, nonce, unsecured_credential, key_graph)?;
+    unsecured_credential.proof = proof;
     Ok(())
 }
 
@@ -135,8 +136,12 @@ pub fn blind_sign_string<R: RngCore>(
     let request = serde_cbor::from_slice(&request_cbor)?;
     let unsecured_credential = get_vc_from_ntriples(document, proof)?;
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
-    let proof_value = blind_sign_core(rng, request, nonce, &unsecured_credential, &key_graph)?;
-    Ok(proof_value)
+    let proof = blind_sign_core(rng, request, nonce, &unsecured_credential, &key_graph)?;
+    let result: String = proof
+        .iter()
+        .map(|t| format!("{} .\n", t.to_string()))
+        .collect();
+    Ok(result)
 }
 
 fn blind_sign_core<R: RngCore>(
@@ -145,25 +150,26 @@ fn blind_sign_core<R: RngCore>(
     nonce: Option<&str>,
     unsecured_credential: &VerifiableCredential,
     key_graph: &KeyGraph,
-) -> Result<String, RDFProofsError> {
+) -> Result<Graph, RDFProofsError> {
     verify_blind_sig_request(rng, request.commitment.clone(), request.proof, nonce)?;
 
     let VerifiableCredential { document, proof } = unsecured_credential;
-    let transformed_data = transform(document, proof)?;
-    let canonical_proof_config = configure_proof(proof)?;
-    let hash_data = hash(&transformed_data, &canonical_proof_config)?;
+    let transformed_data = transform(document)?;
+    let proof_config = configure_proof(proof)?;
+    let canonical_proof_config = transform(&proof_config)?;
+    let hash_data = hash(None, &transformed_data, &canonical_proof_config)?;
     let proof_value = serialize_proof_with_comitted_messages(
         rng,
         &request.commitment,
         &hash_data,
-        proof,
+        &proof_config,
         key_graph,
     )?;
 
     Ok(proof_value)
 }
 
-fn configure_proof(proof_options: &Graph) -> Result<Vec<Term>, RDFProofsError> {
+fn configure_proof(proof_options: &Graph) -> Result<Graph, RDFProofsError> {
     configure_proof_core(proof_options, CRYPTOSUITE_BLIND_SIGN)
 }
 
@@ -202,24 +208,25 @@ fn serialize_proof_with_comitted_messages<R: RngCore>(
     hash_data: &Vec<Fr>,
     proof_options: &Graph,
     key_graph: &KeyGraph,
-) -> Result<String, RDFProofsError> {
-    let _message_count: u32 = hash_data
+) -> Result<Graph, RDFProofsError> {
+    let message_count: u32 = hash_data
         .len()
         .try_into()
         .map_err(|_| RDFProofsError::MessageSizeOverflow)?;
-    // plus 1 for holder secret
-    let message_count = _message_count + 1;
-
-    let uncommitted_messages = hash_data
-        .iter()
-        .enumerate()
-        .map(|(i, m)| (i + 1, m))
-        .collect::<BTreeMap<_, _>>();
+    let params = generate_params(message_count);
 
     let verification_method_identifier = get_verification_method_identifier(proof_options)?;
     let (secret_key, _public_key) = key_graph.get_keypair(verification_method_identifier)?;
 
-    let params = generate_params(message_count);
+    // holder secret: m[0]
+    // uncommitted messsage: m[1], m[2], ..., m[message_count]
+    let mut uncommitted_messages = hash_data
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (i, m))
+        .collect::<BTreeMap<_, _>>();
+    // remove placeholder for secret as it will be given as commitment below
+    uncommitted_messages.remove(&0);
 
     let blinded_signature = BBSPlusSignature::new_with_committed_messages(
         rng,
@@ -233,7 +240,17 @@ fn serialize_proof_with_comitted_messages<R: RngCore>(
     blinded_signature.serialize_compressed(&mut signature_bytes)?;
     let blinded_signature_base64url = multibase::encode(Base::Base64Url, signature_bytes);
 
-    Ok(blinded_signature_base64url)
+    let mut result = proof_options.clone();
+    let proof_subject = proof_options
+        .subject_for_predicate_object(TYPE, DATA_INTEGRITY_PROOF)
+        .ok_or(RDFProofsError::InvalidProofConfiguration)?;
+    result.insert(TripleRef::new(
+        proof_subject,
+        PROOF_VALUE,
+        LiteralRef::new_typed_literal(&blinded_signature_base64url, MULTIBASE),
+    ));
+
+    Ok(result)
 }
 
 pub fn unblind(
@@ -273,10 +290,25 @@ fn unblind_core(
     Ok(signature_base64url)
 }
 
+pub fn blind_verify(
+    secured_credential: &VerifiableCredential,
+    secret: &[u8],
+    key_graph: &KeyGraph,
+) -> Result<(), RDFProofsError> {
+    let VerifiableCredential { document, .. } = secured_credential;
+    let proof_config = secured_credential.get_proof_config();
+    let proof_value = secured_credential.get_proof_value()?;
+    // TODO: validate proof_config
+    let transformed_data = transform(document)?;
+    let canonical_proof_config = transform(&proof_config)?;
+    let hash_data = hash(Some(secret), &transformed_data, &canonical_proof_config)?;
+    verify_base_proof(hash_data, &proof_value, &proof_config, key_graph)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        blind_sig_request_string, blind_sign_string, blind_signature::blind_sign,
+        blind_sig_request_string, blind_sign_string, blind_signature::blind_sign, blind_verify,
         common::get_graph_from_ntriples, context::PROOF_VALUE, tests::KEY_GRAPH, unblind,
         unblind_string, KeyGraph, VerifiableCredential,
     };
@@ -444,7 +476,7 @@ mod tests {
         let nonce = "NONCE";
         let request = blind_sig_request_string(&mut rng, secret, Some(nonce)).unwrap();
 
-        let blinded_signature = blind_sign_string(
+        let proof = blind_sign_string(
             &mut rng,
             &request.0,
             Some(nonce),
@@ -454,16 +486,51 @@ mod tests {
         )
         .unwrap();
 
-        let vc_proof_with_blinded_signature = format!(
-            r#"{}
-        _:b0 <https://w3id.org/security#proofValue> "{}"^^<https://w3id.org/security#multibase> .
-        "#,
-            VC_PROOF_WITHOUT_PROOFVALUE_1, blinded_signature
-        );
-
-        let result = unblind_string(VC_1, &vc_proof_with_blinded_signature, &request.1);
+        let result = unblind_string(VC_1, &proof, &request.1);
 
         println!("result: {:?}", result);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn blind_sign_and_unblind_and_verify_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let secret = b"SECRET";
+        let nonce = "NONCE";
+        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        blind_sign(&mut rng, request.request, Some(nonce), &mut vc, &key_graph).unwrap();
+
+        unblind(&mut vc, &request.blinding).unwrap();
+
+        let result = blind_verify(&vc, secret, &key_graph);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn blind_sign_and_unblind_and_verify_with_invalid_secret_failure() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let secret = b"SECRET";
+        let nonce = "NONCE";
+        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        blind_sign(&mut rng, request.request, Some(nonce), &mut vc, &key_graph).unwrap();
+
+        unblind(&mut vc, &request.blinding).unwrap();
+
+        // verify with invalid secret
+        let secret = b"INVALID";
+        let result = blind_verify(&vc, secret, &key_graph);
+
+        assert!(result.is_err());
     }
 }

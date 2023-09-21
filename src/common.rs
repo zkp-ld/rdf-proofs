@@ -324,7 +324,7 @@ pub fn get_vc_from_ntriples(
 pub(crate) fn configure_proof_core(
     proof_options: &Graph,
     cryptosuite: &str,
-) -> Result<Vec<Term>, RDFProofsError> {
+) -> Result<Graph, RDFProofsError> {
     let mut proof_config = proof_options.clone();
 
     // if `proof_options.type` is not set to `DataIntegrityProof`
@@ -363,7 +363,7 @@ pub(crate) fn configure_proof_core(
         return Err(RDFProofsError::InvalidProofDatetime);
     }
 
-    canonicalize_graph_into_terms(&proof_config)
+    Ok(proof_config)
 }
 
 pub(crate) fn canonicalize_graph_into_terms(graph: &Graph) -> Result<Vec<Term>, RDFProofsError> {

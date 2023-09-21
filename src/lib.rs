@@ -12,8 +12,8 @@ mod vc;
 mod verify_proof;
 
 pub use blind_signature::{
-    blind_sig_request, blind_sig_request_string, blind_sign, blind_sign_string, unblind,
-    unblind_string,
+    blind_sig_request, blind_sig_request_string, blind_sign, blind_sign_string, blind_verify,
+    unblind, unblind_string,
 };
 pub use derive_proof::{derive_proof, derive_proof_string};
 pub use key_graph::KeyGraph;
@@ -139,7 +139,7 @@ mod tests {
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
     "#;
     const VC_PROOF_1: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "uqIjm2ha4dq0-ftyWfevkWKuHWnC9vKQvsUlARU-16hybNr2X3WLMSnLJWP5r3OSLnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <https://w3id.org/security#proofValue> "ulyXJi_kpGXb2nUqVCRTzw03zFZyswkPLszC47yoRvUbGSkw2-v6GnY7X31hRYt4AnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -165,7 +165,7 @@ mod tests {
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
     const VC_PROOF_1_MODIFIED: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "uqIjm2ha4dq0-ftyWfevkWKuHWnC9vKQvsUlARU-16hybNr2X3WLMSnLJWP5r3OSLnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <https://w3id.org/security#proofValue> "ulyXJi_kpGXb2nUqVCRTzw03zFZyswkPLszC47yoRvUbGSkw2-v6GnY7X31hRYt4AnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -218,17 +218,8 @@ mod tests {
     fn sign_and_verify_string_success() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
-        let proof_value =
-            sign_string(&mut rng, VC_1, VC_PROOF_WITHOUT_PROOFVALUE_1, KEY_GRAPH).unwrap();
-
-        let vc_proof_with_proofvalue = format!(
-            r#"{}
-        _:b0 <https://w3id.org/security#proofValue> "{}"^^<https://w3id.org/security#multibase> .
-        "#,
-            VC_PROOF_WITHOUT_PROOFVALUE_1, proof_value
-        );
-
-        assert!(verify_string(VC_1, &vc_proof_with_proofvalue, KEY_GRAPH).is_ok())
+        let proof = sign_string(&mut rng, VC_1, VC_PROOF_WITHOUT_PROOFVALUE_1, KEY_GRAPH).unwrap();
+        assert!(verify_string(VC_1, &proof, KEY_GRAPH).is_ok())
     }
 
     #[test]
@@ -311,8 +302,14 @@ mod tests {
     <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
+    const _VC_PROOF_WITHOUT_PROOFVALUE_2: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
+    "#;
     const VC_PROOF_2: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "utRsO4PnUVwYae2BpwXQ74zFcLgBhuvJ2xBzw0gOwlRRvG4CoPPhRxg1jarO-zYNQnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <https://w3id.org/security#proofValue> "uh-n1eUTNbs6fG9NMTPTL98zwcwfA1N4GCm0XXl__t5tMKOKU1LBfwt1f7Dtoy9dHnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
