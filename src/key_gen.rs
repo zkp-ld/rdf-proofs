@@ -45,8 +45,18 @@ pub fn deserialize_public_key(key: &str) -> Result<BBSPlusPublicKey, RDFProofsEr
 #[cfg(test)]
 mod tests {
     use super::generate_keypair;
-    use crate::key_gen::{serialize_public_key, serialize_secret_key};
+    use crate::key_gen::{generate_params, serialize_public_key, serialize_secret_key};
     use ark_std::rand::{rngs::StdRng, SeedableRng};
+
+    #[test]
+    fn params_gen_success() {
+        let params1 = generate_params(1);
+        let params2 = generate_params(2);
+        let params3 = generate_params(3);
+        println!("{:#?}", params1);
+        println!("{:#?}", params2);
+        println!("{:#?}", params3);
+    }
 
     #[test]
     fn key_gen_simple() -> () {
@@ -59,5 +69,16 @@ mod tests {
         println!("public_key: {}", public_key_multibase);
 
         assert!(true);
+    }
+
+    #[test]
+    fn key_gen_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let keypair1 = generate_keypair(&mut rng);
+        let keypair2 = generate_keypair(&mut rng);
+        let keypair3 = generate_keypair(&mut rng);
+        assert!(keypair1.is_ok());
+        assert!(keypair2.is_ok());
+        assert!(keypair3.is_ok());
     }
 }
