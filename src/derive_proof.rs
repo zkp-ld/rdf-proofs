@@ -1723,4 +1723,119 @@ _:b1 <http://schema.org/name> "ABC inc." .
             ))
         ))
     }
+
+    const VC_PROOF_BOUND_1: &str = r#"
+    _:b0 <https://w3id.org/security#proofValue> "usYxFJJw9C0KHipWTTevDyU44iLEd6OWcqd1k33w0iuectnnNpDGS5D_kTULrexnpAWQCF5cBR1F0h3FXGsm2xh7Fafg49VG-Slte0XnTgDzpRqn0nqhO4I57s-b3TPVbA_t5uyJnGllyB6QcwVtRQA"^^<https://w3id.org/security#multibase> .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const DISCLOSED_VC_PROOF_BOUND_1: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+
+    #[test]
+    fn derive_and_verify_proof_string_with_secret_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let secret = b"SECRET";
+
+        let vc_pairs = vec![
+            VcPairString::new(
+                VC_1,
+                VC_PROOF_BOUND_1,
+                DISCLOSED_VC_1,
+                DISCLOSED_VC_PROOF_BOUND_1,
+            ),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
+        ];
+
+        let deanon_map = get_example_deanon_map_string();
+
+        let nonce = "abcde";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            Some(secret),
+            &vc_pairs,
+            &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+        )
+        .unwrap();
+
+        let verified = verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH);
+        assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_and_verify_proof_string_with_invalid_secret_failure() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let secret = b"INVALID";
+
+        let vc_pairs = vec![
+            VcPairString::new(
+                VC_1,
+                VC_PROOF_BOUND_1,
+                DISCLOSED_VC_1,
+                DISCLOSED_VC_PROOF_BOUND_1,
+            ),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
+        ];
+
+        let deanon_map = get_example_deanon_map_string();
+
+        let nonce = "abcde";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            Some(secret),
+            &vc_pairs,
+            &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+        );
+        assert!(matches!(
+            derived_proof,
+            Err(RDFProofsError::BBSPlus(
+                bbs_plus::prelude::BBSPlusError::InvalidSignature
+            ))
+        ))
+    }
+
+    #[test]
+    fn derive_and_verify_proof_string_without_secret_failure() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let vc_pairs = vec![
+            VcPairString::new(
+                VC_1,
+                VC_PROOF_BOUND_1,
+                DISCLOSED_VC_1,
+                DISCLOSED_VC_PROOF_BOUND_1,
+            ),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
+        ];
+
+        let deanon_map = get_example_deanon_map_string();
+
+        let nonce = "abcde";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            None,
+            &vc_pairs,
+            &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+        );
+        assert!(matches!(derived_proof, Err(RDFProofsError::MissingSecret)))
+    }
 }
