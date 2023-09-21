@@ -12,7 +12,7 @@ mod vc;
 mod verify_proof;
 
 pub use blind_signature::{
-    blind_sig_request, blind_sig_request_string, blind_sign, blind_sign_string, blind_verify,
+    blind_sign, blind_sign_request, blind_sign_request_string, blind_sign_string, blind_verify,
     unblind, unblind_string,
 };
 pub use derive_proof::{derive_proof, derive_proof_string};
@@ -368,24 +368,18 @@ mod tests {
         get_deanon_map_from_string(&get_example_deanon_map_string()).unwrap()
     }
     const VP: &str = r#"
-    _:c14n1 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n12 .
-    _:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n12 .
-    _:c14n1 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n12 .
-    _:c14n1 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n12 .
-    _:c14n1 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n12 .
+    _:c14n1 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n11 .
+    _:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n11 .
+    _:c14n1 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n11 .
+    _:c14n1 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n11 .
+    _:c14n1 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n11 .
     _:c14n10 <http://example.org/vocab/vaccine> _:c14n4 _:c14n5 .
     _:c14n10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n5 .
-    _:c14n11 <http://purl.org/dc/terms/created> "2023-09-19T11:52:13.344145635Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
-    _:c14n11 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n6 .
-    _:c14n11 <https://w3id.org/security#challenge> "abcde" _:c14n6 .
-    _:c14n11 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n6 .
-    _:c14n11 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n6 .
-    _:c14n11 <https://w3id.org/security#proofValue> "uomFhWQnaAgAAAAAAAAAAj3pRuKqpHtsa0xziKwrLZIhG-U0ycYp_moex7dl1Y5p5NZuA5J1Q6ubMTTVIiXOytWS3aj5pIdc-3G571tngU4zh29QTHUgl4tJ12wBVSn6bUFLcvlTS9g2kyABgxClRpODMiCbHb2h83RBdvqcW9m-LlKG8rUbrUOhJXUMSPUvJzxmGuwKIZkbNhBc8KbWLj-sQe1GCo8fE-30hBBgsOtO_WZrnuBm6COIPGPcIg-feVOprZiG9DrgQT9rHerjKAgAAAAAAAAB2t2flGvbGCAXAnvgmZ2pd9SwdwE3sFCUVQ813PhkjSgdNfBrATCRC50LekfDB3am9peay3FphlBN4vU0acZsDj7yIdhcBfXOJ4lRktyApz1axji5vP4pjtr0YXbnlJYJQbGddU2sFhfro3-0awRfGJQAAAAAAAAA6SfboKj6RRx5BT7QIWJ9zVbfbacNUmtiW7sqy86OnK3ipeb_RnZENbKqHarJwl4vCvGUDxPnUB2bEQ2HSX7YERO5OpcOW-7Rak_g3LIoo-_b3opn6i1hdDzOqCvc4kD2MYycMpBVNvN6kf9ItVFgB9-xiFxIXecupWWqNkfC1IgGdnm0y6dB_ZkEmUqc79iNSYhBZuDGJ23I5Av6P7KlBgj1T8CYvS9oKQ--eM492wzr5N5H3JM5c5aQIqR7Nw1XYgGyvvkVtm69ypDz3Xp7ThIt3uTPkKZQgtmvWA1D6WETuTqXDlvu0WpP4NyyKKPv296KZ-otYXQ8zqgr3OJA9wyZ_tdDWew_SWxM8NOVleEYGt5XSG42_caM00Juv3FdE7k6lw5b7tFqT-Dcsiij79veimfqLWF0PM6oK9ziQPb9jZbHUDy-L-ANUBNoMnnVeR3kDAoPv2XRkmSY_dy1zv2NlsdQPL4v4A1QE2gyedV5HeQMCg-_ZdGSZJj93LXNE7k6lw5b7tFqT-Dcsiij79veimfqLWF0PM6oK9ziQPb9jZbHUDy-L-ANUBNoMnnVeR3kDAoPv2XRkmSY_dy1zv2NlsdQPL4v4A1QE2gyedV5HeQMCg-_ZdGSZJj93LXO_Y2Wx1A8vi_gDVATaDJ51Xkd5AwKD79l0ZJkmP3ctc_XRMNpdwLpq1vS0FohhUNBEZmOktFYL-ogubBF8m5Mwx1kmwvItbV6xwyICBRqAhlWUQTxYKY9cMf3XDQPcawno3bY4yCwyt7LY5Uls6qTAFCua45NuypzQgcADlJhxQsMmf7XQ1nsP0lsTPDTlZXhGBreV0huNv3GjNNCbr9xXpiGkVmCBO3gDSrBPXAz93aSx3EX2UUB5PyGCiPZqKw_m4ZB8MHTnoatMfrxd_vIdK7hdWfNFul_ULap8cB5uMcXxZiEKwEyputX-gyW271pg2ODBHpyEfvNcUuYt9BQlPe-wrcMegCSwVMLQLGC5FU-0A36sM1oAwFi5CyzIbgam0Ez8YaXyBmCaVVcbRHs8nm9KPxw3ni-XTIPdukctGY4dCTNGaZIXwJa8bFhGypJ0tF1pJ7uyayu-PVvDNRACjGMnDKQVTbzepH_SLVRYAffsYhcSF3nLqVlqjZHwtSLPXzXchDAsN0B_Q1hGfzINZGHAZ9rXKU135OARPSLjQ4Qn8DAMVxu0P9DpJGCgn287jSysDBkUOdbzZrfkLzFHMa65ct2xcuwNZYXF8JnpJDnn518gx_WWM-7_2oqt2w5TkYWq2MYl9WKzXEGj1Zd4SC6Q4Gk7fhV-ZZmagJEwKIxjJwykFU283qR_0i1UWAH37GIXEhd5y6lZao2R8LUi5_N8dI68FU5h1H34Gm4kF0svbKxUWnVCmgKysIXZbD7n83x0jrwVTmHUffgabiQXSy9srFRadUKaArKwhdlsPufzfHSOvBVOYdR9-BpuJBdLL2ysVFp1QpoCsrCF2Ww-5_N8dI68FU5h1H34Gm4kF0svbKxUWnVCmgKysIXZbD7n83x0jrwVTmHUffgabiQXSy9srFRadUKaArKwhdlsPgCOC48cz-D5rKxjW19YQAeL_Bn0VZeLmJi7I4Ul4k9O_Vfh2igEAYWkub9yxHxBFeOTkwSVSg-ECCfwuvvqRWfYO6mj6umb3SvlPeDOyCa0wYVo9YvDF0-jsc8Il2U-NjaLE77fgpyqVBo08eJmevvvjNfYUg9Ct3plY6VgbVCMZU6jawwdQIWKB3Y-5ts1UbWmBVIHO7RVu9esGppNpCyvDlgigWRSSplZdX8Owgjl9RApUQ2KCU9Qvgc_VoJq33gCAAAAAAAAAMz6OXyMQ5IIG-3GMwC2qWZU9gTZeFWeCfB7YeRQuQk46Q7qzTRr5c1maBQdpU9S_4ZtCV3fpC-aPPDi4RERMkCnPZ0Se30_xf5DeAwY6Bh3oLVmE5e-1X5YMVKfOSZDd5pbqxntzYEnA_Zz1AETSgYVAAAAAAAAABzJX81dMnvwMh2kM1n9dq-WedfBtga0P3X7cg-gruprrYFcXH2LUI_R59jIzSHcSjAPLnF23MNOoDks_gZSszAlaxWOfXWYQRgWudGxO6sv8D7egx5ULHqLdu1O6p_XEkrqV0RHXU-uJ0XaOA1OGx7p6ibtBZ1-dLTBYcQuK4k2EHLVeCQxzyY8QdBPgcu3eTkwAe3JOrAHNOuCGX7_xQYbhzVSB6JVxGkTvYxKhjCdZfbk3djtL_N_hP6AKfl1XPSt0tJnWq3X9aEmszlV-Lp1zKAbAgxJUuBvzZ2DO4MLpuKuXMzjLI3KyrLA6eri5yOfrAcI6WMIU37FIespdkvPXzXchDAsN0B_Q1hGfzINZGHAZ9rXKU135OARPSLjQ89fNdyEMCw3QH9DWEZ_Mg1kYcBn2tcpTXfk4BE9IuNDNk2_cs9iVCnAOHbYBjFyoN1pmwR8uj5Y3C0T7wSodRk2Tb9yz2JUKcA4dtgGMXKg3WmbBHy6PljcLRPvBKh1Gc9fNdyEMCw3QH9DWEZ_Mg1kYcBn2tcpTXfk4BE9IuNDNk2_cs9iVCnAOHbYBjFyoN1pmwR8uj5Y3C0T7wSodRk2Tb9yz2JUKcA4dtgGMXKg3WmbBHy6PljcLRPvBKh1GTZNv3LPYlQpwDh22AYxcqDdaZsEfLo-WNwtE-8EqHUZdqUe0sBve1wU-lghuRS6lX96JLx4a0EGu2OMaphLZzF2pR7SwG97XBT6WCG5FLqVf3okvHhrQQa7Y4xqmEtnMXalHtLAb3tcFPpYIbkUupV_eiS8eGtBBrtjjGqYS2cxdqUe0sBve1wU-lghuRS6lX96JLx4a0EGu2OMaphLZzF2pR7SwG97XBT6WCG5FLqVf3okvHhrQQa7Y4xqmEtnMQEFAAAAAAAAAGFiY2RlAABhYoKkYWGLDQ8AAgMEBQYHCAphYhBhY4UAAQIDBGFkBaRhYYcCAwQFBgcIYWIJYWOFAAECAwRhZAU"^^<https://w3id.org/security#multibase> _:c14n6 .
     _:c14n13 <http://example.org/vocab/isPatientOf> _:c14n10 _:c14n5 .
-    _:c14n13 <http://schema.org/worksFor> _:c14n8 _:c14n5 .
-    _:c14n13 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n5 .
+    _:c14n13 <http://schema.org/worksFor> _:c14n7 _:c14n5 .
+    _:c14n13 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.<org/Person> _:c14n5 .
     _:c14n14 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n5 .
-    _:c14n14 <https://w3id.org/security#proof> _:c14n12 _:c14n5 .
+    _:c14n14 <https://w3id.org/security#proof> _:c14n11 _:c14n5 .
     _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n13 _:c14n5 .
     _:c14n14 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
     _:c14n14 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
@@ -396,18 +390,24 @@ mod tests {
     _:c14n2 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
     _:c14n2 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n0 .
     _:c14n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
-    _:c14n3 <https://w3id.org/security#proof> _:c14n6 .
+    _:c14n3 <https://w3id.org/security#proof> _:c14n12 .
     _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n5 .
-    _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n7 .
-    _:c14n4 <http://schema.org/status> "active" _:c14n7 .
-    _:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n7 .
-    _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n5 .
-    _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n7 .
-    _:c14n9 <https://w3id.org/security#proof> _:c14n0 _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n4 _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n7 .
+    _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n6 .
+    _:c14n4 <http://schema.org/status> "active" _:c14n6 .
+    _:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n6 .
+    _:c14n7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n5 .
+    _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n6 .
+    _:c14n8 <https://w3id.org/security#proof> _:c14n0 _:c14n6 .
+    _:c14n8 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n4 _:c14n6 .
+    _:c14n8 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
+    _:c14n8 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
+    _:c14n8 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n6 .
+    _:c14n9 <http://purl.org/dc/terms/created> "2023-09-21T11:36:23.663929856Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n12 .
+    _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n12 .
+    _:c14n9 <https://w3id.org/security#challenge> "abcde" _:c14n12 .
+    _:c14n9 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n12 .
+    _:c14n9 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n12 .
+    _:c14n9 <https://w3id.org/security#proofValue> "uomFhWQnaAgAAAAAAAAAAiAvTWnfhK5FK9n4FTbueRNfjipNVS5MNyvEPc2IJOuvQ0C3fp8hCuAIRc1_Lhf-Atw-gSU7LG7ia71FC2ozwOABP3GLWPBmU3fwEu7ooM5PYmQt1U9zsIGB1RVtG-T8huOdclYb-wiZFb7of3H6cRIcy7ujTzwgeTisDURUIZ18uiU1d5waitcTMFppTyi2StbtPjPxCObRd68AaVop3K37J1HCIIr9FjynFecH-dn3druVBnHgpeY9bKuOnneAHAgAAAAAAAADFAMrFjLAwFzeCag9JnfvJa4sib8jnC3F-GVzu-pEVaQqLd9maCNxm4qe3qvHxhjo8svPmuMs4zGJLZ3h7FdpzlBmWzGSPL8_bZpAlEKSxwR5jxRI8gplwEN9rL_TunBFRPVTAmJH0s-4Z_0M42LTwJQAAAAAAAADmpxFadg9i_CvnVqqKKpe5DHLYPin12qA6wrZqF3usET07re5L_LAS1BgfnYtvAp6_-7fpQ_v_2YGnLO4ouWJBseiFcR7PYBxwGC7HdgGHM-Dq4yXDSQJRRQS0Onq-3SPVj0Emqqy5Prpm_NdLIi8jlLhtec1TobFLMMKxiKBFJm6X1TmNITbne8Zb4fGyVFw7VVHlgO8yz6gKDC4TcvcnMas_hU-65b_XrSi7yNsvW-hms1069AvacbXskBX7rCncX8e-bqJBDtnvVB8rOWbALk8sdn8mXIbKucO3KSddYrHohXEez2AccBgux3YBhzPg6uMlw0kCUUUEtDp6vt0jxyhevJbcHbchu617fw0K07-7unaVXP-Qxd0NFN0GO1Cx6IVxHs9gHHAYLsd2AYcz4OrjJcNJAlFFBLQ6er7dI85d36Xq0iNf_xqFAttV95nqPmEG0d_KGhnJsemmx4hHzl3fperSI1__GoUC21X3meo-YQbR38oaGcmx6abHiEex6IVxHs9gHHAYLsd2AYcz4OrjJcNJAlFFBLQ6er7dI85d36Xq0iNf_xqFAttV95nqPmEG0d_KGhnJsemmx4hHzl3fperSI1__GoUC21X3meo-YQbR38oaGcmx6abHiEfOXd-l6tIjX_8ahQLbVfeZ6j5hBtHfyhoZybHppseIR_nTD-EjxlwSJlRPVtOJ9Cq-G2eFd5d9y9xoRVW98vEod8cSVxq5B0R9iloenQr3cQjaXhKj0AYNBotZH02xQlHe4F2k7PxanS-tREDTxviA5QjQrq54mdF-6E8glu-ODMcoXryW3B23Ibute38NCtO_u7p2lVz_kMXdDRTdBjtQ702-cGYYqPreCy1VetrT_0F956exjmhf4ffZrO0auxI98x_AkdgFgm6wSV1LnkJ3cfVy7n5uRxGQ3nRYA0JoJPX47fF5HSDae4TxE9Ifh4erRTMRmP8e1wszyq4zTn0FhhvLx8m17KaLFj_WSi6QN-x_DuBncILmYS8RMCN4_gms3ZRpOnbHZyeusSASQf_HVjUxTAwnUw7evRwDDtGXJDxKRbHgljw6HpSXNyJKBACHWrMXsoxTMjaIqQ0NfSRY1Y9BJqqsuT66ZvzXSyIvI5S4bXnNU6GxSzDCsYigRSYOzIGG_xWlyKrgYn-0MR2qh49lq2Gr4e2H_UKoSjgFT81TCksS7oc2G5JmKn5udpHYWDcOyFU8H3jKvtvb38BK0fpR0B5u0xmPDecPPnndOuXueINPTVCwyOoXnkJaox1-4DKoKPel8efuFjMcYRVm0y5DwFkvfWNFaNnxsHU7NdWPQSaqrLk-umb810siLyOUuG15zVOhsUswwrGIoEUm0gFo3d0Q169csX-agPVv-lTnWPiBSjMnalSiSyVX5QHSAWjd3RDXr1yxf5qA9W_6VOdY-IFKMydqVKJLJVflAdIBaN3dENevXLF_moD1b_pU51j4gUozJ2pUokslV-UB0gFo3d0Q169csX-agPVv-lTnWPiBSjMnalSiSyVX5QHSAWjd3RDXr1yxf5qA9W_6VOdY-IFKMydqVKJLJVflAQCsfuTQjkFAt7HLPg5IlqNbtDUXlV8BSo1MO-TnkS5XZa7O2BcJjzR0fc8VHkioAx-ThPGRsf9IMPQU37SQH8fxpAf9irC-ghKxPvaH6Q1vKU8mmSikLMI7XcxstAyrghaUfEzS6V0G4bFYLJ86vyPi83tBGDDy_RLtN_er8NxgZUNyql_8ra_GRUpm62E09g2V3t1H_bL2FHMCfSok3__0xTGHSwbIgIvxnbpHADwih2jfLXmcN5_iDnFWVjVQwaMCAAAAAAAAABtEnFz-_fsWTa-SSiLsOtPKVAqI81CVVVlS8FoNMvxWw87N0t5OEqjlL8XwC_5lsHq5SaaNRHd7YK5DX2vMewCshM-m4EVeP4feH7p_12qH_sI5ME1L4JxDuFG962JrK-SZJiEGnAMwJOyu0B0ZV9kVAAAAAAAAAORW8JlO-6GI_HPv1qgITpvjmIFrjq5eyQORDYRLSwcFMeiHbCAvMYSrctuAmbaJCebGblJEW4wu4juvrcVDzD9k12E4-FoR04J32Pgf7pXME22Dx6Un5Bqcj0_l97X5HTmCaL92l3mE1Vkq1zi5anQkik1NkeqiXJKVANp8alM4U4igyyzi1twJQtj5Zw9ExVsohHko3hQA2kdiIleLxTpa84H8gYfOVdR03LO4OBs6iSSKIWDB55OQnWAXNw-YZ6Qbv2eP5Ue9wWhez9FFb6YoEr7xTLPAArX9Tq_NEFpT1Ep03asgrIPp0p7CU767k6hONY-m8vgJlqSPoS4cti8OzIGG_xWlyKrgYn-0MR2qh49lq2Gr4e2H_UKoSjgFTw7MgYb_FaXIquBif7QxHaqHj2WrYavh7Yf9QqhKOAVPB70w7NJVMYXUBb95-yRBNxhkzVaR4pNYaQ4_mezfdBAHvTDs0lUxhdQFv3n7JEE3GGTNVpHik1hpDj-Z7N90EA7MgYb_FaXIquBif7QxHaqHj2WrYavh7Yf9QqhKOAVPB70w7NJVMYXUBb95-yRBNxhkzVaR4pNYaQ4_mezfdBAHvTDs0lUxhdQFv3n7JEE3GGTNVpHik1hpDj-Z7N90EAe9MOzSVTGF1AW_efskQTcYZM1WkeKTWGkOP5ns33QQ4wYh-C5BSpRLBvMrrVj36YelFsp5y7Jq6zAvlkVICT3jBiH4LkFKlEsG8yutWPfph6UWynnLsmrrMC-WRUgJPeMGIfguQUqUSwbzK61Y9-mHpRbKecuyauswL5ZFSAk94wYh-C5BSpRLBvMrrVj36YelFsp5y7Jq6zAvlkVICT3jBiH4LkFKlEsG8yutWPfph6UWynnLsmrrMC-WRUgJPQEFAAAAAAAAAGFiY2RlAABhYoKkYWGLDQ8AAgMEBQYHCAphYhBhY4UAAQIDBGFkBaRhYYcCAwQFBgcIYWIJYWOFAAECAwRhZAU"^^<https://w3id.org/security#multibase> _:c14n12 .
     "#;
 
     #[test]
@@ -440,7 +440,7 @@ mod tests {
         let nonce = "abcde";
 
         let derived_proof =
-            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &key_graph).unwrap();
+            derive_proof(&mut rng, None, &vcs, &deanon_map, Some(nonce), &key_graph).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
         let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &key_graph);
@@ -460,8 +460,15 @@ mod tests {
 
         let nonce = "abcde";
 
-        let derived_proof =
-            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, Some(nonce), KEY_GRAPH).unwrap();
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            None,
+            &vc_pairs,
+            &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+        )
+        .unwrap();
         println!("derived_proof: {}", derived_proof);
 
         let verified = verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH);
@@ -515,7 +522,8 @@ mod tests {
 
         let nonce = None;
 
-        let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, nonce, &key_graph).unwrap();
+        let derived_proof =
+            derive_proof(&mut rng, None, &vcs, &deanon_map, nonce, &key_graph).unwrap();
 
         let verified = verify_proof(&mut rng, &derived_proof, nonce, &key_graph);
 
@@ -536,7 +544,7 @@ mod tests {
         let nonce = None;
 
         let derived_proof =
-            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, nonce, KEY_GRAPH).unwrap();
+            derive_proof_string(&mut rng, None, &vc_pairs, &deanon_map, nonce, KEY_GRAPH).unwrap();
 
         let verified = verify_proof_string(&mut rng, &derived_proof, nonce, KEY_GRAPH);
 
@@ -570,7 +578,8 @@ mod tests {
 
         let deanon_map = get_example_deanon_map();
 
-        let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, None, &key_graph).unwrap();
+        let derived_proof =
+            derive_proof(&mut rng, None, &vcs, &deanon_map, None, &key_graph).unwrap();
 
         let nonce = "abcde";
 
@@ -593,7 +602,7 @@ mod tests {
         let deanon_map = get_example_deanon_map_string();
 
         let derived_proof =
-            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, None, KEY_GRAPH).unwrap();
+            derive_proof_string(&mut rng, None, &vc_pairs, &deanon_map, None, KEY_GRAPH).unwrap();
 
         let nonce = "abcde";
 
@@ -635,7 +644,7 @@ mod tests {
         let nonce = "abcde";
 
         let derived_proof =
-            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &key_graph).unwrap();
+            derive_proof(&mut rng, None, &vcs, &deanon_map, Some(nonce), &key_graph).unwrap();
 
         let verified = verify_proof(&mut rng, &derived_proof, None, &key_graph);
 
@@ -657,8 +666,15 @@ mod tests {
 
         let nonce = "abcde";
 
-        let derived_proof =
-            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, Some(nonce), KEY_GRAPH).unwrap();
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            None,
+            &vc_pairs,
+            &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+        )
+        .unwrap();
 
         let verified = verify_proof_string(&mut rng, &derived_proof, None, KEY_GRAPH);
 
@@ -723,7 +739,7 @@ mod tests {
         let nonce = "abcde";
 
         let derived_proof =
-            derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &key_graph).unwrap();
+            derive_proof(&mut rng, None, &vcs, &deanon_map, Some(nonce), &key_graph).unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
         let verified = verify_proof(&mut rng, &derived_proof, Some(nonce), &key_graph);
@@ -746,8 +762,15 @@ mod tests {
 
         let nonce = "abcde";
 
-        let derived_proof =
-            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, Some(nonce), KEY_GRAPH).unwrap();
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            None,
+            &vc_pairs,
+            &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+        )
+        .unwrap();
 
         let verified = verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH);
 
@@ -793,7 +816,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let nonce = "abcde";
 
-        let derived_proof = derive_proof(&mut rng, &vcs, &deanon_map, Some(nonce), &key_graph);
+        let derived_proof =
+            derive_proof(&mut rng, None, &vcs, &deanon_map, Some(nonce), &key_graph);
         assert!(matches!(
             derived_proof,
             Err(RDFProofsError::BBSPlus(
@@ -817,8 +841,14 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let nonce = "abcde";
 
-        let derived_proof =
-            derive_proof_string(&mut rng, &vc_pairs, &deanon_map, Some(nonce), KEY_GRAPH);
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            None,
+            &vc_pairs,
+            &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+        );
 
         assert!(matches!(
             derived_proof,

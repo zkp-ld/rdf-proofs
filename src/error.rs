@@ -20,6 +20,8 @@ pub enum RDFProofsError {
     VCWithoutProofValue,
     VCWithInvalidProofValue,
     VCWithoutVCType,
+    VCWithoutCryptosuite,
+    VCWithUnsupportedCryptosuite,
     InvalidVCGraphName,
     BlankNodeIdParse(oxrdf::BlankNodeIdParseError),
     LanguageTagParse(oxrdf::LanguageTagParseError),
@@ -35,6 +37,7 @@ pub enum RDFProofsError {
     MismatchedChallenge,
     InvalidChallengeDatatype,
     MessageSizeOverflow,
+    MissingSecret,
     Other(String),
 }
 
@@ -71,6 +74,10 @@ impl std::fmt::Display for RDFProofsError {
                 write!(f, "VC with invalid proof value error")
             }
             RDFProofsError::VCWithoutVCType => write!(f, "VC without VC type error"),
+            RDFProofsError::VCWithoutCryptosuite => write!(f, "VC without cryptosuite error"),
+            RDFProofsError::VCWithUnsupportedCryptosuite => {
+                write!(f, "VC without cryptosuite error")
+            }
             RDFProofsError::InvalidVCGraphName => write!(f, "invalid VC graph name error"),
             RDFProofsError::BlankNodeIdParse(_) => write!(f, "blank node ID parse error"),
             RDFProofsError::LanguageTagParse(_) => write!(f, "language tag parse error"),
@@ -98,6 +105,12 @@ impl std::fmt::Display for RDFProofsError {
             }
             RDFProofsError::MessageSizeOverflow => {
                 write!(f, "message size exceed 32-bit integer limit")
+            }
+            RDFProofsError::MissingSecret => {
+                write!(
+                    f,
+                    "secret must be given to derive proof with blind signature"
+                )
             }
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
         }

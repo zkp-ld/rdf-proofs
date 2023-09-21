@@ -4,7 +4,7 @@ use crate::{
         get_vc_from_ntriples, get_verification_method_identifier, hash_byte_to_field,
         serialize_ark, BBSPlusSignature, Fr, Proof, Statements,
     },
-    constants::{BLIND_SIG_REQUEST_CONTEXT, CRYPTOSUITE_BLIND_SIGN},
+    constants::{BLIND_SIG_REQUEST_CONTEXT, CRYPTOSUITE_BOUND_SIGN},
     context::{DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
     error::RDFProofsError,
     key_gen::generate_params,
@@ -48,7 +48,7 @@ pub struct BlindSigRequestWithBlinding {
     blinding: Fr,
 }
 
-pub fn blind_sig_request<R: RngCore>(
+pub fn blind_sign_request<R: RngCore>(
     rng: &mut R,
     secret: &[u8],
     nonce: Option<&str>,
@@ -98,12 +98,12 @@ pub fn blind_sig_request<R: RngCore>(
     })
 }
 
-pub fn blind_sig_request_string<R: RngCore>(
+pub fn blind_sign_request_string<R: RngCore>(
     rng: &mut R,
     secret: &[u8],
     nonce: Option<&str>,
 ) -> Result<(String, String), RDFProofsError> {
-    let BlindSigRequestWithBlinding { request, blinding } = blind_sig_request(rng, secret, nonce)?;
+    let BlindSigRequestWithBlinding { request, blinding } = blind_sign_request(rng, secret, nonce)?;
     let request_cbor = serde_cbor::to_vec(&request)?;
     let request_multibase = multibase::encode(Base::Base64Url, request_cbor);
     let mut blinding_bytes = Vec::new();
@@ -170,7 +170,7 @@ fn blind_sign_core<R: RngCore>(
 }
 
 fn configure_proof(proof_options: &Graph) -> Result<Graph, RDFProofsError> {
-    configure_proof_core(proof_options, CRYPTOSUITE_BLIND_SIGN)
+    configure_proof_core(proof_options, CRYPTOSUITE_BOUND_SIGN)
 }
 
 fn verify_blind_sig_request<R: RngCore>(
@@ -308,12 +308,12 @@ pub fn blind_verify(
 #[cfg(test)]
 mod tests {
     use crate::{
-        blind_sig_request_string, blind_sign_string, blind_signature::blind_sign, blind_verify,
+        blind_sign_request_string, blind_sign_string, blind_signature::blind_sign, blind_verify,
         common::get_graph_from_ntriples, context::PROOF_VALUE, tests::KEY_GRAPH, unblind,
         unblind_string, KeyGraph, VerifiableCredential,
     };
 
-    use super::blind_sig_request;
+    use super::blind_sign_request;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
 
     #[test]
@@ -322,7 +322,7 @@ mod tests {
         let secret = b"SECRET";
         let nonce = "NONCE";
 
-        let request = blind_sig_request(&mut rng, secret, Some(nonce));
+        let request = blind_sign_request(&mut rng, secret, Some(nonce));
 
         assert!(request.is_ok());
         println!("{:#?}", request);
@@ -334,7 +334,7 @@ mod tests {
         let secret = b"SECRET";
         let nonce = "NONCE";
 
-        let request = blind_sig_request_string(&mut rng, secret, Some(nonce));
+        let request = blind_sign_request_string(&mut rng, secret, Some(nonce));
 
         assert!(request.is_ok());
         println!("{:#?}", request);
@@ -365,7 +365,7 @@ mod tests {
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
     "#;
     const VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE: &str = r#"
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-blind-signature-2023" . # valid cryptosuite
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" . # valid cryptosuite
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
@@ -384,7 +384,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+        let request = blind_sign_request(&mut rng, secret, Some(nonce)).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -402,7 +402,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+        let request = blind_sign_request(&mut rng, secret, Some(nonce)).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -418,7 +418,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+        let request = blind_sign_request(&mut rng, secret, Some(nonce)).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -435,7 +435,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sig_request_string(&mut rng, secret, Some(nonce)).unwrap();
+        let request = blind_sign_request_string(&mut rng, secret, Some(nonce)).unwrap();
 
         let result = blind_sign_string(
             &mut rng,
@@ -454,7 +454,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+        let request = blind_sign_request(&mut rng, secret, Some(nonce)).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -474,7 +474,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sig_request_string(&mut rng, secret, Some(nonce)).unwrap();
+        let request = blind_sign_request_string(&mut rng, secret, Some(nonce)).unwrap();
 
         let proof = blind_sign_string(
             &mut rng,
@@ -497,7 +497,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+        let request = blind_sign_request(&mut rng, secret, Some(nonce)).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -517,7 +517,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sig_request(&mut rng, secret, Some(nonce)).unwrap();
+        let request = blind_sign_request(&mut rng, secret, Some(nonce)).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
