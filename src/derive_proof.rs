@@ -1,10 +1,11 @@
 use super::constants::CRYPTOSUITE_PROOF;
 use crate::{
+    blind_signature::blind_verify,
     common::{
         canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
-        get_hasher, get_vc_from_ntriples, hash_term_to_field, is_nym, randomize_bnodes,
-        reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr, PoKBBSPlusStmt,
-        PoKBBSPlusWit, Proof, ProofWithIndexMap, StatementIndexMap, Statements,
+        get_hasher, get_vc_from_ntriples, hash_byte_to_field, hash_term_to_field, is_nym,
+        randomize_bnodes, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr,
+        PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap, StatementIndexMap, Statements,
     },
     context::{
         ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF,
@@ -17,13 +18,14 @@ use crate::{
     ordered_triple::{OrderedNamedOrBlankNode, OrderedVerifiableCredentialGraphViews},
     signature::verify,
     vc::{
-        DisclosedVerifiableCredential, VcPair, VerifiableCredential, VerifiableCredentialTriples,
-        VerifiablePresentation,
+        DisclosedVerifiableCredential, VcPair, VcPairString, VerifiableCredential,
+        VerifiableCredentialTriples, VerifiablePresentation,
     },
-    VcPairString,
 };
+use ark_ff::field_hashers::DefaultFieldHasher;
 use ark_serialize::CanonicalDeserialize;
 use ark_std::rand::RngCore;
+use blake2::Blake2b512;
 use chrono::offset::Utc;
 use multibase::Base;
 use oxrdf::{
@@ -42,6 +44,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
     rng: &mut R,
+    secret: Option<&[u8]>,
     vc_pairs: &Vec<VcPair>,
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     nonce: Option<&str>,
@@ -70,7 +73,14 @@ pub fn derive_proof<R: RngCore>(
     // verify VCs
     vc_pairs
         .iter()
-        .map(|VcPair { original: vc, .. }| verify(vc, key_graph))
+        .map(
+            |VcPair { original: vc, .. }| match (vc.is_bound(), secret) {
+                (Ok(false), _) => verify(vc, key_graph),
+                (Ok(true), Some(s)) => blind_verify(vc, s, key_graph),
+                (Ok(true), None) => Err(RDFProofsError::MissingSecret),
+                _ => Err(RDFProofsError::VCWithUnsupportedCryptosuite),
+            },
+        )
         .collect::<Result<(), _>>()?;
 
     // randomize blank node identifiers in VC documents and VC proofs
@@ -155,7 +165,7 @@ pub fn derive_proof<R: RngCore>(
 
     // reorder the original VC graphs and proof values
     // according to the order of canonicalized graph names of disclosed VCs
-    let (original_vc_vec, disclosed_vc_vec, vc_proof_values_vec) = reorder_vc_graphs(
+    let (original_vc_vec, disclosed_vc_vec, vc_proof_values_vec, is_bound_vec) = reorder_vc_graphs(
         &canonicalized_original_vcs,
         &vc_proof_values.iter().map(|s| s.as_str()).collect(),
         &canonicalized_disclosed_vc_graphs,
@@ -209,7 +219,9 @@ pub fn derive_proof<R: RngCore>(
     // derive proof value
     let derived_proof_value = derive_proof_value(
         rng,
+        secret,
         original_vc_vec,
+        is_bound_vec,
         disclosed_vc_vec,
         public_keys,
         vc_proof_values_vec,
@@ -236,6 +248,7 @@ pub fn derive_proof<R: RngCore>(
 
 pub fn derive_proof_string<R: RngCore>(
     rng: &mut R,
+    secret: Option<&[u8]>,
     vc_pairs: &Vec<VcPairString>,
     deanon_map: &HashMap<String, String>,
     nonce: Option<&str>,
@@ -254,7 +267,7 @@ pub fn derive_proof_string<R: RngCore>(
     let deanon_map = get_deanon_map_from_string(deanon_map)?;
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
 
-    let proof_dataset = derive_proof(rng, &vc_pairs, &deanon_map, nonce, &key_graph)?;
+    let proof_dataset = derive_proof(rng, secret, &vc_pairs, &deanon_map, nonce, &key_graph)?;
 
     Ok(rdf_canon::serialize(&proof_dataset))
 }
@@ -585,11 +598,13 @@ fn reorder_vc_graphs(
         Vec<VerifiableCredentialTriples>,
         Vec<VerifiableCredentialTriples>,
         Vec<String>,
+        Vec<bool>,
     ),
     RDFProofsError,
 > {
     let mut ordered_original_vcs = BTreeMap::new();
     let mut ordered_proof_values = BTreeMap::new();
+    let mut ordered_is_bounds = BTreeMap::new();
 
     for k in canonicalized_disclosed_vc_graphs.keys() {
         let canonicalized_disclosed_vc_graph_name: &GraphNameRef = k.into();
@@ -607,6 +622,7 @@ fn reorder_vc_graphs(
         let original_vc = canonicalized_original_vcs
             .get(original_index)
             .ok_or(RDFProofsError::Other("invalid VC index".to_string()))?;
+        let is_bound = original_vc.is_bound()?;
         let proof_value = proof_values
             .get(original_index)
             .ok_or(RDFProofsError::Other(
@@ -614,6 +630,7 @@ fn reorder_vc_graphs(
             ))?;
         ordered_original_vcs.insert(k.clone(), original_vc);
         ordered_proof_values.insert(k.clone(), proof_value.to_owned());
+        ordered_is_bounds.insert(k.clone(), is_bound);
     }
 
     // assert the keys of two VC graphs are equivalent
@@ -639,8 +656,17 @@ fn reorder_vc_graphs(
         .into_iter()
         .map(|(_, v)| v.into())
         .collect::<Vec<_>>();
+    let is_bound_vec = ordered_is_bounds
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect::<Vec<_>>();
 
-    Ok((original_vc_vec, disclosed_vc_vec, vc_proof_values_vec))
+    Ok((
+        original_vc_vec,
+        disclosed_vc_vec,
+        vc_proof_values_vec,
+        is_bound_vec,
+    ))
 }
 
 fn gen_index_map(
@@ -733,7 +759,9 @@ fn gen_index_map(
 
 fn derive_proof_value<R: RngCore>(
     rng: &mut R,
+    secret: Option<&[u8]>,
     original_vc_triples: Vec<VerifiableCredentialTriples>,
+    is_bounds: Vec<bool>,
     disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
     public_keys: Vec<BBSPlusPublicKey>,
     proof_values: Vec<String>,
@@ -752,10 +780,23 @@ fn derive_proof_value<R: RngCore>(
     let disclosed_and_undisclosed_terms = reordered_disclosed_vc_triples
         .iter()
         .zip(original_vc_triples)
+        .zip(is_bounds)
         .enumerate()
-        .map(|(i, (disclosed_vc_triples, original_vc_triples))| {
-            get_disclosed_and_undisclosed_terms(disclosed_vc_triples, &original_vc_triples, i)
-        })
+        .map(
+            |(i, ((disclosed_vc_triples, original_vc_triples), is_bound))| {
+                let s = match (is_bound, secret) {
+                    (true, Some(s)) => Ok(Some(s)),
+                    (true, None) => Err(RDFProofsError::MissingSecret),
+                    (false, _) => Ok(None),
+                }?;
+                get_disclosed_and_undisclosed_terms(
+                    disclosed_vc_triples,
+                    &original_vc_triples,
+                    i,
+                    s,
+                )
+            },
+        )
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
     println!(
         "disclosed_and_undisclosed:\n{:#?}\n",
@@ -876,7 +917,10 @@ fn get_disclosed_and_undisclosed_terms(
     disclosed_vc_triples: &DisclosedVerifiableCredential,
     original_vc_triples: &VerifiableCredentialTriples,
     vc_index: usize,
+    secret: Option<&[u8]>,
 ) -> Result<DisclosedAndUndisclosedTerms, RDFProofsError> {
+    let hasher = get_hasher();
+
     let mut disclosed_terms = BTreeMap::<usize, Fr>::new();
     let mut undisclosed_terms = BTreeMap::<usize, Fr>::new();
     let mut equivs = HashMap::<NamedOrBlankNode, Vec<(usize, usize)>>::new();
@@ -890,49 +934,58 @@ fn get_disclosed_and_undisclosed_terms(
         proof: original_proof,
     } = original_vc_triples;
 
+    let mut current_term_index = 0;
+
+    match secret {
+        Some(s) => undisclosed_terms.insert(current_term_index, hash_byte_to_field(s, &hasher)?),
+        None => disclosed_terms.insert(current_term_index, Fr::from(1)),
+    };
+    current_term_index += 1;
+
     for (j, disclosed_triple) in disclosed_document {
-        let subject_index = 3 * j;
         let original = original_document
             .get(*j)
             .ok_or(RDFProofsError::DeriveProofValue)?
             .clone();
         build_disclosed_and_undisclosed_terms(
             disclosed_triple,
-            subject_index,
+            current_term_index,
             vc_index,
             &original,
             &mut disclosed_terms,
             &mut undisclosed_terms,
             &mut equivs,
+            &hasher,
         )?;
+        current_term_index += 3;
     }
 
-    let delimiter_index = disclosed_document.len() * 3;
-    let proof_index = delimiter_index + 1;
     let delimiter = get_delimiter()?;
-    disclosed_terms.insert(delimiter_index, delimiter);
+    disclosed_terms.insert(current_term_index, delimiter);
+    current_term_index += 1;
 
     for (j, disclosed_triple) in disclosed_proof {
-        let subject_index = 3 * j + proof_index;
         let original = original_proof
             .get(*j)
             .ok_or(RDFProofsError::DeriveProofValue)?
             .clone();
         build_disclosed_and_undisclosed_terms(
             disclosed_triple,
-            subject_index,
+            current_term_index,
             vc_index,
             &original,
             &mut disclosed_terms,
             &mut undisclosed_terms,
             &mut equivs,
+            &hasher,
         )?;
+        current_term_index += 3;
     }
     Ok(DisclosedAndUndisclosedTerms {
         disclosed: disclosed_terms,
         undisclosed: undisclosed_terms,
         equivs,
-        term_count: (disclosed_document.len() + disclosed_proof.len()) * 3 + 1,
+        term_count: current_term_index,
     })
 }
 
@@ -944,14 +997,14 @@ fn build_disclosed_and_undisclosed_terms(
     disclosed_terms: &mut BTreeMap<usize, Fr>,
     undisclosed_terms: &mut BTreeMap<usize, Fr>,
     equivs: &mut HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
+    hasher: &DefaultFieldHasher<Blake2b512>,
 ) -> Result<(), RDFProofsError> {
     let predicate_index = subject_index + 1;
     let object_index = subject_index + 2;
 
-    let hasher = get_hasher();
-    let subject_fr = hash_term_to_field((&original.subject).into(), &hasher)?;
-    let predicate_fr = hash_term_to_field((&original.predicate).into(), &hasher)?;
-    let object_fr = hash_term_to_field((&original.object).into(), &hasher)?;
+    let subject_fr = hash_term_to_field((&original.subject).into(), hasher)?;
+    let predicate_fr = hash_term_to_field((&original.predicate).into(), hasher)?;
+    let object_fr = hash_term_to_field((&original.object).into(), hasher)?;
 
     match disclosed_triple {
         Some(triple) => {

@@ -92,6 +92,12 @@ pub fn verify_proof<R: RngCore>(
         .collect::<Result<Vec<_>, _>>()?;
     println!("public_keys:\n{:#?}\n", public_keys);
 
+    // if the VC is bound to secret or not
+    let is_bounds = c14n_disclosed_vc_graphs
+        .iter()
+        .map(|(_, vc)| vc.is_bound())
+        .collect::<Result<Vec<_>, _>>()?;
+
     // convert to Vecs
     let disclosed_vec = c14n_disclosed_vc_graphs
         .into_iter()
@@ -114,8 +120,11 @@ pub fn verify_proof<R: RngCore>(
     // identify disclosed terms
     let disclosed_terms = reordered_vc_triples
         .iter()
+        .zip(is_bounds)
         .enumerate()
-        .map(|(i, disclosed_vc_triples)| get_disclosed_terms(disclosed_vc_triples, i))
+        .map(|(i, (disclosed_vc_triples, is_bound))| {
+            get_disclosed_terms(disclosed_vc_triples, i, is_bound)
+        })
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
     println!("disclosed_terms:\n{:#?}\n", disclosed_terms);
 
@@ -206,6 +215,7 @@ struct DisclosedTerms {
 fn get_disclosed_terms(
     disclosed_vc_triples: &DisclosedVerifiableCredential,
     vc_index: usize,
+    is_bound: bool,
 ) -> Result<DisclosedTerms, RDFProofsError> {
     let mut disclosed_terms = BTreeMap::<usize, Fr>::new();
     let mut equivs = HashMap::<NamedOrBlankNode, Vec<(usize, usize)>>::new();
@@ -215,36 +225,42 @@ fn get_disclosed_terms(
         proof: disclosed_proof,
     } = disclosed_vc_triples;
 
-    for (j, disclosed_triple) in disclosed_document {
-        let subject_index = 3 * j;
+    let mut current_term_index = 0;
+
+    if !is_bound {
+        disclosed_terms.insert(current_term_index, Fr::from(1));
+    };
+    current_term_index += 1;
+
+    for (_, disclosed_triple) in disclosed_document {
         build_disclosed_terms(
             disclosed_triple,
-            subject_index,
+            current_term_index,
             vc_index,
             &mut disclosed_terms,
             &mut equivs,
         )?;
+        current_term_index += 3;
     }
 
-    let delimiter_index = disclosed_document.len() * 3;
-    let proof_index = delimiter_index + 1;
     let delimiter = get_delimiter()?;
-    disclosed_terms.insert(delimiter_index, delimiter);
+    disclosed_terms.insert(current_term_index, delimiter);
+    current_term_index += 1;
 
-    for (j, disclosed_triple) in disclosed_proof {
-        let subject_index = 3 * j + proof_index;
+    for (_, disclosed_triple) in disclosed_proof {
         build_disclosed_terms(
             disclosed_triple,
-            subject_index,
+            current_term_index,
             vc_index,
             &mut disclosed_terms,
             &mut equivs,
         )?;
+        current_term_index += 3;
     }
     Ok(DisclosedTerms {
         disclosed: disclosed_terms,
         equivs,
-        term_count: (disclosed_document.len() + disclosed_proof.len()) * 3 + 1,
+        term_count: current_term_index,
     })
 }
 

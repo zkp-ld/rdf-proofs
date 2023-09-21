@@ -1,5 +1,9 @@
 use crate::{
-    context::{DATA_INTEGRITY_PROOF, FILTER, MULTIBASE, PROOF, PROOF_VALUE, VERIFIABLE_CREDENTIAL},
+    constants::{CRYPTOSUITE_BOUND_SIGN, CRYPTOSUITE_SIGN},
+    context::{
+        CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, MULTIBASE, PROOF, PROOF_VALUE,
+        VERIFIABLE_CREDENTIAL,
+    },
     error::RDFProofsError,
     ordered_triple::{
         OrderedGraphNameRef, OrderedGraphViews, OrderedVerifiableCredentialGraphViews,
@@ -20,6 +24,33 @@ pub struct VerifiableCredential {
 impl VerifiableCredential {
     pub fn new(document: Graph, proof: Graph) -> Self {
         Self { document, proof }
+    }
+
+    pub fn get_cryptosuite(&self) -> Result<String, RDFProofsError> {
+        let VerifiableCredential { proof, .. } = self;
+
+        // TODO: assert there is at most one triple `* a DataIntegrity` in `proof`
+        let proof_subject = proof
+            .subject_for_predicate_object(vocab::rdf::TYPE, DATA_INTEGRITY_PROOF)
+            .ok_or(RDFProofsError::InvalidProofConfiguration)?;
+
+        // TODO: assert there is at most one triple `* proofValue *` in `proof`
+        if let Some(proof_value) = proof.object_for_subject_predicate(proof_subject, CRYPTOSUITE) {
+            match proof_value {
+                TermRef::Literal(v) => Ok(v.value().to_string()),
+                _ => Err(RDFProofsError::VCWithoutCryptosuite),
+            }
+        } else {
+            Err(RDFProofsError::VCWithoutCryptosuite)
+        }
+    }
+
+    pub fn is_bound(&self) -> Result<bool, RDFProofsError> {
+        match self.get_cryptosuite()?.as_str() {
+            CRYPTOSUITE_BOUND_SIGN => Ok(true),
+            CRYPTOSUITE_SIGN => Ok(false),
+            _ => Err(RDFProofsError::VCWithUnsupportedCryptosuite),
+        }
     }
 
     pub fn add_proof_value(self: &mut Self, proof_value: String) -> Result<(), RDFProofsError> {
@@ -108,6 +139,35 @@ impl std::fmt::Display for VerifiableCredential {
 pub struct VerifiableCredentialView<'a> {
     pub document: GraphView<'a>,
     pub proof: GraphView<'a>,
+}
+
+impl<'a> VerifiableCredentialView<'a> {
+    pub fn get_cryptosuite(&self) -> Result<String, RDFProofsError> {
+        let VerifiableCredentialView { proof, .. } = self;
+
+        // TODO: assert there is at most one triple `* a DataIntegrity` in `proof`
+        let proof_subject = proof
+            .subject_for_predicate_object(vocab::rdf::TYPE, DATA_INTEGRITY_PROOF)
+            .ok_or(RDFProofsError::InvalidProofConfiguration)?;
+
+        // TODO: assert there is at most one triple `* proofValue *` in `proof`
+        if let Some(proof_value) = proof.object_for_subject_predicate(proof_subject, CRYPTOSUITE) {
+            match proof_value {
+                TermRef::Literal(v) => Ok(v.value().to_string()),
+                _ => Err(RDFProofsError::VCWithoutCryptosuite),
+            }
+        } else {
+            Err(RDFProofsError::VCWithoutCryptosuite)
+        }
+    }
+
+    pub fn is_bound(&self) -> Result<bool, RDFProofsError> {
+        match self.get_cryptosuite()?.as_str() {
+            CRYPTOSUITE_BOUND_SIGN => Ok(true),
+            CRYPTOSUITE_SIGN => Ok(false),
+            _ => Err(RDFProofsError::VCWithUnsupportedCryptosuite),
+        }
+    }
 }
 
 impl<'a> VerifiableCredentialView<'a> {
