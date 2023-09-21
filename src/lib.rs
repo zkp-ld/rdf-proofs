@@ -377,7 +377,7 @@ mod tests {
     _:c14n10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n5 .
     _:c14n13 <http://example.org/vocab/isPatientOf> _:c14n10 _:c14n5 .
     _:c14n13 <http://schema.org/worksFor> _:c14n7 _:c14n5 .
-    _:c14n13 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.<org/Person> _:c14n5 .
+    _:c14n13 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n5 .
     _:c14n14 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n5 .
     _:c14n14 <https://w3id.org/security#proof> _:c14n11 _:c14n5 .
     _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n13 _:c14n5 .
