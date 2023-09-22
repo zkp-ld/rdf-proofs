@@ -120,7 +120,7 @@ pub fn verify_proof<R: RngCore>(
     // identify disclosed terms
     let disclosed_terms = reordered_vc_triples
         .iter()
-        .zip(is_bounds)
+        .zip(&is_bounds)
         .enumerate()
         .map(|(i, (disclosed_vc_triples, is_bound))| {
             get_disclosed_terms(disclosed_vc_triples, i, is_bound)
@@ -173,6 +173,17 @@ pub fn verify_proof<R: RngCore>(
 
     // build meta statements
     let mut meta_statements = MetaStatements::new();
+    // all embedded secrets must be equivalent
+    let secret_equiv_set: BTreeSet<(usize, usize)> = is_bounds
+        .iter()
+        .enumerate()
+        .filter(|(_, &is_bound)| is_bound)
+        .map(|(i, _)| (i, 0)) // `0` is the index for embedded secret in VC
+        .collect();
+    if secret_equiv_set.len() > 1 {
+        meta_statements.add_witness_equality(EqualWitnesses(secret_equiv_set));
+    }
+    // for equivalent attributes
     for (_, equiv_vec) in equivs {
         let equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
         meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
@@ -215,7 +226,7 @@ struct DisclosedTerms {
 fn get_disclosed_terms(
     disclosed_vc_triples: &DisclosedVerifiableCredential,
     vc_index: usize,
-    is_bound: bool,
+    is_bound: &bool,
 ) -> Result<DisclosedTerms, RDFProofsError> {
     let mut disclosed_terms = BTreeMap::<usize, Fr>::new();
     let mut equivs = HashMap::<NamedOrBlankNode, Vec<(usize, usize)>>::new();
