@@ -1,8 +1,8 @@
 use crate::{
     common::{
-        configure_proof_core, deserialize_ark, get_graph_from_ntriples, get_hasher,
-        get_vc_from_ntriples, get_verification_method_identifier, hash_byte_to_field,
-        serialize_ark, BBSPlusSignature, Fr, Proof, Statements,
+        ark_to_base64url, configure_proof_core, deserialize_ark, get_graph_from_ntriples,
+        get_hasher, get_vc_from_ntriples, get_verification_method_identifier, hash_byte_to_field,
+        multibase_to_ark, serialize_ark, BBSPlusSignature, Fr, Proof, Statements,
     },
     constants::{BLIND_SIG_REQUEST_CONTEXT, CRYPTOSUITE_BOUND_SIGN},
     context::{DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
@@ -12,7 +12,6 @@ use crate::{
     KeyGraph, VerifiableCredential,
 };
 use ark_bls12_381::G1Affine;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, UniformRand};
 use blake2::Blake2b512;
 use multibase::Base;
@@ -112,9 +111,7 @@ pub fn blind_sign_request_string<R: RngCore>(
     let BlindSigRequestWithBlinding { request, blinding } = blind_sign_request(rng, secret, nonce)?;
     let request_cbor = serde_cbor::to_vec(&request)?;
     let request_multibase = multibase::encode(Base::Base64Url, request_cbor);
-    let mut blinding_bytes = Vec::new();
-    blinding.serialize_compressed(&mut blinding_bytes)?;
-    let blinding_base64url = multibase::encode(Base::Base64Url, blinding_bytes);
+    let blinding_base64url = ark_to_base64url(&blinding)?;
     Ok(BlindSigRequestWithBlindingString {
         request: request_multibase,
         blinding: blinding_base64url,
@@ -244,10 +241,7 @@ fn serialize_proof_with_comitted_messages<R: RngCore>(
         &secret_key,
         &params,
     )?;
-
-    let mut signature_bytes = Vec::new();
-    blinded_signature.serialize_compressed(&mut signature_bytes)?;
-    let blinded_signature_base64url = multibase::encode(Base::Base64Url, signature_bytes);
+    let blinded_signature_base64url = ark_to_base64url(&blinded_signature)?;
 
     let mut result = proof_options.clone();
     let proof_subject = proof_options
@@ -276,8 +270,7 @@ pub fn unblind_string(
     proof: &str,
     blinding: &str,
 ) -> Result<String, RDFProofsError> {
-    let (_, blinding_bytes) = multibase::decode(blinding)?;
-    let blinding = Fr::deserialize_compressed(&*blinding_bytes)?;
+    let blinding: Fr = multibase_to_ark(blinding)?;
     let mut blinded_credential = get_vc_from_ntriples(document, proof)?;
     let proof_value = unblind_core(&blinded_credential, &blinding)?;
     blinded_credential.replace_proof_value(proof_value)?;
@@ -294,14 +287,9 @@ fn unblind_core(
     blinding: &Fr,
 ) -> Result<String, RDFProofsError> {
     let proof_value = blinded_credential.get_proof_value()?;
-    let (_, blinded_signature_bytes) = multibase::decode(proof_value)?;
-    let blinded_signature = BBSPlusSignature::deserialize_compressed(&*blinded_signature_bytes)?;
-
+    let blinded_signature: BBSPlusSignature = multibase_to_ark(&proof_value)?;
     let signature = blinded_signature.unblind(blinding);
-
-    let mut signature_bytes = Vec::new();
-    signature.serialize_compressed(&mut signature_bytes)?;
-    let signature_base64url = multibase::encode(Base::Base64Url, signature_bytes);
+    let signature_base64url = ark_to_base64url(&signature)?;
     Ok(signature_base64url)
 }
 

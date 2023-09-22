@@ -1,8 +1,7 @@
 use crate::{
-    common::{BBSPlusPublicKey, BBSPlusSecretKey},
+    common::{multibase_to_ark, BBSPlusPublicKey, BBSPlusSecretKey},
     context::{PUBLIC_KEY_MULTIBASE, SECRET_KEY_MULTIBASE},
     error::RDFProofsError,
-    key_gen::{deserialize_public_key, deserialize_secret_key},
 };
 use oxrdf::{Graph, NamedNodeRef, TermRef, Triple};
 
@@ -50,7 +49,7 @@ impl KeyGraph {
             TermRef::Literal(v) => v.value(),
             _ => return Err(RDFProofsError::InvalidVerificationMethod),
         };
-        let secret_key = deserialize_secret_key(secret_key_multibase)?;
+        let secret_key = multibase_to_ark(secret_key_multibase)?;
         Ok(secret_key)
     }
 
@@ -68,7 +67,7 @@ impl KeyGraph {
             TermRef::Literal(v) => v.value(),
             _ => return Err(RDFProofsError::InvalidVerificationMethod),
         };
-        let public_key = deserialize_public_key(public_key_multibase)?;
+        let public_key = multibase_to_ark(public_key_multibase)?;
         Ok(public_key)
     }
 

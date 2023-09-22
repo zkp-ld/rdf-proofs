@@ -1,9 +1,9 @@
 use crate::{
     common::{
-        canonicalize_graph_into_terms, configure_proof_core, get_delimiter,
+        ark_to_base64url, canonicalize_graph_into_terms, configure_proof_core, get_delimiter,
         get_graph_from_ntriples, get_hasher, get_vc_from_ntriples,
         get_verification_method_identifier, hash_byte_to_field, hash_terms_to_field,
-        BBSPlusSignature, Fr,
+        multibase_to_ark, BBSPlusSignature, Fr,
     },
     constants::CRYPTOSUITE_SIGN,
     context::{DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
@@ -12,9 +12,7 @@ use crate::{
     key_graph::KeyGraph,
     vc::VerifiableCredential,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
-use multibase::Base;
 use oxrdf::{vocab::rdf::TYPE, Graph, LiteralRef, Term, TripleRef};
 
 pub fn sign<R: RngCore>(
@@ -129,10 +127,7 @@ fn serialize_proof<R: RngCore>(
     let (secret_key, _public_key) = key_graph.get_keypair(verification_method_identifier)?;
 
     let signature = BBSPlusSignature::new(rng, hash_data, &secret_key, &params)?;
-
-    let mut signature_bytes = Vec::new();
-    signature.serialize_compressed(&mut signature_bytes)?;
-    let signature_base64url = multibase::encode(Base::Base64Url, signature_bytes);
+    let signature_base64url = ark_to_base64url(&signature)?;
 
     let mut result = proof_options.clone();
     let proof_subject = proof_options
@@ -153,8 +148,7 @@ pub(crate) fn verify_base_proof(
     proof_config: &Graph,
     key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
-    let (_, proof_value_bytes) = multibase::decode(proof_value)?;
-    let signature = BBSPlusSignature::deserialize_compressed(&*proof_value_bytes)?;
+    let signature: BBSPlusSignature = multibase_to_ark(proof_value)?;
     let verification_method_identifier = get_verification_method_identifier(proof_config)?;
     let pk = key_graph.get_public_key(verification_method_identifier)?;
     let params = generate_params(
@@ -169,12 +163,11 @@ pub(crate) fn verify_base_proof(
 #[cfg(test)]
 mod tests {
     use crate::{
-        common::{get_graph_from_ntriples, BBSPlusSignature},
+        common::{get_graph_from_ntriples, multibase_to_ark, BBSPlusSignature},
         context::PROOF_VALUE,
         error::RDFProofsError,
         sign, sign_string, verify, verify_string, KeyGraph, VerifiableCredential,
     };
-    use ark_serialize::CanonicalDeserialize;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use oxrdf::TermRef;
 
@@ -287,8 +280,7 @@ mod tests {
         let proof_value_triple = vc.proof.triples_for_predicate(PROOF_VALUE).next().unwrap();
         if let TermRef::Literal(v) = proof_value_triple.object {
             let proof_value = v.value();
-            let (_, proof_value_bytes) = multibase::decode(proof_value).unwrap();
-            let signature = BBSPlusSignature::deserialize_compressed(&*proof_value_bytes).unwrap();
+            let signature: BBSPlusSignature = multibase_to_ark(proof_value).unwrap();
             println!("decoded signature:\n{:#?}\n", signature);
         }
     }
