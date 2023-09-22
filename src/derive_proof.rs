@@ -76,7 +76,7 @@ pub fn derive_proof<R: RngCore>(
         .map(
             |VcPair { original: vc, .. }| match (vc.is_bound(), secret) {
                 (Ok(false), _) => verify(vc, key_graph),
-                (Ok(true), Some(s)) => blind_verify(vc, s, key_graph),
+                (Ok(true), Some(s)) => blind_verify(s, vc, key_graph),
                 (Ok(true), None) => Err(RDFProofsError::MissingSecret),
                 _ => Err(RDFProofsError::VCWithUnsupportedCryptosuite),
             },

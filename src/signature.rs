@@ -75,10 +75,8 @@ pub fn verify(
 }
 
 pub fn verify_string(document: &str, proof: &str, key_graph: &str) -> Result<(), RDFProofsError> {
-    // construct input for `verify` from string-based input
     let vc = get_vc_from_ntriples(document, proof)?;
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
-
     verify(&vc, &key_graph)
 }
 
