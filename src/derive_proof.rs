@@ -1898,7 +1898,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let request1 = blind_sign_request_string(&mut rng, secret, Some(nonce1)).unwrap();
         let blinded_proof1 = blind_sign_string(
             &mut rng,
-            &request1.request,
+            &request1.commitment,
+            &request1.pok_for_commitment,
             Some(nonce1),
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
@@ -1913,7 +1914,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let request3 = blind_sign_request_string(&mut rng, secret, Some(nonce3)).unwrap();
         let blinded_proof3 = blind_sign_string(
             &mut rng,
-            &request3.request,
+            &request3.commitment,
+            &request3.pok_for_commitment,
             Some(nonce3),
             VC_3,
             VC_PROOF_WITHOUT_PROOFVALUE_3,
@@ -1961,7 +1963,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let request1 = blind_sign_request_string(&mut rng, secret1, Some(nonce1)).unwrap();
         let blinded_proof1 = blind_sign_string(
             &mut rng,
-            &request1.request,
+            &request1.commitment,
+            &request1.pok_for_commitment,
             Some(nonce1),
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
@@ -1977,7 +1980,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let request3 = blind_sign_request_string(&mut rng, secret3, Some(nonce3)).unwrap();
         let blinded_proof3 = blind_sign_string(
             &mut rng,
-            &request3.request,
+            &request3.commitment,
+            &request3.pok_for_commitment,
             Some(nonce3),
             VC_3,
             VC_PROOF_WITHOUT_PROOFVALUE_3,
