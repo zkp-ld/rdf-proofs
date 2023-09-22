@@ -780,7 +780,7 @@ fn derive_proof_value<R: RngCore>(
     let disclosed_and_undisclosed_terms = reordered_disclosed_vc_triples
         .iter()
         .zip(original_vc_triples)
-        .zip(is_bounds)
+        .zip(&is_bounds)
         .enumerate()
         .map(
             |(i, ((disclosed_vc_triples, original_vc_triples), is_bound))| {
@@ -850,6 +850,17 @@ fn derive_proof_value<R: RngCore>(
 
     // build meta statements
     let mut meta_statements = MetaStatements::new();
+    // all embedded secrets must be equivalent
+    let secret_equiv_set: BTreeSet<(usize, usize)> = is_bounds
+        .iter()
+        .enumerate()
+        .filter(|(_, &is_bound)| is_bound)
+        .map(|(i, _)| (i, 0)) // `0` is the index for embedded secret in VC
+        .collect();
+    if secret_equiv_set.len() > 1 {
+        meta_statements.add_witness_equality(EqualWitnesses(secret_equiv_set));
+    }
+    // for equivalent attributes
     for (_, equiv_vec) in equivs {
         let equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
         meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
@@ -1075,12 +1086,14 @@ fn build_disclosed_and_undisclosed_terms(
 #[cfg(test)]
 mod tests {
     use crate::{
+        blind_sign_request_string, blind_sign_string, blind_verify_string,
         common::{get_dataset_from_nquads, get_graph_from_ntriples},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
         error::RDFProofsError,
-        verify_proof, verify_proof_string, KeyGraph, VcPair, VcPairString, VerifiableCredential,
+        unblind_string, verify_proof, verify_proof_string, KeyGraph, VcPair, VcPairString,
+        VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use oxrdf::{NamedOrBlankNode, Term};
@@ -1837,5 +1850,166 @@ _:b1 <http://schema.org/name> "ABC inc." .
             KEY_GRAPH,
         );
         assert!(matches!(derived_proof, Err(RDFProofsError::MissingSecret)))
+    }
+
+    const VC_PROOF_WITHOUT_PROOFVALUE_1: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const VC_3: &str = r#"
+    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+    <did:example:john> <http://schema.org/address> "Somewhere" .
+    <http://example.org/vcred/10> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+    <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> .
+    <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#issuanceDate> "2022-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#expirationDate> "2025-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
+    const VC_PROOF_WITHOUT_PROOFVALUE_3: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <http://purl.org/dc/terms/created> "2023-07-08T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .
+    "#;
+    const DISCLOSED_VC_3: &str = r#"
+    _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+    _:e0 <http://schema.org/address> "Somewhere" .
+    _:e9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    _:e9 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
+    _:e9 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> .
+    _:e9 <https://www.w3.org/2018/credentials#issuanceDate> "2022-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:e9 <https://www.w3.org/2018/credentials#expirationDate> "2025-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
+    const DISCLOSED_VC_PROOF_BOUND_3: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-07-08T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .
+    "#;
+
+    #[test]
+    fn derive_and_verify_two_bound_credentials_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let secret = b"SECRET";
+
+        let nonce1 = "NONCE1";
+        let request1 = blind_sign_request_string(&mut rng, secret, Some(nonce1)).unwrap();
+        let blinded_proof1 = blind_sign_string(
+            &mut rng,
+            &request1.request,
+            Some(nonce1),
+            VC_1,
+            VC_PROOF_WITHOUT_PROOFVALUE_1,
+            KEY_GRAPH,
+        )
+        .unwrap();
+        let proof1 = unblind_string(VC_1, &blinded_proof1, &request1.blinding).unwrap();
+        let result1 = blind_verify_string(secret, VC_1, &proof1, KEY_GRAPH);
+        assert!(result1.is_ok(), "{:?}", result1);
+
+        let nonce3 = "NONCE3";
+        let request3 = blind_sign_request_string(&mut rng, secret, Some(nonce3)).unwrap();
+        let blinded_proof3 = blind_sign_string(
+            &mut rng,
+            &request3.request,
+            Some(nonce3),
+            VC_3,
+            VC_PROOF_WITHOUT_PROOFVALUE_3,
+            KEY_GRAPH,
+        )
+        .unwrap();
+        let proof3 = unblind_string(VC_3, &blinded_proof3, &request3.blinding).unwrap();
+        let result3 = blind_verify_string(secret, VC_3, &proof3, KEY_GRAPH);
+        assert!(result3.is_ok(), "{:?}", result3);
+
+        let vc_pairs = vec![
+            VcPairString::new(VC_1, &proof1, DISCLOSED_VC_1, DISCLOSED_VC_PROOF_BOUND_1),
+            VcPairString::new(VC_3, &proof3, DISCLOSED_VC_3, DISCLOSED_VC_PROOF_BOUND_3),
+        ];
+
+        let mut deanon_map = get_example_deanon_map_string();
+        deanon_map.insert(
+            "_:e9".to_string(),
+            "<http://example.org/vcred/10>".to_string(),
+        );
+
+        let nonce = "abcde";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            Some(secret),
+            &vc_pairs,
+            &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+        )
+        .unwrap();
+        println!("derived_proof: {}", derived_proof);
+
+        let verified = verify_proof_string(&mut rng, &derived_proof, Some(nonce), KEY_GRAPH);
+        assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_and_verify_two_bound_credentials_with_different_secrets_failure() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let secret1 = b"SECRET1";
+        let nonce1 = "NONCE1";
+        let request1 = blind_sign_request_string(&mut rng, secret1, Some(nonce1)).unwrap();
+        let blinded_proof1 = blind_sign_string(
+            &mut rng,
+            &request1.request,
+            Some(nonce1),
+            VC_1,
+            VC_PROOF_WITHOUT_PROOFVALUE_1,
+            KEY_GRAPH,
+        )
+        .unwrap();
+        let proof1 = unblind_string(VC_1, &blinded_proof1, &request1.blinding).unwrap();
+        let result1 = blind_verify_string(secret1, VC_1, &proof1, KEY_GRAPH);
+        assert!(result1.is_ok(), "{:?}", result1);
+
+        let secret3 = b"SECRET3";
+        let nonce3 = "NONCE3";
+        let request3 = blind_sign_request_string(&mut rng, secret3, Some(nonce3)).unwrap();
+        let blinded_proof3 = blind_sign_string(
+            &mut rng,
+            &request3.request,
+            Some(nonce3),
+            VC_3,
+            VC_PROOF_WITHOUT_PROOFVALUE_3,
+            KEY_GRAPH,
+        )
+        .unwrap();
+        let proof3 = unblind_string(VC_3, &blinded_proof3, &request3.blinding).unwrap();
+        let result3 = blind_verify_string(secret3, VC_3, &proof3, KEY_GRAPH);
+        assert!(result3.is_ok(), "{:?}", result3);
+
+        let vc_pairs = vec![
+            VcPairString::new(VC_1, &proof1, DISCLOSED_VC_1, DISCLOSED_VC_PROOF_BOUND_1),
+            VcPairString::new(VC_3, &proof3, DISCLOSED_VC_3, DISCLOSED_VC_PROOF_BOUND_3),
+        ];
+
+        let mut deanon_map = get_example_deanon_map_string();
+        deanon_map.insert(
+            "_:e9".to_string(),
+            "<http://example.org/vcred/10>".to_string(),
+        );
+
+        let nonce = "abcde";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            Some(secret1),
+            &vc_pairs,
+            &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+        );
+        assert!(derived_proof.is_err(), "{:?}", derived_proof)
     }
 }
