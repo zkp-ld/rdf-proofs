@@ -14,11 +14,12 @@ use bbs_plus::{
     signature::SignatureG1,
 };
 use blake2::Blake2b512;
+use chrono::Utc;
 use multibase::Base;
 use oxrdf::{
-    vocab::{self, rdf::TYPE},
-    BlankNode, Dataset, Graph, Literal, NamedNode, NamedNodeRef, SubjectRef, Term, TermRef, Triple,
-    TripleRef,
+    vocab::{self, rdf::TYPE, xsd},
+    BlankNode, Dataset, Graph, LiteralRef, NamedNode, NamedNodeRef, SubjectRef, Term, TermRef,
+    Triple, TripleRef,
 };
 use oxsdatatypes::DateTime;
 use oxttl::{NQuadsParser, NTriplesParser};
@@ -345,7 +346,7 @@ pub(crate) fn configure_proof_core(
         proof_config.insert(TripleRef::new(
             proof_options_subject,
             CRYPTOSUITE,
-            TermRef::from(&Literal::new_simple_literal(cryptosuite)),
+            LiteralRef::new_simple_literal(cryptosuite),
         ));
     }
 
@@ -359,8 +360,12 @@ pub(crate) fn configure_proof_core(
             return Err(RDFProofsError::InvalidProofDatetime);
         }
     } else {
-        // TODO: generate current datetime
-        return Err(RDFProofsError::InvalidProofDatetime);
+        // generate current datetime if not given
+        proof_config.insert(TripleRef::new(
+            proof_options_subject,
+            CREATED,
+            LiteralRef::new_typed_literal(&format!("{:?}", Utc::now()), xsd::DATE_TIME),
+        ));
     }
 
     Ok(proof_config)

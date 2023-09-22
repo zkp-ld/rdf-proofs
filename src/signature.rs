@@ -229,6 +229,11 @@ mod tests {
     _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
     "#;
+    const VC_PROOF_WITHOUT_PROOFVALUE_AND_DATETIME_1: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
     const VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE: &str = r#"
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" . # valid cryptosuite
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
@@ -295,6 +300,21 @@ mod tests {
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
         let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        sign(&mut rng, &mut vc, &key_graph).unwrap();
+        println!("vc: {}", vc);
+        print_signature(&vc);
+        assert!(verify(&vc, &key_graph).is_ok())
+    }
+
+    #[test]
+    fn sign_and_verify_without_created_datetime_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config =
+            get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_AND_DATETIME_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
         sign(&mut rng, &mut vc, &key_graph).unwrap();
         println!("vc: {}", vc);
