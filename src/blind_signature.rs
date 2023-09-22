@@ -44,8 +44,14 @@ pub struct BlindSigRequest {
 
 #[derive(Debug)]
 pub struct BlindSigRequestWithBlinding {
-    request: BlindSigRequest,
-    blinding: Fr,
+    pub request: BlindSigRequest,
+    pub blinding: Fr,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlindSigRequestWithBlindingString {
+    pub request: String,
+    pub blinding: String,
 }
 
 pub fn blind_sign_request<R: RngCore>(
@@ -102,14 +108,17 @@ pub fn blind_sign_request_string<R: RngCore>(
     rng: &mut R,
     secret: &[u8],
     nonce: Option<&str>,
-) -> Result<(String, String), RDFProofsError> {
+) -> Result<BlindSigRequestWithBlindingString, RDFProofsError> {
     let BlindSigRequestWithBlinding { request, blinding } = blind_sign_request(rng, secret, nonce)?;
     let request_cbor = serde_cbor::to_vec(&request)?;
     let request_multibase = multibase::encode(Base::Base64Url, request_cbor);
     let mut blinding_bytes = Vec::new();
     blinding.serialize_compressed(&mut blinding_bytes)?;
     let blinding_base64url = multibase::encode(Base::Base64Url, blinding_bytes);
-    Ok((request_multibase, blinding_base64url))
+    Ok(BlindSigRequestWithBlindingString {
+        request: request_multibase,
+        blinding: blinding_base64url,
+    })
 }
 
 pub fn blind_sign<R: RngCore>(
@@ -269,9 +278,15 @@ pub fn unblind_string(
 ) -> Result<String, RDFProofsError> {
     let (_, blinding_bytes) = multibase::decode(blinding)?;
     let blinding = Fr::deserialize_compressed(&*blinding_bytes)?;
-    let blinded_credential = get_vc_from_ntriples(document, proof)?;
+    let mut blinded_credential = get_vc_from_ntriples(document, proof)?;
     let proof_value = unblind_core(&blinded_credential, &blinding)?;
-    Ok(proof_value)
+    blinded_credential.replace_proof_value(proof_value)?;
+    let unblinded_proof: String = blinded_credential
+        .proof
+        .iter()
+        .map(|t| format!("{} . \n", t.to_string()))
+        .collect();
+    Ok(unblinded_proof)
 }
 
 fn unblind_core(
@@ -291,8 +306,8 @@ fn unblind_core(
 }
 
 pub fn blind_verify(
-    secured_credential: &VerifiableCredential,
     secret: &[u8],
+    secured_credential: &VerifiableCredential,
     key_graph: &KeyGraph,
 ) -> Result<(), RDFProofsError> {
     let VerifiableCredential { document, .. } = secured_credential;
@@ -305,13 +320,23 @@ pub fn blind_verify(
     verify_base_proof(hash_data, &proof_value, &proof_config, key_graph)
 }
 
+pub fn blind_verify_string(
+    secret: &[u8],
+    document: &str,
+    proof: &str,
+    key_graph: &str,
+) -> Result<(), RDFProofsError> {
+    let vc = get_vc_from_ntriples(document, proof)?;
+    let key_graph = get_graph_from_ntriples(key_graph)?.into();
+    blind_verify(secret, &vc, &key_graph)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        blind_sign_request, blind_sign_request_string, blind_sign_string,
-        blind_signature::blind_sign, blind_verify, common::get_graph_from_ntriples,
-        context::PROOF_VALUE, error::RDFProofsError, unblind, unblind_string, KeyGraph,
-        VerifiableCredential,
+        blind_sign, blind_sign_request, blind_sign_request_string, blind_sign_string, blind_verify,
+        blind_verify_string, common::get_graph_from_ntriples, context::PROOF_VALUE,
+        error::RDFProofsError, unblind, unblind_string, KeyGraph, VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
 
@@ -459,7 +484,7 @@ mod tests {
 
         let result = blind_sign_string(
             &mut rng,
-            &request.0,
+            &request.request,
             Some(nonce),
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
@@ -496,7 +521,7 @@ mod tests {
 
         let proof = blind_sign_string(
             &mut rng,
-            &request.0,
+            &request.request,
             Some(nonce),
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
@@ -504,7 +529,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = unblind_string(VC_1, &proof, &request.1);
+        let result = unblind_string(VC_1, &proof, &request.blinding);
         assert!(result.is_ok());
     }
 
@@ -523,8 +548,31 @@ mod tests {
 
         unblind(&mut vc, &request.blinding).unwrap();
 
-        let result = blind_verify(&vc, secret, &key_graph);
+        let result = blind_verify(secret, &vc, &key_graph);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn blind_sign_and_unblind_and_verify_string_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let secret = b"SECRET";
+        let nonce = "NONCE";
+        let request = blind_sign_request_string(&mut rng, secret, Some(nonce)).unwrap();
+
+        let blinded_proof = blind_sign_string(
+            &mut rng,
+            &request.request,
+            Some(nonce),
+            VC_1,
+            VC_PROOF_WITHOUT_PROOFVALUE_1,
+            KEY_GRAPH,
+        )
+        .unwrap();
+
+        let proof = unblind_string(VC_1, &blinded_proof, &request.blinding).unwrap();
+
+        let result = blind_verify_string(secret, VC_1, &proof, KEY_GRAPH);
+        assert!(result.is_ok(), "{:?}", result);
     }
 
     #[test]
@@ -544,7 +592,7 @@ mod tests {
 
         // verify with invalid secret
         let secret = b"INVALID";
-        let result = blind_verify(&vc, secret, &key_graph);
+        let result = blind_verify(secret, &vc, &key_graph);
         assert!(matches!(
             result,
             Err(RDFProofsError::BBSPlus(

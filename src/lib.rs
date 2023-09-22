@@ -13,7 +13,7 @@ mod verify_proof;
 
 pub use blind_signature::{
     blind_sign, blind_sign_request, blind_sign_request_string, blind_sign_string, blind_verify,
-    unblind, unblind_string,
+    blind_verify_string, unblind, unblind_string,
 };
 pub use derive_proof::{derive_proof, derive_proof_string};
 pub use key_graph::KeyGraph;
