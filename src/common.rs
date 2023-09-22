@@ -63,6 +63,25 @@ pub fn deserialize_ark<'de, D: serde::Deserializer<'de>, A: CanonicalDeserialize
     A::deserialize_compressed(s).map_err(serde::de::Error::custom)
 }
 
+pub fn ark_to_multibase<A: CanonicalSerialize>(
+    base: Base,
+    ark: &A,
+) -> Result<String, RDFProofsError> {
+    let mut bytes = Vec::new();
+    ark.serialize_compressed(&mut bytes)?;
+    Ok(multibase::encode(base, bytes))
+}
+
+pub fn ark_to_base64url<A: CanonicalSerialize>(ark: &A) -> Result<String, RDFProofsError> {
+    ark_to_multibase(Base::Base64Url, ark)
+}
+
+pub fn multibase_to_ark<A: CanonicalDeserialize>(s: &str) -> Result<A, RDFProofsError> {
+    let (_, bytes) = multibase::decode(s)?;
+    let ark = A::deserialize_compressed(&*bytes)?;
+    Ok(ark)
+}
+
 #[derive(Serialize)]
 struct ProofSpecContext(pub String, pub Vec<StatementIndexMap>);
 

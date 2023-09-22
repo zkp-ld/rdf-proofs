@@ -4,8 +4,9 @@ use crate::{
     common::{
         canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
         get_hasher, get_vc_from_ntriples, hash_byte_to_field, hash_term_to_field, is_nym,
-        randomize_bnodes, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr,
-        PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap, StatementIndexMap, Statements,
+        multibase_to_ark, randomize_bnodes, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey,
+        BBSPlusSignature, Fr, PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap,
+        StatementIndexMap, Statements,
     },
     context::{
         ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PROOF,
@@ -23,7 +24,6 @@ use crate::{
     },
 };
 use ark_ff::field_hashers::DefaultFieldHasher;
-use ark_serialize::CanonicalDeserialize;
 use ark_std::rand::RngCore;
 use blake2::Blake2b512;
 use chrono::offset::Utc;
@@ -876,8 +876,7 @@ fn derive_proof_value<R: RngCore>(
     for (DisclosedAndUndisclosedTerms { undisclosed, .. }, proof_value) in
         disclosed_and_undisclosed_terms.iter().zip(proof_values)
     {
-        let (_, proof_value_bytes) = multibase::decode(proof_value)?;
-        let signature = BBSPlusSignature::deserialize_compressed(&*proof_value_bytes)?;
+        let signature: BBSPlusSignature = multibase_to_ark(&proof_value)?;
         witnesses.add(PoKBBSPlusWit::new_as_witness(
             signature,
             undisclosed.clone(),
