@@ -10,8 +10,8 @@ use crate::{
         ProofWithIndexMap, StatementIndexMap, Statements,
     },
     context::{
-        ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, HOLDER, MULTIBASE,
-        PROOF, PROOF_PURPOSE, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL,
+        ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN, HOLDER,
+        MULTIBASE, PROOF, PROOF_PURPOSE, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL,
         VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
@@ -57,11 +57,12 @@ pub struct DerivedProofString {
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
     rng: &mut R,
-    secret: Option<&[u8]>,
     vc_pairs: &Vec<VcPair>,
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
-    nonce: Option<&str>,
     key_graph: &KeyGraph,
+    challenge: Option<&str>,
+    domain: Option<&str>,
+    secret: Option<&[u8]>,
     commit_secret: bool,
 ) -> Result<DerivedProof, RDFProofsError> {
     for vc in vc_pairs {
@@ -135,7 +136,7 @@ pub fn derive_proof<R: RngCore>(
     // generate blind signing request if `commit_secret` is set to true
     let blind_sign_request = if let Some(s) = secret {
         if commit_secret {
-            Some(blind_sign_request(rng, s, nonce)?)
+            Some(blind_sign_request(rng, s, challenge)?)
         } else {
             None
         }
@@ -145,7 +146,7 @@ pub fn derive_proof<R: RngCore>(
 
     // build VP draft (= canonicalized VP without proofValue) based on disclosed VCs
     let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) =
-        build_vp(disclosed_vcs, &nonce, &blind_sign_request)?;
+        build_vp(disclosed_vcs, &challenge, &domain, &blind_sign_request)?;
 
     // decompose VP draft into graphs
     let VerifiablePresentation {
@@ -253,7 +254,7 @@ pub fn derive_proof<R: RngCore>(
         vc_proof_values_vec,
         index_map,
         &vp_draft,
-        nonce,
+        challenge,
         &blind_sign_request,
     )?;
 
@@ -280,11 +281,12 @@ pub fn derive_proof<R: RngCore>(
 
 pub fn derive_proof_string<R: RngCore>(
     rng: &mut R,
-    secret: Option<&[u8]>,
     vc_pairs: &Vec<VcPairString>,
     deanon_map: &HashMap<String, String>,
-    nonce: Option<&str>,
     key_graph: &str,
+    challenge: Option<&str>,
+    domain: Option<&str>,
+    secret: Option<&[u8]>,
     commit_secret: bool,
 ) -> Result<DerivedProofString, RDFProofsError> {
     // construct input for `derive_proof` from string-based input
@@ -302,11 +304,12 @@ pub fn derive_proof_string<R: RngCore>(
 
     let derived_proof = derive_proof(
         rng,
-        secret,
         &vc_pairs,
         &deanon_map,
-        nonce,
         &key_graph,
+        challenge,
+        domain,
+        secret,
         commit_secret,
     )?;
     let blinding = match derived_proof.blinding {
@@ -475,7 +478,8 @@ fn canonicalize_vcs(
 
 fn build_vp(
     disclosed_vcs: Vec<VerifiableCredential>,
-    nonce: &Option<&str>,
+    challenge: &Option<&str>,
+    domain: &Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
 ) -> Result<(Dataset, HashMap<String, String>, Vec<BlankNode>), RDFProofsError> {
     let vp_id = BlankNode::default();
@@ -519,11 +523,23 @@ fn build_vp(
         LiteralRef::new_typed_literal(&format!("{:?}", Utc::now()), xsd::DATE_TIME),
         &vp_proof_graph_id,
     ));
-    if let Some(nonce) = nonce {
+
+    // add challenge if exists
+    if let Some(challenge) = challenge {
         vp.insert(QuadRef::new(
             &vp_proof_id,
             CHALLENGE,
-            LiteralRef::new_simple_literal(*nonce),
+            LiteralRef::new_simple_literal(*challenge),
+            &vp_proof_graph_id,
+        ));
+    }
+
+    // add domain if exists
+    if let Some(domain) = domain {
+        vp.insert(QuadRef::new(
+            &vp_proof_id,
+            DOMAIN,
+            LiteralRef::new_simple_literal(*domain),
             &vp_proof_graph_id,
         ));
     }
@@ -833,7 +849,7 @@ fn derive_proof_value<R: RngCore>(
     proof_values: Vec<String>,
     index_map: Vec<StatementIndexMap>,
     canonicalized_vp: &Dataset,
-    nonce: Option<&str>,
+    challenge: Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
 ) -> Result<String, RDFProofsError> {
     let hasher = get_hasher();
@@ -986,7 +1002,7 @@ fn derive_proof_value<R: RngCore>(
         rng,
         proof_spec,
         witnesses,
-        nonce.map(|v| v.as_bytes().to_vec()), // TODO: consider if it is required as it's already included in `proof_spec.context`
+        challenge.map(|v| v.as_bytes().to_vec()), // TODO: consider if it is required as it's already included in `proof_spec.context`
         Default::default(),
     )?
     .0;
@@ -1411,15 +1427,16 @@ mod tests {
 
         let deanon_map = get_example_deanon_map();
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof(
             &mut rng,
-            None,
             &vcs,
             &deanon_map,
-            Some(nonce),
             &key_graph,
+            Some(challenge),
+            None,
+            None,
             false,
         )
         .unwrap();
@@ -1428,7 +1445,13 @@ mod tests {
             rdf_canon::serialize(&derived_proof.vp)
         );
 
-        let verified = verify_proof(&mut rng, &derived_proof.vp, Some(nonce), &key_graph);
+        let verified = verify_proof(
+            &mut rng,
+            &derived_proof.vp,
+            &key_graph,
+            Some(challenge),
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1443,21 +1466,28 @@ mod tests {
 
         let deanon_map = get_example_deanon_map_string();
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            None,
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
             false,
         )
         .unwrap();
         println!("derived_proof.vp: {}", derived_proof.vp);
 
-        let verified = verify_proof_string(&mut rng, &derived_proof.vp, Some(nonce), KEY_GRAPH);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof.vp,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1466,21 +1496,21 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let vp = get_dataset_from_nquads(VP).unwrap();
-        let nonce = "abcde";
-        let verified = verify_proof(&mut rng, &vp, Some(nonce), &key_graph);
+        let challenge = "abcde";
+        let verified = verify_proof(&mut rng, &vp, &key_graph, Some(challenge), None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
     fn verify_proof_string_success() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let nonce = "abcde";
-        let verified = verify_proof_string(&mut rng, VP, Some(nonce), KEY_GRAPH);
+        let challenge = "abcde";
+        let verified = verify_proof_string(&mut rng, VP, KEY_GRAPH, Some(challenge), None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
-    fn derive_and_verify_proof_without_nonce() {
+    fn derive_and_verify_proof_with_challenge_and_domain() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
 
@@ -1506,167 +1536,114 @@ mod tests {
 
         let deanon_map = get_example_deanon_map();
 
-        let nonce = None;
-
-        let derived_proof =
-            derive_proof(&mut rng, None, &vcs, &deanon_map, nonce, &key_graph, false).unwrap();
-
-        let verified = verify_proof(&mut rng, &derived_proof.vp, nonce, &key_graph);
-
-        assert!(verified.is_ok(), "{:?}", verified)
-    }
-
-    #[test]
-    fn derive_and_verify_proof_string_without_nonce() {
-        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-
-        let vc_pairs = vec![
-            VcPairString::new(VC_1, VC_PROOF_1, DISCLOSED_VC_1, DISCLOSED_VC_PROOF_1),
-            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
-        ];
-
-        let deanon_map = get_example_deanon_map_string();
-
-        let nonce = None;
-
-        let derived_proof = derive_proof_string(
-            &mut rng,
-            None,
-            &vc_pairs,
-            &deanon_map,
-            nonce,
-            KEY_GRAPH,
-            false,
-        )
-        .unwrap();
-
-        let verified = verify_proof_string(&mut rng, &derived_proof.vp, nonce, KEY_GRAPH);
-
-        assert!(verified.is_ok(), "{:?}", verified)
-    }
-
-    #[test]
-    fn derive_without_nonce_and_verify_proof_with_nonce() {
-        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
-
-        let vc_doc_1 = get_graph_from_ntriples(VC_1).unwrap();
-        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_1).unwrap();
-        let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
-
-        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_1).unwrap();
-        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_1).unwrap();
-        let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
-
-        let vc_doc_2 = get_graph_from_ntriples(VC_2).unwrap();
-        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_2).unwrap();
-        let vc_2 = VerifiableCredential::new(vc_doc_2, vc_proof_2);
-
-        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_2).unwrap();
-        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_2).unwrap();
-        let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
-
-        let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
-        let vc_with_disclosed_2 = VcPair::new(vc_2, disclosed_2);
-        let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
-
-        let deanon_map = get_example_deanon_map();
-
-        let derived_proof =
-            derive_proof(&mut rng, None, &vcs, &deanon_map, None, &key_graph, false).unwrap();
-
-        let nonce = "abcde";
-
-        let verified = verify_proof(&mut rng, &derived_proof.vp, Some(nonce), &key_graph);
-
-        assert!(matches!(
-            verified,
-            Err(RDFProofsError::MissingChallengeInVP)
-        ))
-    }
-
-    #[test]
-    fn derive_without_nonce_and_verify_proof_with_nonce_string() {
-        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let vc_pairs = vec![
-            VcPairString::new(VC_1, VC_PROOF_1, DISCLOSED_VC_1, DISCLOSED_VC_PROOF_1),
-            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
-        ];
-
-        let deanon_map = get_example_deanon_map_string();
-
-        let derived_proof = derive_proof_string(
-            &mut rng,
-            None,
-            &vc_pairs,
-            &deanon_map,
-            None,
-            KEY_GRAPH,
-            false,
-        )
-        .unwrap();
-
-        let nonce = "abcde";
-
-        let verified = verify_proof_string(&mut rng, &derived_proof.vp, Some(nonce), KEY_GRAPH);
-
-        assert!(matches!(
-            verified,
-            Err(RDFProofsError::MissingChallengeInVP)
-        ))
-    }
-
-    #[test]
-    fn derive_with_nonce_and_verify_proof_without_nonce() {
-        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
-
-        let vc_doc_1 = get_graph_from_ntriples(VC_1).unwrap();
-        let vc_proof_1 = get_graph_from_ntriples(VC_PROOF_1).unwrap();
-        let vc_1 = VerifiableCredential::new(vc_doc_1, vc_proof_1);
-
-        let disclosed_vc_doc_1 = get_graph_from_ntriples(DISCLOSED_VC_1).unwrap();
-        let disclosed_vc_proof_1 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_1).unwrap();
-        let disclosed_1 = VerifiableCredential::new(disclosed_vc_doc_1, disclosed_vc_proof_1);
-
-        let vc_doc_2 = get_graph_from_ntriples(VC_2).unwrap();
-        let vc_proof_2 = get_graph_from_ntriples(VC_PROOF_2).unwrap();
-        let vc_2 = VerifiableCredential::new(vc_doc_2, vc_proof_2);
-
-        let disclosed_vc_doc_2 = get_graph_from_ntriples(DISCLOSED_VC_2).unwrap();
-        let disclosed_vc_proof_2 = get_graph_from_ntriples(DISCLOSED_VC_PROOF_2).unwrap();
-        let disclosed_2 = VerifiableCredential::new(disclosed_vc_doc_2, disclosed_vc_proof_2);
-
-        let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
-        let vc_with_disclosed_2 = VcPair::new(vc_2, disclosed_2);
-        let vcs = vec![vc_with_disclosed_1, vc_with_disclosed_2];
-
-        let deanon_map = get_example_deanon_map();
-
-        let nonce = "abcde";
+        let challenge = Some("challenge");
+        let domain = Some("example.org");
 
         let derived_proof = derive_proof(
             &mut rng,
-            None,
             &vcs,
             &deanon_map,
-            Some(nonce),
             &key_graph,
+            challenge,
+            domain,
+            None,
             false,
         )
         .unwrap();
-
-        let verified = verify_proof(&mut rng, &derived_proof.vp, None, &key_graph);
-
+        assert!(verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, domain).is_ok());
         assert!(matches!(
-            verified,
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, domain),
             Err(RDFProofsError::MissingChallengeInRequest)
-        ))
+        ));
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, None),
+            Err(RDFProofsError::MissingDomainInRequest)
+        ));
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, None),
+            Err(RDFProofsError::MissingChallengeInRequest)
+        ));
+
+        let derived_proof = derive_proof(
+            &mut rng,
+            &vcs,
+            &deanon_map,
+            &key_graph,
+            None,
+            domain,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, domain),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, domain).is_ok());
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, None),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, None),
+            Err(RDFProofsError::MissingDomainInRequest)
+        ));
+
+        let derived_proof = derive_proof(
+            &mut rng,
+            &vcs,
+            &deanon_map,
+            &key_graph,
+            challenge,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, domain),
+            Err(RDFProofsError::MissingDomainInVP)
+        ));
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, domain),
+            Err(RDFProofsError::MissingChallengeInRequest)
+        ));
+        assert!(verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, None).is_ok());
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, None),
+            Err(RDFProofsError::MissingChallengeInRequest)
+        ));
+
+        let derived_proof = derive_proof(
+            &mut rng,
+            &vcs,
+            &deanon_map,
+            &key_graph,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, domain),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, domain),
+            Err(RDFProofsError::MissingDomainInVP)
+        ));
+        assert!(matches!(
+            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, None),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, None).is_ok());
     }
 
     #[test]
-    fn derive_with_nonce_and_verify_proof_without_nonce_string() {
+    fn derive_and_verify_proof_string_with_challenge_and_domain() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+
         let vc_pairs = vec![
             VcPairString::new(VC_1, VC_PROOF_1, DISCLOSED_VC_1, DISCLOSED_VC_PROOF_1),
             VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
@@ -1674,25 +1651,112 @@ mod tests {
 
         let deanon_map = get_example_deanon_map_string();
 
-        let nonce = "abcde";
+        let challenge = Some("challenge");
+        let domain = Some("example.org");
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            None,
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            challenge,
+            domain,
+            None,
             false,
         )
         .unwrap();
-
-        let verified = verify_proof_string(&mut rng, &derived_proof.vp, None, KEY_GRAPH);
-
+        assert!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, domain).is_ok()
+        );
         assert!(matches!(
-            verified,
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, domain),
             Err(RDFProofsError::MissingChallengeInRequest)
-        ))
+        ));
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, None),
+            Err(RDFProofsError::MissingDomainInRequest)
+        ));
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, None),
+            Err(RDFProofsError::MissingChallengeInRequest)
+        ));
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            domain,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, domain),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, domain).is_ok());
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, None),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, None),
+            Err(RDFProofsError::MissingDomainInRequest)
+        ));
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            challenge,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, domain),
+            Err(RDFProofsError::MissingDomainInVP)
+        ));
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, domain),
+            Err(RDFProofsError::MissingChallengeInRequest)
+        ));
+        assert!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, None).is_ok()
+        );
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, None),
+            Err(RDFProofsError::MissingChallengeInRequest)
+        ));
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, domain),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, domain),
+            Err(RDFProofsError::MissingDomainInVP)
+        ));
+        assert!(matches!(
+            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, None),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, None).is_ok());
     }
 
     const DISCLOSED_VC_1_WITH_HIDDEN_LITERALS: &str = r#"
@@ -1747,21 +1811,28 @@ mod tests {
         let vc_with_disclosed_1 = VcPair::new(vc_1, disclosed_1);
         let vcs = vec![vc_with_disclosed_1];
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof(
             &mut rng,
-            None,
             &vcs,
             &deanon_map,
-            Some(nonce),
             &key_graph,
+            Some(challenge),
+            None,
+            None,
             false,
         )
         .unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof.vp));
 
-        let verified = verify_proof(&mut rng, &derived_proof.vp, Some(nonce), &key_graph);
+        let verified = verify_proof(
+            &mut rng,
+            &derived_proof.vp,
+            &key_graph,
+            Some(challenge),
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1779,20 +1850,27 @@ mod tests {
         let mut deanon_map = get_example_deanon_map_string();
         deanon_map.extend(get_example_deanon_map_string_with_hidden_literal());
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            None,
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
             false,
         )
         .unwrap();
 
-        let verified = verify_proof_string(&mut rng, &derived_proof.vp, Some(nonce), KEY_GRAPH);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof.vp,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+        );
 
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -1834,15 +1912,16 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let deanon_map = get_example_deanon_map();
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof(
             &mut rng,
-            None,
             &vcs,
             &deanon_map,
-            Some(nonce),
             &key_graph,
+            Some(challenge),
+            None,
+            None,
             false,
         );
         assert!(matches!(
@@ -1866,15 +1945,16 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let deanon_map = get_example_deanon_map_string();
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            None,
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
             false,
         );
 
@@ -1920,20 +2000,27 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let deanon_map = get_example_deanon_map_string();
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            Some(secret),
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            Some(secret),
             false,
         )
         .unwrap();
 
-        let verified = verify_proof_string(&mut rng, &derived_proof.vp, Some(nonce), KEY_GRAPH);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof.vp,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1955,15 +2042,16 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let deanon_map = get_example_deanon_map_string();
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            Some(secret),
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            Some(secret),
             false,
         );
         assert!(matches!(
@@ -1990,15 +2078,16 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let deanon_map = get_example_deanon_map_string();
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            None,
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
             false,
         );
         assert!(matches!(derived_proof, Err(RDFProofsError::MissingSecret)))
@@ -2047,13 +2136,13 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
 
-        let nonce1 = "NONCE1";
-        let request1 = blind_sign_request_string(&mut rng, secret, Some(nonce1)).unwrap();
+        let challenge1 = "challenge1";
+        let request1 = blind_sign_request_string(&mut rng, secret, Some(challenge1)).unwrap();
         let verified1 = verify_blind_sig_request_string(
             &mut rng,
             &request1.commitment,
             &request1.pok_for_commitment,
-            Some(nonce1),
+            Some(challenge1),
         );
         assert!(verified1.is_ok());
 
@@ -2069,13 +2158,13 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let result1 = blind_verify_string(secret, VC_1, &proof1, KEY_GRAPH);
         assert!(result1.is_ok(), "{:?}", result1);
 
-        let nonce3 = "NONCE3";
-        let request3 = blind_sign_request_string(&mut rng, secret, Some(nonce3)).unwrap();
+        let challenge3 = "challenge3";
+        let request3 = blind_sign_request_string(&mut rng, secret, Some(challenge3)).unwrap();
         let verified3 = verify_blind_sig_request_string(
             &mut rng,
             &request3.commitment,
             &request3.pok_for_commitment,
-            Some(nonce3),
+            Some(challenge3),
         );
         assert!(verified3.is_ok());
         let blinded_proof3 = blind_sign_string(
@@ -2101,21 +2190,28 @@ _:b1 <http://schema.org/name> "ABC inc." .
             "<http://example.org/vcred/10>".to_string(),
         );
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            Some(secret),
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            Some(secret),
             false,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof.vp);
 
-        let verified = verify_proof_string(&mut rng, &derived_proof.vp, Some(nonce), KEY_GRAPH);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof.vp,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2124,13 +2220,13 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let mut rng = StdRng::seed_from_u64(0u64);
 
         let secret1 = b"SECRET1";
-        let nonce1 = "NONCE1";
-        let request1 = blind_sign_request_string(&mut rng, secret1, Some(nonce1)).unwrap();
+        let challenge1 = "challenge1";
+        let request1 = blind_sign_request_string(&mut rng, secret1, Some(challenge1)).unwrap();
         let verified1 = verify_blind_sig_request_string(
             &mut rng,
             &request1.commitment,
             &request1.pok_for_commitment,
-            Some(nonce1),
+            Some(challenge1),
         );
         assert!(verified1.is_ok());
 
@@ -2147,13 +2243,13 @@ _:b1 <http://schema.org/name> "ABC inc." .
         assert!(result1.is_ok(), "{:?}", result1);
 
         let secret3 = b"SECRET3";
-        let nonce3 = "NONCE3";
-        let request3 = blind_sign_request_string(&mut rng, secret3, Some(nonce3)).unwrap();
+        let challenge3 = "challenge3";
+        let request3 = blind_sign_request_string(&mut rng, secret3, Some(challenge3)).unwrap();
         let verified3 = verify_blind_sig_request_string(
             &mut rng,
             &request3.commitment,
             &request3.pok_for_commitment,
-            Some(nonce3),
+            Some(challenge3),
         );
         assert!(verified3.is_ok());
         let blinded_proof3 = blind_sign_string(
@@ -2179,15 +2275,16 @@ _:b1 <http://schema.org/name> "ABC inc." .
             "<http://example.org/vcred/10>".to_string(),
         );
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            Some(secret1),
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            Some(secret1),
             false,
         );
         assert!(derived_proof.is_err(), "{:?}", derived_proof)
@@ -2199,13 +2296,13 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let secret = b"SECRET";
 
-        let nonce1 = "NONCE1";
-        let request1 = blind_sign_request_string(&mut rng, secret, Some(nonce1)).unwrap();
+        let challenge1 = "challenge1";
+        let request1 = blind_sign_request_string(&mut rng, secret, Some(challenge1)).unwrap();
         let verified1 = verify_blind_sig_request_string(
             &mut rng,
             &request1.commitment,
             &request1.pok_for_commitment,
-            Some(nonce1),
+            Some(challenge1),
         );
         assert!(verified1.is_ok());
 
@@ -2230,22 +2327,28 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let deanon_map = get_example_deanon_map_string();
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            Some(secret),
             &vc_pairs,
             &deanon_map,
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            Some(secret),
             true,
         )
         .unwrap();
         assert!(derived_proof.blinding.is_some());
-        println!("derived_proof: {:?}", derived_proof);
 
-        let verified = verify_proof_string(&mut rng, &derived_proof.vp, Some(nonce), KEY_GRAPH);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof.vp,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2255,22 +2358,28 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let secret = b"SECRET";
 
-        let nonce = "abcde";
+        let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
             &mut rng,
-            Some(secret),
             &vec![],
             &HashMap::new(),
-            Some(nonce),
             KEY_GRAPH,
+            Some(challenge),
+            None,
+            Some(secret),
             true,
         )
         .unwrap();
         assert!(derived_proof.blinding.is_some());
-        println!("derived_proof: {:?}", derived_proof);
 
-        let verified = verify_proof_string(&mut rng, &derived_proof.vp, Some(nonce), KEY_GRAPH);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof.vp,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 }

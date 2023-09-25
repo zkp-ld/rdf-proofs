@@ -1,3 +1,5 @@
+use oxrdf::NamedNode;
+
 #[derive(Debug)]
 pub enum RDFProofsError {
     Canonicalization(rdf_canon::CanonicalizationError),
@@ -35,6 +37,10 @@ pub enum RDFProofsError {
     MissingChallengeInVP,
     MissingChallengeInRequest,
     MismatchedChallenge,
+    MissingDomainInVP,
+    MissingDomainInRequest,
+    MismatchedDomain,
+    MissingProofConfigLiteral(NamedNode),
     InvalidChallengeDatatype,
     MessageSizeOverflow,
     MissingSecret,
@@ -104,6 +110,18 @@ impl std::fmt::Display for RDFProofsError {
             ),
             RDFProofsError::MismatchedChallenge => {
                 write!(f, "challenge does not match the expected value")
+            }
+            RDFProofsError::MissingDomainInVP => {
+                write!(f, "verifier's required domain is not present in VP")
+            }
+            RDFProofsError::MissingDomainInRequest => {
+                write!(f, "domain is in VP but not present in verifier's request")
+            }
+            RDFProofsError::MismatchedDomain => {
+                write!(f, "domain does not match the expected value")
+            }
+            RDFProofsError::MissingProofConfigLiteral(n) => {
+                write!(f, "`{}` is not in proof config", n)
             }
             RDFProofsError::InvalidChallengeDatatype => {
                 write!(f, "challenge in VP has invalid datatype")

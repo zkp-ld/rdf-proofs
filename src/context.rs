@@ -19,6 +19,7 @@ pub const DATA_INTEGRITY_PROOF: NamedNodeRef =
 pub const PROOF: NamedNodeRef = NamedNodeRef::new_unchecked("https://w3id.org/security#proof");
 pub const CHALLENGE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#challenge");
+pub const DOMAIN: NamedNodeRef = NamedNodeRef::new_unchecked("https://w3id.org/security#domain");
 pub const CRYPTOSUITE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#cryptosuite");
 pub const PROOF_PURPOSE: NamedNodeRef =
