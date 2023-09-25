@@ -109,83 +109,7 @@ pub fn blind_sign_request_string<R: RngCore>(
     })
 }
 
-pub fn blind_sign<R: RngCore>(
-    rng: &mut R,
-    commitment: &G1Affine,
-    pok_for_commitment: Proof,
-    nonce: Option<&str>,
-    unsecured_credential: &mut VerifiableCredential,
-    key_graph: &KeyGraph,
-) -> Result<(), RDFProofsError> {
-    let proof = blind_sign_core(
-        rng,
-        commitment,
-        pok_for_commitment,
-        nonce,
-        unsecured_credential,
-        key_graph,
-    )?;
-    unsecured_credential.proof = proof;
-    Ok(())
-}
-
-pub fn blind_sign_string<R: RngCore>(
-    rng: &mut R,
-    commitment: &str,
-    pok_for_commitment: &str,
-    nonce: Option<&str>,
-    document: &str,
-    proof: &str,
-    key_graph: &str,
-) -> Result<String, RDFProofsError> {
-    let unsecured_credential = get_vc_from_ntriples(document, proof)?;
-    let key_graph = get_graph_from_ntriples(key_graph)?.into();
-    let proof = blind_sign_core(
-        rng,
-        &multibase_to_ark(commitment)?,
-        multibase_to_ark(pok_for_commitment)?,
-        nonce,
-        &unsecured_credential,
-        &key_graph,
-    )?;
-    let result: String = proof
-        .iter()
-        .map(|t| format!("{} .\n", t.to_string()))
-        .collect();
-    Ok(result)
-}
-
-fn blind_sign_core<R: RngCore>(
-    rng: &mut R,
-    commitment: &G1Affine,
-    pok_for_commitment: Proof,
-    nonce: Option<&str>,
-    unsecured_credential: &VerifiableCredential,
-    key_graph: &KeyGraph,
-) -> Result<Graph, RDFProofsError> {
-    verify_blind_sig_request(rng, commitment, pok_for_commitment, nonce)?;
-
-    let VerifiableCredential { document, proof } = unsecured_credential;
-    let transformed_data = transform(document)?;
-    let proof_config = configure_proof(proof)?;
-    let canonical_proof_config = transform(&proof_config)?;
-    let hash_data = hash(None, &transformed_data, &canonical_proof_config)?;
-    let proof_value = serialize_proof_with_committed_messages(
-        rng,
-        commitment,
-        &hash_data,
-        &proof_config,
-        key_graph,
-    )?;
-
-    Ok(proof_value)
-}
-
-fn configure_proof(proof_options: &Graph) -> Result<Graph, RDFProofsError> {
-    configure_proof_core(proof_options, CRYPTOSUITE_BOUND_SIGN)
-}
-
-fn verify_blind_sig_request<R: RngCore>(
+pub fn verify_blind_sig_request<R: RngCore>(
     rng: &mut R,
     commitment: &G1Affine,
     pok_for_commitment: Proof,
@@ -213,6 +137,76 @@ fn verify_blind_sig_request<R: RngCore>(
 
     // verify
     Ok(pok_for_commitment.verify::<R, Blake2b512>(rng, proof_spec, nonce, Default::default())?)
+}
+
+pub fn verify_blind_sig_request_string<R: RngCore>(
+    rng: &mut R,
+    commitment: &str,
+    pok_for_commitment: &str,
+    nonce: Option<&str>,
+) -> Result<(), RDFProofsError> {
+    let commitment = multibase_to_ark(commitment)?;
+    let pok_for_commitment = multibase_to_ark(pok_for_commitment)?;
+    verify_blind_sig_request(rng, &commitment, pok_for_commitment, nonce)
+}
+
+pub fn blind_sign<R: RngCore>(
+    rng: &mut R,
+    commitment: &G1Affine,
+    unsecured_credential: &mut VerifiableCredential,
+    key_graph: &KeyGraph,
+) -> Result<(), RDFProofsError> {
+    let proof = blind_sign_core(rng, commitment, unsecured_credential, key_graph)?;
+    unsecured_credential.proof = proof;
+    Ok(())
+}
+
+pub fn blind_sign_string<R: RngCore>(
+    rng: &mut R,
+    commitment: &str,
+    document: &str,
+    proof_options: &str,
+    key_graph: &str,
+) -> Result<String, RDFProofsError> {
+    let unsecured_credential = get_vc_from_ntriples(document, proof_options)?;
+    let key_graph = get_graph_from_ntriples(key_graph)?.into();
+    let proof = blind_sign_core(
+        rng,
+        &multibase_to_ark(commitment)?,
+        &unsecured_credential,
+        &key_graph,
+    )?;
+    let result: String = proof
+        .iter()
+        .map(|t| format!("{} .\n", t.to_string()))
+        .collect();
+    Ok(result)
+}
+
+fn blind_sign_core<R: RngCore>(
+    rng: &mut R,
+    commitment: &G1Affine,
+    unsecured_credential: &VerifiableCredential,
+    key_graph: &KeyGraph,
+) -> Result<Graph, RDFProofsError> {
+    let VerifiableCredential { document, proof } = unsecured_credential;
+    let transformed_data = transform(document)?;
+    let proof_config = configure_proof(proof)?;
+    let canonical_proof_config = transform(&proof_config)?;
+    let hash_data = hash(None, &transformed_data, &canonical_proof_config)?;
+    let proof_value = serialize_proof_with_committed_messages(
+        rng,
+        commitment,
+        &hash_data,
+        &proof_config,
+        key_graph,
+    )?;
+
+    Ok(proof_value)
+}
+
+fn configure_proof(proof_options: &Graph) -> Result<Graph, RDFProofsError> {
+    configure_proof_core(proof_options, CRYPTOSUITE_BOUND_SIGN)
 }
 
 fn serialize_proof_with_committed_messages<R: RngCore>(
@@ -329,9 +323,13 @@ pub fn blind_verify_string(
 #[cfg(test)]
 mod tests {
     use crate::{
-        blind_sign, blind_sign_request, blind_sign_request_string, blind_sign_string, blind_verify,
-        blind_verify_string, common::get_graph_from_ntriples, context::PROOF_VALUE,
-        error::RDFProofsError, unblind, unblind_string, KeyGraph, VerifiableCredential,
+        blind_sign, blind_sign_request, blind_sign_request_string, blind_sign_string,
+        blind_signature::{verify_blind_sig_request, verify_blind_sig_request_string},
+        blind_verify, blind_verify_string,
+        common::get_graph_from_ntriples,
+        context::PROOF_VALUE,
+        error::RDFProofsError,
+        unblind, unblind_string, KeyGraph, VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
 
@@ -367,8 +365,14 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sign_request(&mut rng, secret, Some(nonce));
-        assert!(request.is_ok());
+        let request = blind_sign_request(&mut rng, secret, Some(nonce)).unwrap();
+        let verified = verify_blind_sig_request(
+            &mut rng,
+            &request.commitment,
+            request.pok_for_commitment,
+            Some(nonce),
+        );
+        assert!(verified.is_ok())
     }
 
     #[test]
@@ -376,8 +380,14 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let nonce = "NONCE";
-        let request = blind_sign_request_string(&mut rng, secret, Some(nonce));
-        assert!(request.is_ok());
+        let request = blind_sign_request_string(&mut rng, secret, Some(nonce)).unwrap();
+        let verified = verify_blind_sig_request_string(
+            &mut rng,
+            &request.commitment,
+            &request.pok_for_commitment,
+            Some(nonce),
+        );
+        assert!(verified.is_ok());
     }
 
     const VC_1: &str = r#"
@@ -435,14 +445,7 @@ mod tests {
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
         let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        let result = blind_sign(
-            &mut rng,
-            &request.commitment,
-            request.pok_for_commitment,
-            Some(nonce),
-            &mut vc,
-            &key_graph,
-        );
+        let result = blind_sign(&mut rng, &request.commitment, &mut vc, &key_graph);
         assert!(result.is_ok());
     }
 
@@ -458,14 +461,7 @@ mod tests {
         let proof_config =
             get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_AND_DATETIME_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        let result = blind_sign(
-            &mut rng,
-            &request.commitment,
-            request.pok_for_commitment,
-            Some(nonce),
-            &mut vc,
-            &key_graph,
-        );
+        let result = blind_sign(&mut rng, &request.commitment, &mut vc, &key_graph);
         assert!(result.is_ok());
     }
 
@@ -481,14 +477,7 @@ mod tests {
         let proof_config =
             get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        let result = blind_sign(
-            &mut rng,
-            &request.commitment,
-            request.pok_for_commitment,
-            Some(nonce),
-            &mut vc,
-            &key_graph,
-        );
+        let result = blind_sign(&mut rng, &request.commitment, &mut vc, &key_graph);
         assert!(result.is_ok())
     }
 
@@ -505,14 +494,7 @@ mod tests {
             get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_INVALID_CRYPTOSUITE)
                 .unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        let result = blind_sign(
-            &mut rng,
-            &request.commitment,
-            request.pok_for_commitment,
-            Some(nonce),
-            &mut vc,
-            &key_graph,
-        );
+        let result = blind_sign(&mut rng, &request.commitment, &mut vc, &key_graph);
         assert!(matches!(
             result,
             Err(RDFProofsError::InvalidProofConfiguration)
@@ -529,8 +511,6 @@ mod tests {
         let result = blind_sign_string(
             &mut rng,
             &request.commitment,
-            &request.pok_for_commitment,
-            Some(nonce),
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
             KEY_GRAPH,
@@ -549,15 +529,7 @@ mod tests {
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
         let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        blind_sign(
-            &mut rng,
-            &request.commitment,
-            request.pok_for_commitment,
-            Some(nonce),
-            &mut vc,
-            &key_graph,
-        )
-        .unwrap();
+        blind_sign(&mut rng, &request.commitment, &mut vc, &key_graph).unwrap();
 
         let result = unblind(&mut vc, &request.blinding);
 
@@ -575,8 +547,6 @@ mod tests {
         let proof = blind_sign_string(
             &mut rng,
             &request.commitment,
-            &request.pok_for_commitment,
-            Some(nonce),
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
             KEY_GRAPH,
@@ -598,15 +568,7 @@ mod tests {
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
         let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        blind_sign(
-            &mut rng,
-            &request.commitment,
-            request.pok_for_commitment,
-            Some(nonce),
-            &mut vc,
-            &key_graph,
-        )
-        .unwrap();
+        blind_sign(&mut rng, &request.commitment, &mut vc, &key_graph).unwrap();
 
         unblind(&mut vc, &request.blinding).unwrap();
 
@@ -624,8 +586,6 @@ mod tests {
         let blinded_proof = blind_sign_string(
             &mut rng,
             &request.commitment,
-            &request.pok_for_commitment,
-            Some(nonce),
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
             KEY_GRAPH,
@@ -649,15 +609,7 @@ mod tests {
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
         let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        blind_sign(
-            &mut rng,
-            &request.commitment,
-            request.pok_for_commitment,
-            Some(nonce),
-            &mut vc,
-            &key_graph,
-        )
-        .unwrap();
+        blind_sign(&mut rng, &request.commitment, &mut vc, &key_graph).unwrap();
 
         unblind(&mut vc, &request.blinding).unwrap();
 

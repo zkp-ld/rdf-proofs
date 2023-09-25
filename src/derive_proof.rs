@@ -10,8 +10,8 @@ use crate::{
         ProofWithIndexMap, StatementIndexMap, Statements,
     },
     context::{
-        ASSERTION_METHOD, CHALLENGE, COMMITTED_SECRET, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF,
-        HOLDER, MULTIBASE, PROOF, PROOF_PURPOSE, PROOF_VALUE, VERIFIABLE_CREDENTIAL,
+        ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, HOLDER, MULTIBASE,
+        PROOF, PROOF_PURPOSE, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL,
         VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
@@ -69,9 +69,9 @@ pub fn derive_proof<R: RngCore>(
     }
     println!("deanon map:\n{:#?}\n", deanon_map);
 
-    // VCs must not be empty
-    if vc_pairs.is_empty() {
-        return Err(RDFProofsError::InvalidVCPairs);
+    // either VCs or a committed secret must be provided as input to `derive_proof`
+    if vc_pairs.is_empty() && !commit_secret {
+        return Err(RDFProofsError::MissingInputToDeriveProof);
     }
 
     // TODO:
@@ -528,7 +528,7 @@ fn build_vp(
         ));
     }
 
-    // add committed secret
+    // add secret commitment
     if let Some(req) = blind_sign_request {
         let vp_holder_id = BlankNode::default();
         vp.insert(QuadRef::new(
@@ -539,7 +539,7 @@ fn build_vp(
         ));
         vp.insert(QuadRef::new(
             &vp_holder_id,
-            COMMITTED_SECRET,
+            SECRET_COMMITMENT,
             LiteralRef::new_typed_literal(&ark_to_base64url(&req.commitment)?, MULTIBASE),
             GraphNameRef::DefaultGraph,
         ));
@@ -918,14 +918,14 @@ fn derive_proof_value<R: RngCore>(
             disclosed.clone(),
         ));
     }
-    // statement for committed secret
+    // statement for secret commitment
     if let Some(req) = blind_sign_request {
         statements.add(PedersenCommitmentStmt::new_statement_from_params(
             vec![params_for_commitment.h_0, params_for_commitment.h[0]],
             req.commitment,
         ));
     }
-    let committed_secret_index = statements.len() - 1;
+    let secret_commitment_index = statements.len() - 1;
 
     // build meta statements
     let mut meta_statements = MetaStatements::new();
@@ -937,9 +937,9 @@ fn derive_proof_value<R: RngCore>(
         .map(|(i, _)| (i, 0)) // `0` is the index for embedded secret in VC
         .collect();
     if blind_sign_request.is_some() {
-        // add committed secret to the proof of equalities
-        // `1` corresponds to the committed secret in Pedersen Commitment (`0` corresponds to the blinding)
-        secret_equiv_set.insert((committed_secret_index, 1));
+        // add secret commitment to the proof of equalities
+        // `1` corresponds to the committed secret in Pedersen Commitment, whereas `0` corresponds to the blinding
+        secret_equiv_set.insert((secret_commitment_index, 1));
     }
 
     if secret_equiv_set.len() > 1 {
@@ -968,7 +968,7 @@ fn derive_proof_value<R: RngCore>(
             undisclosed.clone(),
         ));
     }
-    // witness for committed secret
+    // witness for secret commitment
     if let Some(req) = blind_sign_request {
         if let Some(s) = secret {
             witnesses.add(Witness::PedersenCommitment(vec![
@@ -1187,8 +1187,8 @@ mod tests {
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
         error::RDFProofsError,
-        unblind_string, verify_proof, verify_proof_string, KeyGraph, VcPair, VcPairString,
-        VerifiableCredential,
+        unblind_string, verify_blind_sig_request_string, verify_proof, verify_proof_string,
+        KeyGraph, VcPair, VcPairString, VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use oxrdf::{NamedOrBlankNode, Term};
@@ -2049,11 +2049,17 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let nonce1 = "NONCE1";
         let request1 = blind_sign_request_string(&mut rng, secret, Some(nonce1)).unwrap();
-        let blinded_proof1 = blind_sign_string(
+        let verified1 = verify_blind_sig_request_string(
             &mut rng,
             &request1.commitment,
             &request1.pok_for_commitment,
             Some(nonce1),
+        );
+        assert!(verified1.is_ok());
+
+        let blinded_proof1 = blind_sign_string(
+            &mut rng,
+            &request1.commitment,
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
             KEY_GRAPH,
@@ -2065,11 +2071,16 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let nonce3 = "NONCE3";
         let request3 = blind_sign_request_string(&mut rng, secret, Some(nonce3)).unwrap();
-        let blinded_proof3 = blind_sign_string(
+        let verified3 = verify_blind_sig_request_string(
             &mut rng,
             &request3.commitment,
             &request3.pok_for_commitment,
             Some(nonce3),
+        );
+        assert!(verified3.is_ok());
+        let blinded_proof3 = blind_sign_string(
+            &mut rng,
+            &request3.commitment,
             VC_3,
             VC_PROOF_WITHOUT_PROOFVALUE_3,
             KEY_GRAPH,
@@ -2115,11 +2126,17 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let secret1 = b"SECRET1";
         let nonce1 = "NONCE1";
         let request1 = blind_sign_request_string(&mut rng, secret1, Some(nonce1)).unwrap();
-        let blinded_proof1 = blind_sign_string(
+        let verified1 = verify_blind_sig_request_string(
             &mut rng,
             &request1.commitment,
             &request1.pok_for_commitment,
             Some(nonce1),
+        );
+        assert!(verified1.is_ok());
+
+        let blinded_proof1 = blind_sign_string(
+            &mut rng,
+            &request1.commitment,
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
             KEY_GRAPH,
@@ -2132,11 +2149,16 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let secret3 = b"SECRET3";
         let nonce3 = "NONCE3";
         let request3 = blind_sign_request_string(&mut rng, secret3, Some(nonce3)).unwrap();
-        let blinded_proof3 = blind_sign_string(
+        let verified3 = verify_blind_sig_request_string(
             &mut rng,
             &request3.commitment,
             &request3.pok_for_commitment,
             Some(nonce3),
+        );
+        assert!(verified3.is_ok());
+        let blinded_proof3 = blind_sign_string(
+            &mut rng,
+            &request3.commitment,
             VC_3,
             VC_PROOF_WITHOUT_PROOFVALUE_3,
             KEY_GRAPH,
@@ -2172,18 +2194,24 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     #[test]
-    fn derive_and_verify_proof_with_committed_secret_success() {
+    fn derive_and_verify_proof_with_commitment_success() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
         let secret = b"SECRET";
 
         let nonce1 = "NONCE1";
         let request1 = blind_sign_request_string(&mut rng, secret, Some(nonce1)).unwrap();
-        let blinded_proof1 = blind_sign_string(
+        let verified1 = verify_blind_sig_request_string(
             &mut rng,
             &request1.commitment,
             &request1.pok_for_commitment,
             Some(nonce1),
+        );
+        assert!(verified1.is_ok());
+
+        let blinded_proof1 = blind_sign_string(
+            &mut rng,
+            &request1.commitment,
             VC_1,
             VC_PROOF_WITHOUT_PROOFVALUE_1,
             KEY_GRAPH,
@@ -2209,6 +2237,31 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             &vc_pairs,
             &deanon_map,
+            Some(nonce),
+            KEY_GRAPH,
+            true,
+        )
+        .unwrap();
+        assert!(derived_proof.blinding.is_some());
+        println!("derived_proof: {:?}", derived_proof);
+
+        let verified = verify_proof_string(&mut rng, &derived_proof.vp, Some(nonce), KEY_GRAPH);
+        assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_only_commitment_success() {
+        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+
+        let secret = b"SECRET";
+
+        let nonce = "abcde";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            Some(secret),
+            &vec![],
+            &HashMap::new(),
             Some(nonce),
             KEY_GRAPH,
             true,

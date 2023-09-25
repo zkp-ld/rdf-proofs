@@ -13,7 +13,7 @@ pub enum RDFProofsError {
     InvalidVerificationMethod,
     MalformedProof,
     Multibase(multibase::Error),
-    InvalidVCPairs,
+    MissingInputToDeriveProof,
     IriParse(oxiri::IriParseError),
     TtlParse(oxttl::ParseError),
     InvalidDeanonMapFormat(String),
@@ -63,7 +63,12 @@ impl std::fmt::Display for RDFProofsError {
             }
             RDFProofsError::MalformedProof => write!(f, "malformed proof error"),
             RDFProofsError::Multibase(_) => write!(f, "multibase error"),
-            RDFProofsError::InvalidVCPairs => write!(f, "invalid VC pairs error"),
+            RDFProofsError::MissingInputToDeriveProof => {
+                write!(
+                    f,
+                    "either VCs or a committed secret must be provided as input to `derive_proof`"
+                )
+            }
             RDFProofsError::IriParse(_) => write!(f, "IRI parse error"),
             RDFProofsError::TtlParse(e) => write!(f, "N-Triples / N-Quads parse error: {}", e),
             RDFProofsError::InvalidDeanonMapFormat(e) => {

@@ -6,7 +6,7 @@ use crate::{
         ProofWithIndexMap, Statements,
     },
     context::{
-        CHALLENGE, COMMITTED_SECRET, HOLDER, PROOF_VALUE, VERIFIABLE_PRESENTATION_TYPE,
+        CHALLENGE, HOLDER, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE,
         VERIFICATION_METHOD,
     },
     error::RDFProofsError,
@@ -94,9 +94,9 @@ pub fn verify_proof<R: RngCore>(
         disclosed_vcs: c14n_disclosed_vc_graphs,
     } = (&canonicalized_vp).try_into()?;
 
-    // get committed secret
-    let committed_secret = get_committed_secret(&vp_metadata)?;
-    println!("committed_secret: {:#?}", committed_secret);
+    // get secret commitiment
+    let secret_commitiment = get_secret_commitiment(&vp_metadata)?;
+    println!("secret_commitment: {:#?}", secret_commitiment);
 
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
@@ -185,14 +185,14 @@ pub fn verify_proof<R: RngCore>(
             disclosed.clone(),
         ));
     }
-    // statement for committed secret
-    if let Some(s) = committed_secret {
+    // statement for secret commitment
+    if let Some(s) = secret_commitiment {
         statements.add(PedersenCommitmentStmt::new_statement_from_params(
             vec![params_for_commitment.h_0, params_for_commitment.h[0]],
             s,
         ));
     }
-    let committed_secret_index = statements.len() - 1;
+    let secret_commitment_index = statements.len() - 1;
 
     // build meta statements
     let mut meta_statements = MetaStatements::new();
@@ -203,10 +203,10 @@ pub fn verify_proof<R: RngCore>(
         .filter(|(_, &is_bound)| is_bound)
         .map(|(i, _)| (i, 0)) // `0` is the index for embedded secret in VC
         .collect();
-    if committed_secret.is_some() {
-        // add committed secret to the proof of equalities
-        // `1` corresponds to the committed secret in Pedersen Commitment (`0` corresponds to the blinding)
-        secret_equiv_set.insert((committed_secret_index, 1));
+    if secret_commitiment.is_some() {
+        // add secret commitment to the proof of equalities
+        // `1` corresponds to the committed secret in Pedersen Commitment, whereas `0` corresponds to the blinding
+        secret_equiv_set.insert((secret_commitment_index, 1));
     }
     if secret_equiv_set.len() > 1 {
         meta_statements.add_witness_equality(EqualWitnesses(secret_equiv_set));
@@ -244,7 +244,7 @@ pub fn verify_proof_string<R: RngCore>(
     verify_proof(rng, &vp, nonce, &key_graph)
 }
 
-fn get_committed_secret(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {
+fn get_secret_commitiment(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {
     let vp_subject = metadata
         .subject_for_predicate_object(TYPE, VERIFIABLE_PRESENTATION_TYPE)
         .ok_or(RDFProofsError::InvalidVP)?;
@@ -253,14 +253,14 @@ fn get_committed_secret(metadata: &GraphView) -> Result<Option<G1Affine>, RDFPro
         Some(TermRef::BlankNode(n)) => NamedOrBlankNodeRef::BlankNode(n),
         _ => return Ok(None),
     };
-    let committed_secret = if let Some(TermRef::Literal(committed_secret_multibase)) =
-        metadata.object_for_subject_predicate(holder_subject, COMMITTED_SECRET)
+    let commitment = if let Some(TermRef::Literal(commitment_multibase)) =
+        metadata.object_for_subject_predicate(holder_subject, SECRET_COMMITMENT)
     {
-        Some(multibase_to_ark(committed_secret_multibase.value())?)
+        Some(multibase_to_ark(commitment_multibase.value())?)
     } else {
         None
     };
-    Ok(committed_secret)
+    Ok(commitment)
 }
 
 #[derive(Debug)]
