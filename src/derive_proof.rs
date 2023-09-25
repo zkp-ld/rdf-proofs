@@ -40,6 +40,7 @@ use proof_system::{
     witness::{Witness, Witnesses},
 };
 use regex::Regex;
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug)]
@@ -48,7 +49,7 @@ pub struct DerivedProof {
     pub blinding: Option<Fr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct DerivedProofString {
     pub vp: String,
     pub blinding: Option<String>,
@@ -63,12 +64,17 @@ pub fn derive_proof<R: RngCore>(
     challenge: Option<&str>,
     domain: Option<&str>,
     secret: Option<&[u8]>,
-    commit_secret: bool,
+    commit_secret: Option<bool>,
 ) -> Result<DerivedProof, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
     }
     println!("deanon map:\n{:#?}\n", deanon_map);
+
+    let commit_secret = match commit_secret {
+        Some(v) => v,
+        None => false,
+    };
 
     // either VCs or a committed secret must be provided as input to `derive_proof`
     if vc_pairs.is_empty() && !commit_secret {
@@ -287,7 +293,7 @@ pub fn derive_proof_string<R: RngCore>(
     challenge: Option<&str>,
     domain: Option<&str>,
     secret: Option<&[u8]>,
-    commit_secret: bool,
+    commit_secret: Option<bool>,
 ) -> Result<DerivedProofString, RDFProofsError> {
     // construct input for `derive_proof` from string-based input
     let vc_pairs = vc_pairs
@@ -1437,7 +1443,7 @@ mod tests {
             Some(challenge),
             None,
             None,
-            false,
+            None,
         )
         .unwrap();
         println!(
@@ -1476,7 +1482,7 @@ mod tests {
             Some(challenge),
             None,
             None,
-            false,
+            None,
         )
         .unwrap();
         println!("derived_proof.vp: {}", derived_proof.vp);
@@ -1547,7 +1553,7 @@ mod tests {
             challenge,
             domain,
             None,
-            false,
+            None,
         )
         .unwrap();
         assert!(verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, domain).is_ok());
@@ -1572,7 +1578,7 @@ mod tests {
             None,
             domain,
             None,
-            false,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1597,7 +1603,7 @@ mod tests {
             challenge,
             None,
             None,
-            false,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1622,7 +1628,7 @@ mod tests {
             None,
             None,
             None,
-            false,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1662,7 +1668,7 @@ mod tests {
             challenge,
             domain,
             None,
-            false,
+            None,
         )
         .unwrap();
         assert!(
@@ -1689,7 +1695,7 @@ mod tests {
             None,
             domain,
             None,
-            false,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1714,7 +1720,7 @@ mod tests {
             challenge,
             None,
             None,
-            false,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1741,7 +1747,7 @@ mod tests {
             None,
             None,
             None,
-            false,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1821,7 +1827,7 @@ mod tests {
             Some(challenge),
             None,
             None,
-            false,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof.vp));
@@ -1860,7 +1866,7 @@ mod tests {
             Some(challenge),
             None,
             None,
-            false,
+            None,
         )
         .unwrap();
 
@@ -1922,7 +1928,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             None,
-            false,
+            None,
         );
         assert!(matches!(
             derived_proof,
@@ -1955,7 +1961,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             None,
-            false,
+            None,
         );
 
         assert!(matches!(
@@ -2010,7 +2016,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret),
-            false,
+            None,
         )
         .unwrap();
 
@@ -2052,7 +2058,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret),
-            false,
+            None,
         );
         assert!(matches!(
             derived_proof,
@@ -2088,7 +2094,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             None,
-            false,
+            None,
         );
         assert!(matches!(derived_proof, Err(RDFProofsError::MissingSecret)))
     }
@@ -2200,7 +2206,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret),
-            false,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof.vp);
@@ -2285,7 +2291,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret1),
-            false,
+            None,
         );
         assert!(derived_proof.is_err(), "{:?}", derived_proof)
     }
@@ -2337,7 +2343,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret),
-            true,
+            Some(true),
         )
         .unwrap();
         assert!(derived_proof.blinding.is_some());
@@ -2368,7 +2374,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret),
-            true,
+            Some(true),
         )
         .unwrap();
         assert!(derived_proof.blinding.is_some());
