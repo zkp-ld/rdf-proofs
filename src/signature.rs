@@ -28,10 +28,10 @@ pub fn sign<R: RngCore>(
 pub fn sign_string<R: RngCore>(
     rng: &mut R,
     document: &str,
-    proof_option: &str,
+    proof_options: &str,
     key_graph: &str,
 ) -> Result<String, RDFProofsError> {
-    let unsecured_credential = get_vc_from_ntriples(document, proof_option)?;
+    let unsecured_credential = get_vc_from_ntriples(document, proof_options)?;
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
     let proof = sign_core(rng, &unsecured_credential, &key_graph)?;
     let result: String = proof

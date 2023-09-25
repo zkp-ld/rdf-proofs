@@ -37,6 +37,6 @@ pub const MULTIBASE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#multibase");
 
 // https://zkp-ld.org/security#
-pub const COMMITTED_SECRET: NamedNodeRef =
-    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#committedSecret");
+pub const SECRET_COMMITMENT: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#secretCommitment");
 pub const FILTER: NamedNodeRef = NamedNodeRef::new_unchecked("https://zkp-ld.org/security#filter");
