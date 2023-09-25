@@ -10,6 +10,8 @@ pub const VERIFIABLE_PRESENTATION_TYPE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://www.w3.org/2018/credentials#VerifiablePresentation");
 pub const VERIFIABLE_CREDENTIAL: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://www.w3.org/2018/credentials#verifiableCredential");
+pub const HOLDER: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://www.w3.org/2018/credentials#holder");
 
 // https://w3id.org/security#
 pub const DATA_INTEGRITY_PROOF: NamedNodeRef =
@@ -35,4 +37,6 @@ pub const MULTIBASE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#multibase");
 
 // https://zkp-ld.org/security#
+pub const COMMITTED_SECRET: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#committedSecret");
 pub const FILTER: NamedNodeRef = NamedNodeRef::new_unchecked("https://zkp-ld.org/security#filter");

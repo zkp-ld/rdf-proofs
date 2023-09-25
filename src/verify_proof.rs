@@ -2,17 +2,26 @@ use crate::{
     common::{
         generate_proof_spec_context, get_dataset_from_nquads, get_delimiter,
         get_graph_from_ntriples, get_hasher, hash_term_to_field, is_nym, reorder_vc_triples,
-        BBSPlusHash, BBSPlusPublicKey, Fr, PoKBBSPlusStmt, ProofWithIndexMap, Statements,
+        BBSPlusHash, BBSPlusPublicKey, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt,
+        ProofWithIndexMap, Statements,
     },
-    context::{CHALLENGE, PROOF_VALUE, VERIFICATION_METHOD},
+    context::{
+        CHALLENGE, COMMITTED_SECRET, HOLDER, PROOF_VALUE, VERIFIABLE_PRESENTATION_TYPE,
+        VERIFICATION_METHOD,
+    },
     error::RDFProofsError,
     key_gen::generate_params,
     key_graph::KeyGraph,
+    multibase_to_ark,
     ordered_triple::OrderedNamedOrBlankNode,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples, VerifiablePresentation},
 };
+use ark_bls12_381::G1Affine;
 use ark_std::rand::RngCore;
-use oxrdf::{dataset::GraphView, Dataset, NamedOrBlankNode, Subject, Term, TermRef, Triple};
+use oxrdf::{
+    dataset::GraphView, vocab::rdf::TYPE, Dataset, NamedOrBlankNode, NamedOrBlankNodeRef, Subject,
+    Term, TermRef, Triple,
+};
 use proof_system::{
     prelude::{EqualWitnesses, MetaStatements},
     proof_spec::ProofSpec,
@@ -78,12 +87,16 @@ pub fn verify_proof<R: RngCore>(
 
     // decompose canonicalized VP into graphs
     let VerifiablePresentation {
-        metadata: _, // TODO: validate VP metadata
+        metadata: vp_metadata, // TODO: validate VP metadata
         proof: _,
         proof_graph_name: _,
         filters: _filters_graph,
         disclosed_vcs: c14n_disclosed_vc_graphs,
     } = (&canonicalized_vp).try_into()?;
+
+    // get committed secret
+    let committed_secret = get_committed_secret(&vp_metadata)?;
+    println!("committed_secret: {:#?}", committed_secret);
 
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
@@ -136,6 +149,7 @@ pub fn verify_proof<R: RngCore>(
                 .map_err(|_| RDFProofsError::MessageSizeOverflow)
         })
         .collect::<Result<Vec<u32>, _>>()?;
+    let params_for_commitment = generate_params(1);
     let params_and_pks = term_counts
         .iter()
         .zip(public_keys)
@@ -161,6 +175,7 @@ pub fn verify_proof<R: RngCore>(
 
     // build statements
     let mut statements = Statements::new();
+    // statements for BBS+ signatures
     for (DisclosedTerms { disclosed, .. }, (params, public_key)) in
         disclosed_terms.iter().zip(params_and_pks)
     {
@@ -170,16 +185,29 @@ pub fn verify_proof<R: RngCore>(
             disclosed.clone(),
         ));
     }
+    // statement for committed secret
+    if let Some(s) = committed_secret {
+        statements.add(PedersenCommitmentStmt::new_statement_from_params(
+            vec![params_for_commitment.h_0, params_for_commitment.h[0]],
+            s,
+        ));
+    }
+    let committed_secret_index = statements.len() - 1;
 
     // build meta statements
     let mut meta_statements = MetaStatements::new();
     // all embedded secrets must be equivalent
-    let secret_equiv_set: BTreeSet<(usize, usize)> = is_bounds
+    let mut secret_equiv_set: BTreeSet<(usize, usize)> = is_bounds
         .iter()
         .enumerate()
         .filter(|(_, &is_bound)| is_bound)
         .map(|(i, _)| (i, 0)) // `0` is the index for embedded secret in VC
         .collect();
+    if committed_secret.is_some() {
+        // add committed secret to the proof of equalities
+        // `1` corresponds to the committed secret in Pedersen Commitment (`0` corresponds to the blinding)
+        secret_equiv_set.insert((committed_secret_index, 1));
+    }
     if secret_equiv_set.len() > 1 {
         meta_statements.add_witness_equality(EqualWitnesses(secret_equiv_set));
     }
@@ -214,6 +242,25 @@ pub fn verify_proof_string<R: RngCore>(
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
 
     verify_proof(rng, &vp, nonce, &key_graph)
+}
+
+fn get_committed_secret(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {
+    let vp_subject = metadata
+        .subject_for_predicate_object(TYPE, VERIFIABLE_PRESENTATION_TYPE)
+        .ok_or(RDFProofsError::InvalidVP)?;
+    let holder_subject = match metadata.object_for_subject_predicate(vp_subject, HOLDER) {
+        Some(TermRef::NamedNode(n)) => NamedOrBlankNodeRef::NamedNode(n),
+        Some(TermRef::BlankNode(n)) => NamedOrBlankNodeRef::BlankNode(n),
+        _ => return Ok(None),
+    };
+    let committed_secret = if let Some(TermRef::Literal(committed_secret_multibase)) =
+        metadata.object_for_subject_predicate(holder_subject, COMMITTED_SECRET)
+    {
+        Some(multibase_to_ark(committed_secret_multibase.value())?)
+    } else {
+        None
+    };
+    Ok(committed_secret)
 }
 
 #[derive(Debug)]

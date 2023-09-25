@@ -24,8 +24,12 @@ use oxrdf::{
 use oxsdatatypes::DateTime;
 use oxttl::{NQuadsParser, NTriplesParser};
 use proof_system::{
-    proof::Proof as ProofOrig, statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
-    statement::Statements as StatementsOrig, witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
+    proof::Proof as ProofOrig,
+    statement::{
+        bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, ped_comm::PedersenCommitment,
+        Statements as StatementsOrig,
+    },
+    witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -45,6 +49,7 @@ pub type BBSPlusPublicKey = PublicKeyG2<Bls12_381>;
 pub type BBSPlusSignature = SignatureG1<Bls12_381>;
 pub type PoKBBSPlusStmt<E> = PoKBBSSignatureG1Stmt<E>;
 pub type PoKBBSPlusWit<E> = PoKBBSSignatureG1Wit<E>;
+pub type PedersenCommitmentStmt = PedersenCommitment<G1Affine>;
 
 pub fn serialize_ark<S: serde::Serializer, A: CanonicalSerialize>(
     ark: &A,
