@@ -46,8 +46,7 @@ pub fn blind_sign_request<R: RngCore>(
 ) -> Result<BlindSignRequest, RDFProofsError> {
     // bases := [h_0, h[0]]
     let params = generate_params(1);
-    let mut bases = vec![params.h_0];
-    bases.push(params.h[0]);
+    let bases = vec![params.h_0, params.h[0]];
 
     // blinding to be used in commitment
     let blinding = Fr::rand(rng);
