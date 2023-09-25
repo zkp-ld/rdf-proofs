@@ -6,7 +6,7 @@ use crate::{
         ProofWithIndexMap, Statements,
     },
     context::{
-        CHALLENGE, HOLDER, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE,
+        CHALLENGE, DOMAIN, HOLDER, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE,
         VERIFICATION_METHOD,
     },
     error::RDFProofsError,
@@ -32,8 +32,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub fn verify_proof<R: RngCore>(
     rng: &mut R,
     vp_dataset: &Dataset,
-    nonce: Option<&str>,
     key_graph: &KeyGraph,
+    challenge: Option<&str>,
+    domain: Option<&str>,
 ) -> Result<(), RDFProofsError> {
     println!("VP:\n{}", rdf_canon::serialize(vp_dataset));
 
@@ -51,28 +52,30 @@ pub fn verify_proof<R: RngCore>(
             .filter(|q| !(q.predicate == PROOF_VALUE && q.graph_name == vp.proof_graph_name)),
     );
 
-    // nonce check
-    let get_nonce = || {
-        let nonce_in_vp_triple = vp.proof.triples_for_predicate(CHALLENGE).next();
-        if let Some(triple) = nonce_in_vp_triple {
-            if let TermRef::Literal(v) = triple.object {
-                Ok(Some(v.value()))
-            } else {
-                Err(RDFProofsError::InvalidChallengeDatatype)
-            }
-        } else {
-            Ok(None)
-        }
-    };
-    match (nonce, get_nonce()?) {
+    // validate challenge
+    match (challenge, vp.get_proof_config_literal(CHALLENGE)?) {
         (None, None) => Ok(()),
         (None, Some(_)) => Err(RDFProofsError::MissingChallengeInRequest),
         (Some(_), None) => Err(RDFProofsError::MissingChallengeInVP),
-        (Some(given_nonce), Some(nonce_in_vp)) => {
-            if given_nonce == nonce_in_vp {
+        (Some(given_challenge), Some(challenge_in_vp)) => {
+            if given_challenge == challenge_in_vp {
                 Ok(())
             } else {
                 Err(RDFProofsError::MismatchedChallenge)
+            }
+        }
+    }?;
+
+    // validate domain
+    match (domain, vp.get_proof_config_literal(DOMAIN)?) {
+        (None, None) => Ok(()),
+        (None, Some(_)) => Err(RDFProofsError::MissingDomainInRequest),
+        (Some(_), None) => Err(RDFProofsError::MissingDomainInVP),
+        (Some(given_domain), Some(domain_in_vp)) => {
+            if given_domain == domain_in_vp {
+                Ok(())
+            } else {
+                Err(RDFProofsError::MismatchedDomain)
             }
         }
     }?;
@@ -95,7 +98,7 @@ pub fn verify_proof<R: RngCore>(
     } = (&canonicalized_vp).try_into()?;
 
     // get secret commitiment
-    let secret_commitiment = get_secret_commitiment(&vp_metadata)?;
+    let secret_commitiment = get_secret_commitment(&vp_metadata)?;
     println!("secret_commitment: {:#?}", secret_commitiment);
 
     // get issuer public keys
@@ -226,7 +229,7 @@ pub fn verify_proof<R: RngCore>(
     Ok(proof.verify::<R, BBSPlusHash>(
         rng,
         proof_spec,
-        nonce.map(|v| v.as_bytes().to_vec()),
+        challenge.map(|v| v.as_bytes().to_vec()),
         Default::default(),
     )?)
 }
@@ -234,17 +237,18 @@ pub fn verify_proof<R: RngCore>(
 pub fn verify_proof_string<R: RngCore>(
     rng: &mut R,
     vp: &str,
-    nonce: Option<&str>,
     key_graph: &str,
+    challenge: Option<&str>,
+    domain: Option<&str>,
 ) -> Result<(), RDFProofsError> {
     // construct input for `verify_proof` from string-based input
     let vp = get_dataset_from_nquads(vp)?;
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
 
-    verify_proof(rng, &vp, nonce, &key_graph)
+    verify_proof(rng, &vp, &key_graph, challenge, domain)
 }
 
-fn get_secret_commitiment(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {
+fn get_secret_commitment(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {
     let vp_subject = metadata
         .subject_for_predicate_object(TYPE, VERIFIABLE_PRESENTATION_TYPE)
         .ok_or(RDFProofsError::InvalidVP)?;

@@ -385,6 +385,28 @@ impl<'a> VerifiablePresentation<'a> {
             Err(RDFProofsError::VCWithoutProofValue)
         }
     }
+
+    pub fn get_proof_config_literal(
+        self: &Self,
+        predicate: NamedNodeRef,
+    ) -> Result<Option<String>, RDFProofsError> {
+        let VerifiablePresentation { proof, .. } = self;
+
+        // TODO: assert there is at most one triple `* a DataIntegrity` in `proof`
+        let proof_subject = proof
+            .subject_for_predicate_object(vocab::rdf::TYPE, DATA_INTEGRITY_PROOF)
+            .ok_or(RDFProofsError::InvalidVP)?;
+
+        // TODO: assert there is at most one triple `* predicate *` in `proof`
+        if let Some(config) = proof.object_for_subject_predicate(proof_subject, predicate) {
+            match config {
+                TermRef::Literal(v) => Ok(Some(v.value().to_string())),
+                _ => Err(RDFProofsError::MissingProofConfigLiteral(predicate.into())),
+            }
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
