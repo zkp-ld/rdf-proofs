@@ -27,22 +27,23 @@ use std::collections::BTreeMap;
 #[derive(Debug)]
 pub struct BlindSignRequest {
     pub commitment: G1Affine,
-    pub pok_for_commitment: Proof,
     pub blinding: Fr,
+    pub pok_for_commitment: Option<Proof>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlindSignRequestString {
     pub commitment: String,
-    #[serde(rename = "pokForCommitment")]
-    pub pok_for_commitment: String,
     pub blinding: String,
+    #[serde(rename = "pokForCommitment")]
+    pub pok_for_commitment: Option<String>,
 }
 
-pub fn blind_sign_request<R: RngCore>(
+pub fn request_blind_sign<R: RngCore>(
     rng: &mut R,
     secret: &[u8],
     challenge: Option<&str>,
+    skip_pok: Option<bool>,
 ) -> Result<BlindSignRequest, RDFProofsError> {
     // bases := [h_0, h[0]]
     let params = generate_params(1);
@@ -58,6 +59,20 @@ pub fn blind_sign_request<R: RngCore>(
     // commitment := h_0^{blinding} * h[0]^{secret_int}
     let committed_secret = BTreeMap::from([(0_usize, &secret_int)]);
     let commitment = params.commit_to_messages(committed_secret, &blinding)?;
+
+    let skip_pok = match skip_pok {
+        Some(v) => v,
+        None => false,
+    };
+
+    // skip Proof of Knowledge if skip_pok == true or None
+    if skip_pok {
+        return Ok(BlindSignRequest {
+            commitment,
+            blinding,
+            pok_for_commitment: None,
+        });
+    }
 
     // statements := [bases, commitment]
     let mut statements = Statements::new();
@@ -84,23 +99,30 @@ pub fn blind_sign_request<R: RngCore>(
 
     Ok(BlindSignRequest {
         commitment,
-        pok_for_commitment,
         blinding,
+        pok_for_commitment: Some(pok_for_commitment),
     })
 }
 
-pub fn blind_sign_request_string<R: RngCore>(
+pub fn request_blind_sign_string<R: RngCore>(
     rng: &mut R,
     secret: &[u8],
     challenge: Option<&str>,
+    skip_pok: Option<bool>,
 ) -> Result<BlindSignRequestString, RDFProofsError> {
     let BlindSignRequest {
         commitment,
-        pok_for_commitment,
         blinding,
-    } = blind_sign_request(rng, secret, challenge)?;
+        pok_for_commitment,
+    } = request_blind_sign(rng, secret, challenge, skip_pok)?;
     let commitment_base64url = ark_to_base64url(&commitment)?;
-    let pok_for_commitment_base64url = ark_to_base64url(&pok_for_commitment)?;
+
+    let pok_for_commitment_base64url = if let Some(v) = pok_for_commitment {
+        Some(ark_to_base64url(&v)?)
+    } else {
+        None
+    };
+
     let blinding_base64url = ark_to_base64url(&blinding)?;
     Ok(BlindSignRequestString {
         commitment: commitment_base64url,
@@ -109,7 +131,7 @@ pub fn blind_sign_request_string<R: RngCore>(
     })
 }
 
-pub fn verify_blind_sig_request<R: RngCore>(
+pub fn verify_blind_sign_request<R: RngCore>(
     rng: &mut R,
     commitment: &G1Affine,
     pok_for_commitment: Proof,
@@ -144,7 +166,7 @@ pub fn verify_blind_sig_request<R: RngCore>(
     )?)
 }
 
-pub fn verify_blind_sig_request_string<R: RngCore>(
+pub fn verify_blind_sign_request_string<R: RngCore>(
     rng: &mut R,
     commitment: &str,
     pok_for_commitment: &str,
@@ -152,7 +174,7 @@ pub fn verify_blind_sig_request_string<R: RngCore>(
 ) -> Result<(), RDFProofsError> {
     let commitment = multibase_to_ark(commitment)?;
     let pok_for_commitment = multibase_to_ark(pok_for_commitment)?;
-    verify_blind_sig_request(rng, &commitment, pok_for_commitment, challenge)
+    verify_blind_sign_request(rng, &commitment, pok_for_commitment, challenge)
 }
 
 pub fn blind_sign<R: RngCore>(
@@ -328,13 +350,11 @@ pub fn blind_verify_string(
 #[cfg(test)]
 mod tests {
     use crate::{
-        blind_sign, blind_sign_request, blind_sign_request_string, blind_sign_string,
-        blind_signature::{verify_blind_sig_request, verify_blind_sig_request_string},
-        blind_verify, blind_verify_string,
-        common::get_graph_from_ntriples,
-        context::PROOF_VALUE,
-        error::RDFProofsError,
-        unblind, unblind_string, KeyGraph, VerifiableCredential,
+        blind_sign, blind_sign_string, blind_verify, blind_verify_string,
+        common::get_graph_from_ntriples, context::PROOF_VALUE, error::RDFProofsError,
+        request_blind_sign, request_blind_sign_string, unblind, unblind_string,
+        verify_blind_sign_request, verify_blind_sign_request_string, KeyGraph,
+        VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
 
@@ -366,30 +386,30 @@ mod tests {
     "#;
 
     #[test]
-    fn blind_sig_request_success() {
+    fn request_blind_sign_success() {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request(&mut rng, secret, Some(challenge)).unwrap();
-        let verified = verify_blind_sig_request(
+        let request = request_blind_sign(&mut rng, secret, Some(challenge), None).unwrap();
+        let verified = verify_blind_sign_request(
             &mut rng,
             &request.commitment,
-            request.pok_for_commitment,
+            request.pok_for_commitment.unwrap(),
             Some(challenge),
         );
         assert!(verified.is_ok())
     }
 
     #[test]
-    fn blind_sig_request_string_success() {
+    fn request_blind_sign_string_success() {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request_string(&mut rng, secret, Some(challenge)).unwrap();
-        let verified = verify_blind_sig_request_string(
+        let request = request_blind_sign_string(&mut rng, secret, Some(challenge), None).unwrap();
+        let verified = verify_blind_sign_request_string(
             &mut rng,
             &request.commitment,
-            &request.pok_for_commitment,
+            &request.pok_for_commitment.unwrap(),
             Some(challenge),
         );
         assert!(verified.is_ok());
@@ -444,7 +464,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign(&mut rng, secret, Some(challenge), None).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -459,7 +479,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign(&mut rng, secret, Some(challenge), None).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -475,7 +495,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign(&mut rng, secret, Some(challenge), None).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -491,7 +511,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign(&mut rng, secret, Some(challenge), None).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -511,7 +531,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request_string(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign_string(&mut rng, secret, Some(challenge), None).unwrap();
 
         let result = blind_sign_string(
             &mut rng,
@@ -528,7 +548,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign(&mut rng, secret, Some(challenge), None).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -547,7 +567,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request_string(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign_string(&mut rng, secret, Some(challenge), None).unwrap();
 
         let proof = blind_sign_string(
             &mut rng,
@@ -567,7 +587,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign(&mut rng, secret, Some(challenge), None).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
@@ -586,7 +606,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request_string(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign_string(&mut rng, secret, Some(challenge), None).unwrap();
 
         let blinded_proof = blind_sign_string(
             &mut rng,
@@ -608,7 +628,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let secret = b"SECRET";
         let challenge = "challenge";
-        let request = blind_sign_request(&mut rng, secret, Some(challenge)).unwrap();
+        let request = request_blind_sign(&mut rng, secret, Some(challenge), None).unwrap();
 
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();

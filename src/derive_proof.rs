@@ -1,7 +1,7 @@
 use super::constants::CRYPTOSUITE_PROOF;
 use crate::{
-    ark_to_base64url, blind_sign_request,
-    blind_signature::{blind_verify, BlindSignRequest},
+    ark_to_base64url,
+    blind_signature::{blind_verify, BlindSignRequest, BlindSignRequestString},
     common::{
         canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
         get_hasher, get_vc_from_ntriples, hash_byte_to_field, hash_term_to_field, is_nym,
@@ -40,20 +40,7 @@ use proof_system::{
     witness::{Witness, Witnesses},
 };
 use regex::Regex;
-use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-
-#[derive(Debug)]
-pub struct DerivedProof {
-    pub vp: Dataset,
-    pub blinding: Option<Fr>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DerivedProofString {
-    pub vp: String,
-    pub blinding: Option<String>,
-}
 
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
@@ -64,20 +51,15 @@ pub fn derive_proof<R: RngCore>(
     challenge: Option<&str>,
     domain: Option<&str>,
     secret: Option<&[u8]>,
-    commit_secret: Option<bool>,
-) -> Result<DerivedProof, RDFProofsError> {
+    blind_sign_request: Option<BlindSignRequest>,
+) -> Result<Dataset, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
     }
     println!("deanon map:\n{:#?}\n", deanon_map);
 
-    let commit_secret = match commit_secret {
-        Some(v) => v,
-        None => false,
-    };
-
-    // either VCs or a committed secret must be provided as input to `derive_proof`
-    if vc_pairs.is_empty() && !commit_secret {
+    // either VCs or a blind sign request must be provided as input
+    if vc_pairs.is_empty() && blind_sign_request.is_none() {
         return Err(RDFProofsError::MissingInputToDeriveProof);
     }
 
@@ -138,17 +120,6 @@ pub fn derive_proof<R: RngCore>(
              }| (original, disclosed),
         )
         .unzip();
-
-    // generate blind signing request if `commit_secret` is set to true
-    let blind_sign_request = if let Some(s) = secret {
-        if commit_secret {
-            Some(blind_sign_request(rng, s, challenge)?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
 
     // build VP draft (= canonicalized VP without proofValue) based on disclosed VCs
     let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) =
@@ -277,12 +248,7 @@ pub fn derive_proof<R: RngCore>(
     let mut canonicalized_vp_quads = vp_draft.into_iter().collect::<Vec<_>>();
     canonicalized_vp_quads.push(vp_proof_value_quad);
 
-    let blinding = blind_sign_request.and_then(|req| Some(req.blinding));
-
-    Ok(DerivedProof {
-        vp: Dataset::from_iter(canonicalized_vp_quads),
-        blinding,
-    })
+    Ok(Dataset::from_iter(canonicalized_vp_quads))
 }
 
 pub fn derive_proof_string<R: RngCore>(
@@ -293,8 +259,8 @@ pub fn derive_proof_string<R: RngCore>(
     challenge: Option<&str>,
     domain: Option<&str>,
     secret: Option<&[u8]>,
-    commit_secret: Option<bool>,
-) -> Result<DerivedProofString, RDFProofsError> {
+    blind_sign_request: Option<BlindSignRequestString>,
+) -> Result<String, RDFProofsError> {
     // construct input for `derive_proof` from string-based input
     let vc_pairs = vc_pairs
         .iter()
@@ -307,6 +273,19 @@ pub fn derive_proof_string<R: RngCore>(
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
     let deanon_map = get_deanon_map_from_string(deanon_map)?;
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
+    let blind_sign_request = if let Some(req) = blind_sign_request {
+        Some(BlindSignRequest {
+            commitment: multibase_to_ark(&req.commitment)?,
+            blinding: multibase_to_ark(&req.blinding)?,
+            pok_for_commitment: if let Some(s) = req.pok_for_commitment {
+                Some(multibase_to_ark(&s)?)
+            } else {
+                None
+            },
+        })
+    } else {
+        None
+    };
 
     let derived_proof = derive_proof(
         rng,
@@ -316,17 +295,10 @@ pub fn derive_proof_string<R: RngCore>(
         challenge,
         domain,
         secret,
-        commit_secret,
+        blind_sign_request,
     )?;
-    let blinding = match derived_proof.blinding {
-        Some(b) => Some(ark_to_base64url(&b)?),
-        None => None,
-    };
 
-    Ok(DerivedProofString {
-        vp: rdf_canon::serialize(&derived_proof.vp),
-        blinding,
-    })
+    Ok(rdf_canon::serialize(&derived_proof))
 }
 
 pub(crate) fn get_deanon_map_from_string(
@@ -1203,14 +1175,14 @@ fn build_disclosed_and_undisclosed_terms(
 #[cfg(test)]
 mod tests {
     use crate::{
-        blind_sign_request_string, blind_sign_string, blind_verify_string,
+        blind_sign_string, blind_verify_string,
         common::{get_dataset_from_nquads, get_graph_from_ntriples},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
         error::RDFProofsError,
-        unblind_string, verify_blind_sig_request_string, verify_proof, verify_proof_string,
-        KeyGraph, VcPair, VcPairString, VerifiableCredential,
+        request_blind_sign_string, unblind_string, verify_blind_sign_request_string, verify_proof,
+        verify_proof_string, KeyGraph, VcPair, VcPairString, VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use oxrdf::{NamedOrBlankNode, Term};
@@ -1446,18 +1418,9 @@ mod tests {
             None,
         )
         .unwrap();
-        println!(
-            "derived_proof.vp: {}",
-            rdf_canon::serialize(&derived_proof.vp)
-        );
+        println!("derived_proof.vp: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(
-            &mut rng,
-            &derived_proof.vp,
-            &key_graph,
-            Some(challenge),
-            None,
-        );
+        let verified = verify_proof(&mut rng, &derived_proof, &key_graph, Some(challenge), None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1485,15 +1448,10 @@ mod tests {
             None,
         )
         .unwrap();
-        println!("derived_proof.vp: {}", derived_proof.vp);
+        println!("derived_proof: {}", derived_proof);
 
-        let verified = verify_proof_string(
-            &mut rng,
-            &derived_proof.vp,
-            KEY_GRAPH,
-            Some(challenge),
-            None,
-        );
+        let verified =
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1556,17 +1514,17 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, domain).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain).is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1582,16 +1540,16 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, domain).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, domain).is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
 
@@ -1607,16 +1565,16 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, None).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None).is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1632,18 +1590,18 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof.vp, &key_graph, challenge, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof.vp, &key_graph, None, None).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, None).is_ok());
     }
 
     #[test]
@@ -1672,18 +1630,18 @@ mod tests {
         )
         .unwrap();
         assert!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, domain).is_ok()
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain).is_ok()
         );
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1699,16 +1657,16 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, domain).is_ok());
+        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain).is_ok());
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
 
@@ -1724,18 +1682,16 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
-        assert!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, None).is_ok()
-        );
+        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None).is_ok());
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1751,18 +1707,18 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, challenge, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof_string(&mut rng, &derived_proof.vp, KEY_GRAPH, None, None).is_ok());
+        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None).is_ok());
     }
 
     const DISCLOSED_VC_1_WITH_HIDDEN_LITERALS: &str = r#"
@@ -1830,15 +1786,9 @@ mod tests {
             None,
         )
         .unwrap();
-        println!("derived_proof: {}", rdf_canon::serialize(&derived_proof.vp));
+        println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(
-            &mut rng,
-            &derived_proof.vp,
-            &key_graph,
-            Some(challenge),
-            None,
-        );
+        let verified = verify_proof(&mut rng, &derived_proof, &key_graph, Some(challenge), None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1870,13 +1820,8 @@ mod tests {
         )
         .unwrap();
 
-        let verified = verify_proof_string(
-            &mut rng,
-            &derived_proof.vp,
-            KEY_GRAPH,
-            Some(challenge),
-            None,
-        );
+        let verified =
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
 
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -2020,13 +1965,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         )
         .unwrap();
 
-        let verified = verify_proof_string(
-            &mut rng,
-            &derived_proof.vp,
-            KEY_GRAPH,
-            Some(challenge),
-            None,
-        );
+        let verified =
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2143,11 +2083,11 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let secret = b"SECRET";
 
         let challenge1 = "challenge1";
-        let request1 = blind_sign_request_string(&mut rng, secret, Some(challenge1)).unwrap();
-        let verified1 = verify_blind_sig_request_string(
+        let request1 = request_blind_sign_string(&mut rng, secret, Some(challenge1), None).unwrap();
+        let verified1 = verify_blind_sign_request_string(
             &mut rng,
             &request1.commitment,
-            &request1.pok_for_commitment,
+            &request1.pok_for_commitment.unwrap(),
             Some(challenge1),
         );
         assert!(verified1.is_ok());
@@ -2165,11 +2105,11 @@ _:b1 <http://schema.org/name> "ABC inc." .
         assert!(result1.is_ok(), "{:?}", result1);
 
         let challenge3 = "challenge3";
-        let request3 = blind_sign_request_string(&mut rng, secret, Some(challenge3)).unwrap();
-        let verified3 = verify_blind_sig_request_string(
+        let request3 = request_blind_sign_string(&mut rng, secret, Some(challenge3), None).unwrap();
+        let verified3 = verify_blind_sign_request_string(
             &mut rng,
             &request3.commitment,
-            &request3.pok_for_commitment,
+            &request3.pok_for_commitment.unwrap(),
             Some(challenge3),
         );
         assert!(verified3.is_ok());
@@ -2209,15 +2149,10 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
         )
         .unwrap();
-        println!("derived_proof: {}", derived_proof.vp);
+        println!("derived_proof: {}", derived_proof);
 
-        let verified = verify_proof_string(
-            &mut rng,
-            &derived_proof.vp,
-            KEY_GRAPH,
-            Some(challenge),
-            None,
-        );
+        let verified =
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2227,11 +2162,12 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let secret1 = b"SECRET1";
         let challenge1 = "challenge1";
-        let request1 = blind_sign_request_string(&mut rng, secret1, Some(challenge1)).unwrap();
-        let verified1 = verify_blind_sig_request_string(
+        let request1 =
+            request_blind_sign_string(&mut rng, secret1, Some(challenge1), None).unwrap();
+        let verified1 = verify_blind_sign_request_string(
             &mut rng,
             &request1.commitment,
-            &request1.pok_for_commitment,
+            &request1.pok_for_commitment.unwrap(),
             Some(challenge1),
         );
         assert!(verified1.is_ok());
@@ -2250,11 +2186,12 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let secret3 = b"SECRET3";
         let challenge3 = "challenge3";
-        let request3 = blind_sign_request_string(&mut rng, secret3, Some(challenge3)).unwrap();
-        let verified3 = verify_blind_sig_request_string(
+        let request3 =
+            request_blind_sign_string(&mut rng, secret3, Some(challenge3), None).unwrap();
+        let verified3 = verify_blind_sign_request_string(
             &mut rng,
             &request3.commitment,
-            &request3.pok_for_commitment,
+            &request3.pok_for_commitment.unwrap(),
             Some(challenge3),
         );
         assert!(verified3.is_ok());
@@ -2303,11 +2240,11 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let secret = b"SECRET";
 
         let challenge1 = "challenge1";
-        let request1 = blind_sign_request_string(&mut rng, secret, Some(challenge1)).unwrap();
-        let verified1 = verify_blind_sig_request_string(
+        let request1 = request_blind_sign_string(&mut rng, secret, Some(challenge1), None).unwrap();
+        let verified1 = verify_blind_sign_request_string(
             &mut rng,
             &request1.commitment,
-            &request1.pok_for_commitment,
+            &request1.pok_for_commitment.unwrap(),
             Some(challenge1),
         );
         assert!(verified1.is_ok());
@@ -2333,6 +2270,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let deanon_map = get_example_deanon_map_string();
 
+        let blind_sign_request =
+            request_blind_sign_string(&mut rng, secret, None, Some(true)).unwrap();
+
         let challenge = "abcde";
 
         let derived_proof = derive_proof_string(
@@ -2343,29 +2283,24 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret),
-            Some(true),
+            Some(blind_sign_request),
         )
         .unwrap();
-        assert!(derived_proof.blinding.is_some());
 
-        let verified = verify_proof_string(
-            &mut rng,
-            &derived_proof.vp,
-            KEY_GRAPH,
-            Some(challenge),
-            None,
-        );
+        let verified =
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
     #[test]
-    fn derive_and_verify_proof_with_only_commitment_success() {
+    fn derive_and_verify_proof_with_only_blind_sign_request_success() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
         let secret = b"SECRET";
+        let blind_sign_request =
+            request_blind_sign_string(&mut rng, secret, None, Some(true)).unwrap();
 
         let challenge = "abcde";
-
         let derived_proof = derive_proof_string(
             &mut rng,
             &vec![],
@@ -2374,18 +2309,12 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret),
-            Some(true),
+            Some(blind_sign_request),
         )
         .unwrap();
-        assert!(derived_proof.blinding.is_some());
 
-        let verified = verify_proof_string(
-            &mut rng,
-            &derived_proof.vp,
-            KEY_GRAPH,
-            Some(challenge),
-            None,
-        );
+        let verified =
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 }
