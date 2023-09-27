@@ -42,6 +42,7 @@ pub type Fr = <Bls12_381 as Pairing>::ScalarField;
 pub type Proof = ProofOrig<Bls12_381, G1Affine>;
 pub type Statements = StatementsOrig<Bls12_381, <Bls12_381 as Pairing>::G1Affine>;
 pub type BBSPlusHash = Blake2b512;
+pub type BBSPlusDefaultFieldHasher = DefaultFieldHasher<BBSPlusHash>;
 pub type BBSPlusParams = SignatureParamsG1<Bls12_381>;
 pub type BBSPlusKeypair = KeypairG2<Bls12_381>;
 pub type BBSPlusSecretKey = SecretKey<Fr>;
@@ -164,13 +165,13 @@ pub fn canonicalize_graph(
     Ok((canonicalized_graph, global_issued_identifiers_map))
 }
 
-pub fn get_hasher() -> DefaultFieldHasher<Blake2b512> {
-    <DefaultFieldHasher<Blake2b512> as HashToField<Fr>>::new(MAP_TO_SCALAR_AS_HASH_DST)
+pub fn get_hasher() -> BBSPlusDefaultFieldHasher {
+    <BBSPlusDefaultFieldHasher as HashToField<Fr>>::new(MAP_TO_SCALAR_AS_HASH_DST)
 }
 
 pub fn hash_terms_to_field(
     terms: &Vec<Term>,
-    hasher: &DefaultFieldHasher<Blake2b512>,
+    hasher: &BBSPlusDefaultFieldHasher,
 ) -> Result<Vec<Fr>, RDFProofsError> {
     terms
         .iter()
@@ -180,7 +181,7 @@ pub fn hash_terms_to_field(
 
 pub fn hash_term_to_field(
     term: TermRef,
-    hasher: &DefaultFieldHasher<Blake2b512>,
+    hasher: &BBSPlusDefaultFieldHasher,
 ) -> Result<Fr, RDFProofsError> {
     hasher
         .hash_to_field(term.to_string().as_bytes(), 1)
@@ -190,7 +191,7 @@ pub fn hash_term_to_field(
 
 pub fn hash_byte_to_field(
     byte: &[u8],
-    hasher: &DefaultFieldHasher<Blake2b512>,
+    hasher: &BBSPlusDefaultFieldHasher,
 ) -> Result<Fr, RDFProofsError> {
     hasher
         .hash_to_field(byte, 1)

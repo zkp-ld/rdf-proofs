@@ -29,6 +29,7 @@ pub enum RDFProofsError {
     LanguageTagParse(oxrdf::LanguageTagParseError),
     DeAnonymization,
     InvalidVP,
+    InvalidPPID,
     BlankNodeCollision,
     DisclosedVCIsNotSubsetOfOriginalVC,
     DeriveProofValue,
@@ -44,6 +45,7 @@ pub enum RDFProofsError {
     InvalidChallengeDatatype,
     MessageSizeOverflow,
     MissingSecret,
+    MissingSecretOrDomain,
     Other(String),
 }
 
@@ -94,6 +96,7 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::LanguageTagParse(_) => write!(f, "language tag parse error"),
             RDFProofsError::DeAnonymization => write!(f, "deanonymization error"),
             RDFProofsError::InvalidVP => write!(f, "invalid VP error"),
+            RDFProofsError::InvalidPPID => write!(f, "VP contains invalid PPID"),   
             RDFProofsError::BlankNodeCollision => write!(f, "blank node collision error"),
             RDFProofsError::DisclosedVCIsNotSubsetOfOriginalVC => {
                 write!(f, "disclosed VC is not subset of original VC error")
@@ -133,6 +136,12 @@ impl std::fmt::Display for RDFProofsError {
                 write!(
                     f,
                     "secret must be given to derive proof with blind signature"
+                )
+            }
+            RDFProofsError::MissingSecretOrDomain => {
+                write!(
+                    f,
+                    "both `secret` and `domain` must be given if `with_nym` is true"
                 )
             }
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
