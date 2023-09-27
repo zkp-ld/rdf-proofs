@@ -555,28 +555,43 @@ fn build_vp(
         ));
     }
 
-    // use PPID as holder's ID if it is given, otherwise blank node is used
-    let vp_holder_id: NamedOrBlankNode = if let Some(ppid) = ppid {
-        let nym_multibase = ark_to_base64url(&ppid.ppid)?;
-        NamedNode::new(format!("{}{}", PPID_PREFIX, nym_multibase))?.into()
-    } else {
-        BlankNode::default().into()
-    };
-    vp.insert(QuadRef::new(
-        &vp_id,
-        HOLDER,
-        &vp_holder_id,
-        GraphNameRef::DefaultGraph,
-    ));
-
-    // add secret commitment if exists
-    if let Some(req) = blind_sign_request {
-        vp.insert(QuadRef::new(
-            &vp_holder_id,
-            SECRET_COMMITMENT,
-            LiteralRef::new_typed_literal(&ark_to_base64url(&req.commitment)?, MULTIBASE),
-            GraphNameRef::DefaultGraph,
-        ));
+    // use PPID as holder's ID if it is given, otherwise blank node is used,
+    // and add secret commitment if exists
+    match (ppid, blind_sign_request) {
+        (None, None) => (),
+        (None, Some(req)) => {
+            let vp_holder_id = BlankNode::default();
+            vp.insert(QuadRef::new(
+                &vp_id,
+                HOLDER,
+                &vp_holder_id,
+                GraphNameRef::DefaultGraph,
+            ));
+            vp.insert(QuadRef::new(
+                &vp_holder_id,
+                SECRET_COMMITMENT,
+                LiteralRef::new_typed_literal(&ark_to_base64url(&req.commitment)?, MULTIBASE),
+                GraphNameRef::DefaultGraph,
+            ));
+        }
+        (Some(ppid), _) => {
+            let nym_multibase = ark_to_base64url(&ppid.ppid)?;
+            let vp_holder_id = NamedNode::new(format!("{}{}", PPID_PREFIX, nym_multibase))?;
+            vp.insert(QuadRef::new(
+                &vp_id,
+                HOLDER,
+                &vp_holder_id,
+                GraphNameRef::DefaultGraph,
+            ));
+            if let Some(req) = blind_sign_request {
+                vp.insert(QuadRef::new(
+                    &vp_holder_id,
+                    SECRET_COMMITMENT,
+                    LiteralRef::new_typed_literal(&ark_to_base64url(&req.commitment)?, MULTIBASE),
+                    GraphNameRef::DefaultGraph,
+                ));
+            }
+        }
     }
 
     // convert disclosed VC graphs (triples) into disclosed VC dataset (quads)
