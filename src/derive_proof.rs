@@ -5,17 +5,18 @@ use crate::{
     common::{
         canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
         get_hasher, get_vc_from_ntriples, hash_byte_to_field, hash_term_to_field, is_nym,
-        multibase_to_ark, randomize_bnodes, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey,
-        BBSPlusSignature, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt, PoKBBSPlusWit, Proof,
-        ProofWithIndexMap, StatementIndexMap, Statements,
+        multibase_to_ark, randomize_bnodes, reorder_vc_triples, BBSPlusDefaultFieldHasher,
+        BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr, PedersenCommitmentStmt,
+        PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap, StatementIndexMap, Statements,
     },
+    constants::PPID_PREFIX,
     context::{
         ASSERTION_METHOD, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN, HOLDER,
         MULTIBASE, PROOF, PROOF_PURPOSE, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL,
         VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
-    key_gen::generate_params,
+    key_gen::{generate_params, generate_ppid, PPID},
     key_graph::KeyGraph,
     ordered_triple::{OrderedNamedOrBlankNode, OrderedVerifiableCredentialGraphViews},
     signature::verify,
@@ -24,9 +25,7 @@ use crate::{
         VerifiableCredentialTriples, VerifiablePresentation,
     },
 };
-use ark_ff::field_hashers::DefaultFieldHasher;
 use ark_std::rand::RngCore;
-use blake2::Blake2b512;
 use chrono::offset::Utc;
 use multibase::Base;
 use oxrdf::{
@@ -52,6 +51,7 @@ pub fn derive_proof<R: RngCore>(
     domain: Option<&str>,
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequest>,
+    with_ppid: Option<bool>,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
@@ -121,9 +121,17 @@ pub fn derive_proof<R: RngCore>(
         )
         .unzip();
 
+    // get PPID
+    let ppid = get_ppid(&domain, &secret, with_ppid)?;
+
     // build VP draft (= canonicalized VP without proofValue) based on disclosed VCs
-    let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) =
-        build_vp(disclosed_vcs, &challenge, &domain, &blind_sign_request)?;
+    let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) = build_vp(
+        disclosed_vcs,
+        &challenge,
+        &domain,
+        &blind_sign_request,
+        &ppid,
+    )?;
 
     // decompose VP draft into graphs
     let VerifiablePresentation {
@@ -233,6 +241,7 @@ pub fn derive_proof<R: RngCore>(
         &vp_draft,
         challenge,
         &blind_sign_request,
+        &ppid,
     )?;
 
     // add derived proof value to VP
@@ -260,6 +269,7 @@ pub fn derive_proof_string<R: RngCore>(
     domain: Option<&str>,
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequestString>,
+    with_ppid: Option<bool>,
 ) -> Result<String, RDFProofsError> {
     // construct input for `derive_proof` from string-based input
     let vc_pairs = vc_pairs
@@ -296,9 +306,31 @@ pub fn derive_proof_string<R: RngCore>(
         domain,
         secret,
         blind_sign_request,
+        with_ppid,
     )?;
 
     Ok(rdf_canon::serialize(&derived_proof))
+}
+
+fn get_ppid(
+    domain: &Option<&str>,
+    secret: &Option<&[u8]>,
+    with_nym: Option<bool>,
+) -> Result<Option<PPID>, RDFProofsError> {
+    let with_nym = match with_nym {
+        Some(v) => v,
+        None => false,
+    };
+
+    if !with_nym {
+        return Ok(None);
+    }
+
+    if let (Some(domain), Some(secret)) = (domain, secret) {
+        Ok(Some(generate_ppid(domain, secret)?))
+    } else {
+        Err(RDFProofsError::MissingSecretOrDomain)
+    }
 }
 
 pub(crate) fn get_deanon_map_from_string(
@@ -459,6 +491,7 @@ fn build_vp(
     challenge: &Option<&str>,
     domain: &Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
+    ppid: &Option<PPID>,
 ) -> Result<(Dataset, HashMap<String, String>, Vec<BlankNode>), RDFProofsError> {
     let vp_id = BlankNode::default();
     let vp_proof_id = BlankNode::default();
@@ -522,15 +555,22 @@ fn build_vp(
         ));
     }
 
-    // add secret commitment
+    // use PPID as holder's ID if it is given, otherwise blank node is used
+    let vp_holder_id: NamedOrBlankNode = if let Some(ppid) = ppid {
+        let nym_multibase = ark_to_base64url(&ppid.ppid)?;
+        NamedNode::new(format!("{}{}", PPID_PREFIX, nym_multibase))?.into()
+    } else {
+        BlankNode::default().into()
+    };
+    vp.insert(QuadRef::new(
+        &vp_id,
+        HOLDER,
+        &vp_holder_id,
+        GraphNameRef::DefaultGraph,
+    ));
+
+    // add secret commitment if exists
     if let Some(req) = blind_sign_request {
-        let vp_holder_id = BlankNode::default();
-        vp.insert(QuadRef::new(
-            &vp_id,
-            HOLDER,
-            &vp_holder_id,
-            GraphNameRef::DefaultGraph,
-        ));
         vp.insert(QuadRef::new(
             &vp_holder_id,
             SECRET_COMMITMENT,
@@ -829,6 +869,7 @@ fn derive_proof_value<R: RngCore>(
     canonicalized_vp: &Dataset,
     challenge: Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
+    ppid: &Option<PPID>,
 ) -> Result<String, RDFProofsError> {
     let hasher = get_hasher();
 
@@ -912,34 +953,50 @@ fn derive_proof_value<R: RngCore>(
             disclosed.clone(),
         ));
     }
+    // statement for PPID
+    let mut ppid_index = None;
+    if let Some(ppid) = ppid {
+        statements.add(PedersenCommitmentStmt::new_statement_from_params(
+            vec![ppid.base],
+            ppid.ppid,
+        ));
+        ppid_index = Some(statements.len() - 1);
+    }
     // statement for secret commitment
+    let mut secret_commitment_index = None;
     if let Some(req) = blind_sign_request {
         statements.add(PedersenCommitmentStmt::new_statement_from_params(
             vec![params_for_commitment.h_0, params_for_commitment.h[0]],
             req.commitment,
         ));
+        secret_commitment_index = Some(statements.len() - 1);
     }
-    let secret_commitment_index = statements.len() - 1;
 
     // build meta statements
     let mut meta_statements = MetaStatements::new();
-    // all embedded secrets must be equivalent
+
+    // proof of equality for embedded secrets
     let mut secret_equiv_set: BTreeSet<(usize, usize)> = is_bounds
         .iter()
         .enumerate()
         .filter(|(_, &is_bound)| is_bound)
         .map(|(i, _)| (i, 0)) // `0` is the index for embedded secret in VC
         .collect();
-    if blind_sign_request.is_some() {
-        // add secret commitment to the proof of equalities
-        // `1` corresponds to the committed secret in Pedersen Commitment, whereas `0` corresponds to the blinding
-        secret_equiv_set.insert((secret_commitment_index, 1));
+    // add PPID to the proof of equalities if exists
+    if let Some(idx) = ppid_index {
+        // `0` corresponds to the committed secret in PPID
+        secret_equiv_set.insert((idx, 0));
     }
-
+    // add secret commitment to the proof of equalities if exists
+    if let Some(idx) = secret_commitment_index {
+        // `1` corresponds to the committed secret in Pedersen Commitment (`0` corresponds to the blinding)
+        secret_equiv_set.insert((idx, 1));
+    }
     if secret_equiv_set.len() > 1 {
         meta_statements.add_witness_equality(EqualWitnesses(secret_equiv_set));
     }
-    // for equivalent attributes
+
+    // proof of equality for attributes
     for (_, equiv_vec) in equivs {
         let equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
         meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
@@ -961,6 +1018,16 @@ fn derive_proof_value<R: RngCore>(
             signature,
             undisclosed.clone(),
         ));
+    }
+    // witness for PPID
+    if ppid.is_some() {
+        if let Some(s) = secret {
+            witnesses.add(Witness::PedersenCommitment(vec![hash_byte_to_field(
+                s, &hasher,
+            )?]));
+        } else {
+            return Err(RDFProofsError::MissingSecret);
+        }
     }
     // witness for secret commitment
     if let Some(req) = blind_sign_request {
@@ -1019,7 +1086,7 @@ fn get_disclosed_and_undisclosed_terms(
     original_vc_triples: &VerifiableCredentialTriples,
     vc_index: usize,
     secret: Option<&[u8]>,
-    hasher: &DefaultFieldHasher<Blake2b512>,
+    hasher: &BBSPlusDefaultFieldHasher,
 ) -> Result<DisclosedAndUndisclosedTerms, RDFProofsError> {
     let mut disclosed_terms = BTreeMap::<usize, Fr>::new();
     let mut undisclosed_terms = BTreeMap::<usize, Fr>::new();
@@ -1097,7 +1164,7 @@ fn build_disclosed_and_undisclosed_terms(
     disclosed_terms: &mut BTreeMap<usize, Fr>,
     undisclosed_terms: &mut BTreeMap<usize, Fr>,
     equivs: &mut HashMap<NamedOrBlankNode, Vec<(usize, usize)>>,
-    hasher: &DefaultFieldHasher<Blake2b512>,
+    hasher: &BBSPlusDefaultFieldHasher,
 ) -> Result<(), RDFProofsError> {
     let predicate_index = subject_index + 1;
     let object_index = subject_index + 2;
@@ -1416,6 +1483,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof.vp: {}", rdf_canon::serialize(&derived_proof));
@@ -1443,6 +1511,7 @@ mod tests {
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -1512,6 +1581,7 @@ mod tests {
             domain,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain).is_ok());
@@ -1535,6 +1605,7 @@ mod tests {
             &key_graph,
             None,
             domain,
+            None,
             None,
             None,
         )
@@ -1562,6 +1633,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1583,6 +1655,7 @@ mod tests {
             &vcs,
             &deanon_map,
             &key_graph,
+            None,
             None,
             None,
             None,
@@ -1627,6 +1700,7 @@ mod tests {
             domain,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(
@@ -1654,6 +1728,7 @@ mod tests {
             domain,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1679,6 +1754,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1700,6 +1776,7 @@ mod tests {
             &vc_pairs,
             &deanon_map,
             KEY_GRAPH,
+            None,
             None,
             None,
             None,
@@ -1784,6 +1861,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
@@ -1814,6 +1892,7 @@ mod tests {
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -1874,6 +1953,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         );
         assert!(matches!(
             derived_proof,
@@ -1904,6 +1984,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -1962,6 +2043,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(secret),
             None,
+            None,
         )
         .unwrap();
 
@@ -1999,6 +2081,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(secret),
             None,
+            None,
         );
         assert!(matches!(
             derived_proof,
@@ -2032,6 +2115,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -2147,6 +2231,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(secret),
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof);
@@ -2229,6 +2314,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(secret1),
             None,
+            None,
         );
         assert!(derived_proof.is_err(), "{:?}", derived_proof)
     }
@@ -2284,6 +2370,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(secret),
             Some(blind_sign_request),
+            None,
         )
         .unwrap();
 
@@ -2310,11 +2397,104 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(secret),
             Some(blind_sign_request),
+            None,
         )
         .unwrap();
 
         let verified =
             verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_ppid_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let secret = b"SECRET";
+
+        let vc_pairs = vec![
+            VcPairString::new(
+                VC_1,
+                VC_PROOF_BOUND_1,
+                DISCLOSED_VC_1,
+                DISCLOSED_VC_PROOF_BOUND_1,
+            ),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
+        ];
+
+        let deanon_map = get_example_deanon_map_string();
+
+        let challenge = "abcde";
+        let domain = "example.org";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            Some(challenge),
+            Some(domain),
+            Some(secret),
+            None,
+            Some(true),
+        )
+        .unwrap();
+        println!("derived_proof:\n{}", derived_proof);
+
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            Some(domain),
+        );
+        assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_ppid_and_secret_commitment_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let secret = b"SECRET";
+
+        let vc_pairs = vec![
+            VcPairString::new(
+                VC_1,
+                VC_PROOF_BOUND_1,
+                DISCLOSED_VC_1,
+                DISCLOSED_VC_PROOF_BOUND_1,
+            ),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
+        ];
+
+        let deanon_map = get_example_deanon_map_string();
+
+        let blind_sign_request =
+            request_blind_sign_string(&mut rng, secret, None, Some(true)).unwrap();
+
+        let challenge = "abcde";
+        let domain = "example.org";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            Some(challenge),
+            Some(domain),
+            Some(secret),
+            Some(blind_sign_request),
+            Some(true),
+        )
+        .unwrap();
+
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            Some(domain),
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 }

@@ -5,12 +5,13 @@ use crate::{
         BBSPlusHash, BBSPlusPublicKey, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt,
         ProofWithIndexMap, Statements,
     },
+    constants::PPID_PREFIX,
     context::{
         CHALLENGE, DOMAIN, HOLDER, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE,
         VERIFICATION_METHOD,
     },
     error::RDFProofsError,
-    key_gen::generate_params,
+    key_gen::{generate_params, generate_ppid_base},
     key_graph::KeyGraph,
     multibase_to_ark,
     ordered_triple::OrderedNamedOrBlankNode,
@@ -97,9 +98,13 @@ pub fn verify_proof<R: RngCore>(
         disclosed_vcs: c14n_disclosed_vc_graphs,
     } = (&canonicalized_vp).try_into()?;
 
-    // get secret commitiment
-    let secret_commitiment = get_secret_commitment(&vp_metadata)?;
-    println!("secret_commitment: {:#?}", secret_commitiment);
+    // get PPID
+    let ppid = get_ppid(&vp_metadata)?;
+    println!("PPID: {:#?}", ppid);
+
+    // get secret commitment
+    let secret_commitment = get_secret_commitment(&vp_metadata)?;
+    println!("secret_commitment: {:#?}", secret_commitment);
 
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
@@ -188,33 +193,53 @@ pub fn verify_proof<R: RngCore>(
             disclosed.clone(),
         ));
     }
+    // statement for PPID
+    let mut ppid_index = None;
+    if let Some(ppid) = ppid {
+        if let Some(domain) = domain {
+            let base = generate_ppid_base(domain)?;
+            statements.add(PedersenCommitmentStmt::new_statement_from_params(
+                vec![base],
+                ppid,
+            ));
+            ppid_index = Some(statements.len() - 1);
+        }
+    }
     // statement for secret commitment
-    if let Some(s) = secret_commitiment {
+    let mut secret_commitment_index = None;
+    if let Some(s) = secret_commitment {
         statements.add(PedersenCommitmentStmt::new_statement_from_params(
             vec![params_for_commitment.h_0, params_for_commitment.h[0]],
             s,
         ));
+        secret_commitment_index = Some(statements.len() - 1);
     }
-    let secret_commitment_index = statements.len() - 1;
 
     // build meta statements
     let mut meta_statements = MetaStatements::new();
-    // all embedded secrets must be equivalent
+
+    // proof of equality for embedded secrets
     let mut secret_equiv_set: BTreeSet<(usize, usize)> = is_bounds
         .iter()
         .enumerate()
         .filter(|(_, &is_bound)| is_bound)
         .map(|(i, _)| (i, 0)) // `0` is the index for embedded secret in VC
         .collect();
-    if secret_commitiment.is_some() {
-        // add secret commitment to the proof of equalities
-        // `1` corresponds to the committed secret in Pedersen Commitment, whereas `0` corresponds to the blinding
-        secret_equiv_set.insert((secret_commitment_index, 1));
+    // add PPID to the proof of equalities if exists
+    if let Some(idx) = ppid_index {
+        // `0` corresponds to the committed secret in PPID
+        secret_equiv_set.insert((idx, 0));
+    }
+    // add secret commitment to the proof of equalities if exists
+    if let Some(idx) = secret_commitment_index {
+        // `1` corresponds to the committed secret in Pedersen Commitment (`0` corresponds to the blinding)
+        secret_equiv_set.insert((idx, 1));
     }
     if secret_equiv_set.len() > 1 {
         meta_statements.add_witness_equality(EqualWitnesses(secret_equiv_set));
     }
-    // for equivalent attributes
+
+    // proof of equality for attributes
     for (_, equiv_vec) in equivs {
         let equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
         meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
@@ -246,6 +271,20 @@ pub fn verify_proof_string<R: RngCore>(
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
 
     verify_proof(rng, &vp, &key_graph, challenge, domain)
+}
+
+fn get_ppid(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {
+    let vp_subject = metadata
+        .subject_for_predicate_object(TYPE, VERIFIABLE_PRESENTATION_TYPE)
+        .ok_or(RDFProofsError::InvalidVP)?;
+    let holder_subject = match metadata.object_for_subject_predicate(vp_subject, HOLDER) {
+        Some(TermRef::NamedNode(n)) => n.as_str(),
+        _ => return Ok(None),
+    };
+    let ppid_multibase = holder_subject
+        .strip_prefix(PPID_PREFIX)
+        .ok_or(RDFProofsError::InvalidPPID)?;
+    Ok(Some(multibase_to_ark(ppid_multibase)?))
 }
 
 fn get_secret_commitment(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {

@@ -1,9 +1,13 @@
 use crate::{
-    common::{BBSPlusHash, BBSPlusKeypair, BBSPlusParams},
-    constants::GENERATOR_SEED,
+    common::{get_hasher, hash_byte_to_field, BBSPlusHash, BBSPlusKeypair, BBSPlusParams},
+    constants::{GENERATOR_SEED, PPID_SEED},
     error::RDFProofsError,
 };
+use ark_bls12_381::G1Affine;
+use ark_ec::Group;
+use ark_ff::PrimeField;
 use ark_std::rand::RngCore;
+use dock_crypto_utils::{concat_slices, hashing_utils::projective_group_elem_from_try_and_incr};
 
 pub fn generate_params(message_count: u32) -> BBSPlusParams {
     // Note: Parameters here are shared among all the issuers.
@@ -16,6 +20,38 @@ pub fn generate_keypair<R: RngCore>(rng: &mut R) -> Result<BBSPlusKeypair, RDFPr
     let base_params = generate_params(1);
 
     Ok(BBSPlusKeypair::generate_using_rng(rng, &base_params))
+}
+
+pub struct PPID {
+    pub ppid: G1Affine,
+    pub base: G1Affine,
+}
+
+pub fn generate_ppid_base(domain: &str) -> Result<G1Affine, RDFProofsError> {
+    // H(domain)
+    let base = projective_group_elem_from_try_and_incr::<G1Affine, BBSPlusHash>(&concat_slices!(
+        PPID_SEED,
+        domain.as_bytes()
+    ));
+    Ok(base.into())
+}
+
+pub fn generate_ppid(domain: &str, secret: &[u8]) -> Result<PPID, RDFProofsError> {
+    // secret
+    let hasher = get_hasher();
+    let secret_int = hash_byte_to_field(secret, &hasher)?;
+
+    // H(domain)
+    let base = projective_group_elem_from_try_and_incr::<G1Affine, BBSPlusHash>(&concat_slices!(
+        PPID_SEED,
+        domain.as_bytes()
+    ));
+
+    // H(domain)^secret
+    Ok(PPID {
+        ppid: base.mul_bigint(secret_int.into_bigint()).into(),
+        base: base.into(),
+    })
 }
 
 #[cfg(test)]
