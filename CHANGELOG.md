@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.1] - 2023-10-02
+
+### Changed
+
+- change `proofPurpose` of VP from `assertionMethod` to `authentication` to align with the spec
+
 ## [0.8.0] - 2023-09-28
 
 ### Added
