@@ -30,6 +30,8 @@ pub const VERIFICATION_METHOD: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#verificationMethod");
 pub const ASSERTION_METHOD: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#assertionMethod");
+pub const AUTHENTICATION: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://w3id.org/security#authenticationMethod");
 pub const PUBLIC_KEY_MULTIBASE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://w3id.org/security#publicKeyMultibase");
 pub const SECRET_KEY_MULTIBASE: NamedNodeRef =
