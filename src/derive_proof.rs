@@ -4,16 +4,19 @@ use crate::{
     blind_signature::{blind_verify, BlindSignRequest, BlindSignRequestString},
     common::{
         canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
-        get_hasher, get_vc_from_ntriples, hash_byte_to_field, hash_term_to_field, is_nym,
-        multibase_to_ark, randomize_bnodes, reorder_vc_triples, BBSPlusDefaultFieldHasher,
-        BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr, PedersenCommitmentStmt,
-        PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap, StatementIndexMap, Statements,
+        get_hasher, get_term_from_string, get_vc_from_ntriples, hash_byte_to_field,
+        hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes, reorder_vc_triples,
+        BBSPlusDefaultFieldHasher, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr,
+        PedersenCommitmentStmt, PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap,
+        ProvingKey, R1CSCircomWitness, StatementIndexMap, Statements, R1CS,
     },
     constants::PPID_PREFIX,
     context::{
-        AUTHENTICATION, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN, HOLDER,
-        MULTIBASE, PROOF, PROOF_PURPOSE, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL,
-        VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
+        AUTHENTICATION, CHALLENGE, CIRCUIT, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN,
+        HOLDER, MULTIBASE, PREDICATE, PREDICATE_TYPE, PREDICATE_VAL, PREDICATE_VAR, PRIVATE,
+        PRIVATE_VARIABLE, PROOF, PROOF_PURPOSE, PROOF_VALUE, PUBLIC, PUBLIC_VARIABLE,
+        SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
+        VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
     key_gen::{generate_params, generate_ppid, PPID},
@@ -29,17 +32,75 @@ use ark_std::rand::RngCore;
 use chrono::offset::Utc;
 use multibase::Base;
 use oxrdf::{
-    vocab::{rdf::TYPE, xsd},
-    BlankNode, Dataset, Graph, GraphNameRef, Literal, LiteralRef, NamedNode, NamedOrBlankNode,
-    Quad, QuadRef, Subject, Term, TermRef, Triple,
+    vocab::{
+        rdf::{FIRST, NIL, REST, TYPE},
+        xsd,
+    },
+    BlankNode, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode, NamedOrBlankNode, Quad,
+    QuadRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
     prelude::{EqualWitnesses, MetaStatements},
     proof_spec::ProofSpec,
+    statement::r1cs_legogroth16::R1CSCircomProver,
     witness::{Witness, Witnesses},
 };
-use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+pub struct PredicateProofStatement {
+    pub id: NamedNode,
+    pub circuit: NamedNode,
+    pub snark_proving_key: ProvingKey,
+    pub private: Vec<(String, BlankNode)>,
+    pub public: Vec<(String, Term)>,
+}
+
+impl PredicateProofStatement {
+    fn deanon_privates(
+        &self,
+        deanon_map: &HashMap<NamedOrBlankNode, Term>,
+    ) -> Result<Vec<(String, Term)>, RDFProofsError> {
+        let resolved_private = self
+            .private
+            .iter()
+            .map(|(k, v)| {
+                Ok((
+                    k.clone(),
+                    deanon_map
+                        .get(&v.to_owned().into())
+                        .ok_or(RDFProofsError::InvalidPredicate)?
+                        .clone(),
+                ))
+            })
+            .collect::<Result<Vec<_>, RDFProofsError>>()?;
+        Ok(resolved_private)
+    }
+
+    fn canonicalize_privates(
+        &self,
+        issued_identifiers_map: &HashMap<String, String>,
+    ) -> Result<Vec<(String, BlankNode)>, RDFProofsError> {
+        let canonical_privates = self
+            .private
+            .iter()
+            .map(|(k, v)| {
+                let canonical_id = issued_identifiers_map
+                    .get(v.as_str())
+                    .ok_or(RDFProofsError::InvalidPredicate)?;
+                Ok((k.clone(), BlankNode::new_unchecked(canonical_id)))
+            })
+            .collect::<Result<Vec<_>, RDFProofsError>>()?;
+        Ok(canonical_privates)
+    }
+}
+
+pub struct PredicateProofStatementString {
+    pub id: String,
+    pub circuit: String,
+    pub snark_proving_key: String,
+    pub private: Vec<(String, String)>,
+    pub public: Vec<(String, String)>,
+}
 
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
@@ -52,6 +113,7 @@ pub fn derive_proof<R: RngCore>(
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequest>,
     with_ppid: Option<bool>,
+    predicates: Option<Vec<PredicateProofStatement>>,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
@@ -131,6 +193,7 @@ pub fn derive_proof<R: RngCore>(
         &domain,
         &blind_sign_request,
         &ppid,
+        &predicates,
     )?;
 
     // decompose VP draft into graphs
@@ -242,6 +305,9 @@ pub fn derive_proof<R: RngCore>(
         challenge,
         &blind_sign_request,
         &ppid,
+        &predicates,
+        deanon_map,
+        &vp_draft_bnode_map,
     )?;
 
     // add derived proof value to VP
@@ -270,8 +336,9 @@ pub fn derive_proof_string<R: RngCore>(
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequestString>,
     with_ppid: Option<bool>,
+    predicates: Option<&Vec<PredicateProofStatementString>>,
 ) -> Result<String, RDFProofsError> {
-    // construct input for `derive_proof` from string-based input
+    // construct inputs for `derive_proof` from string-based inputs
     let vc_pairs = vc_pairs
         .iter()
         .map(|pair| {
@@ -296,6 +363,30 @@ pub fn derive_proof_string<R: RngCore>(
     } else {
         None
     };
+    let predicates = if let Some(predicates) = predicates {
+        Some(
+            predicates
+                .iter()
+                .map(|predicate| {
+                    let Term::NamedNode(predicate_id) = get_term_from_string(&predicate.id)? else {
+                        return Err(RDFProofsError::MissingPredicateURI)
+                    };
+                    let Term::NamedNode(circuit) = get_term_from_string(&predicate.circuit)? else {
+                        return Err(RDFProofsError::MissingPredicateCircuit)
+                    };
+                    Ok(PredicateProofStatement {
+                        id: predicate_id,
+                        circuit,
+                        snark_proving_key: multibase_to_ark(&predicate.snark_proving_key)?,
+                        private: get_predicate_private_map_from_string(&predicate.private)?,
+                        public: get_predicate_public_map_from_string(&predicate.public)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, RDFProofsError>>()?,
+        )
+    } else {
+        None
+    };
 
     let derived_proof = derive_proof(
         rng,
@@ -307,6 +398,7 @@ pub fn derive_proof_string<R: RngCore>(
         secret,
         blind_sign_request,
         with_ppid,
+        predicates,
     )?;
 
     Ok(rdf_canon::serialize(&derived_proof))
@@ -333,38 +425,45 @@ fn get_ppid(
     }
 }
 
-pub(crate) fn get_deanon_map_from_string(
+fn get_predicate_private_map_from_string(
+    private_map_string: &Vec<(String, String)>,
+) -> Result<Vec<(String, BlankNode)>, RDFProofsError> {
+    private_map_string
+        .iter()
+        .map(|(k, v)| {
+            let value = match get_term_from_string(v)? {
+                Term::BlankNode(n) => Ok(n),
+                _ => Err(RDFProofsError::InvalidPredicate),
+            }?;
+            Ok((k.clone(), value))
+        })
+        .collect()
+}
+
+fn get_predicate_public_map_from_string(
+    public_map_string: &Vec<(String, String)>,
+) -> Result<Vec<(String, Term)>, RDFProofsError> {
+    public_map_string
+        .iter()
+        .map(|(k, v)| {
+            let value = get_term_from_string(v)?;
+            Ok((k.clone(), value))
+        })
+        .collect()
+}
+
+fn get_deanon_map_from_string(
     deanon_map_string: &HashMap<String, String>,
 ) -> Result<HashMap<NamedOrBlankNode, Term>, RDFProofsError> {
-    let re_iri = Regex::new(r"^<([^>]+)>$")?;
-    let re_blank_node = Regex::new(r"^_:(.+)$")?;
-    let re_simple_literal = Regex::new(r#"^"([^"]+)"$"#)?;
-    let re_typed_literal = Regex::new(r#"^"([^"]+)"\^\^<([^>]+)>$"#)?;
-    let re_literal_with_langtag = Regex::new(r#"^"([^"]+)"@(.+)$"#)?;
-
     deanon_map_string
         .iter()
         .map(|(k, v)| {
-            let key: NamedOrBlankNode = if let Some(caps) = re_blank_node.captures(k) {
-                Ok(BlankNode::new_unchecked(&caps[1]).into())
-            } else if let Some(caps) = re_iri.captures(k) {
-                Ok(NamedNode::new_unchecked(&caps[1]).into())
-            } else {
-                Err(RDFProofsError::InvalidDeanonMapFormat(k.to_string()))
+            let key: NamedOrBlankNode = match get_term_from_string(k)? {
+                Term::NamedNode(n) => Ok(n.into()),
+                Term::BlankNode(n) => Ok(n.into()),
+                Term::Literal(_) => Err(RDFProofsError::InvalidDeanonMapFormat(k.to_string())),
             }?;
-
-            let value: Term = if let Some(caps) = re_iri.captures(v) {
-                Ok(NamedNode::new_unchecked(&caps[1]).into())
-            } else if let Some(caps) = re_simple_literal.captures(v) {
-                Ok(Literal::new_simple_literal(&caps[1]).into())
-            } else if let Some(caps) = re_typed_literal.captures(v) {
-                Ok(Literal::new_typed_literal(&caps[1], NamedNode::new_unchecked(&caps[2])).into())
-            } else if let Some(caps) = re_literal_with_langtag.captures(v) {
-                Ok(Literal::new_language_tagged_literal(&caps[1], &caps[2])?.into())
-            } else {
-                Err(RDFProofsError::InvalidDeanonMapFormat(v.to_string()))
-            }?;
-
+            let value = get_term_from_string(v)?;
             Ok((key, value))
         })
         .collect()
@@ -492,6 +591,7 @@ fn build_vp(
     domain: &Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
+    predicates: &Option<Vec<PredicateProofStatement>>,
 ) -> Result<(Dataset, HashMap<String, String>, Vec<BlankNode>), RDFProofsError> {
     let vp_id = BlankNode::default();
     let vp_proof_id = BlankNode::default();
@@ -591,6 +691,176 @@ fn build_vp(
                     GraphNameRef::DefaultGraph,
                 ));
             }
+        }
+    }
+
+    // add predicates if exist
+    if let Some(predicates) = predicates {
+        for predicate in predicates {
+            vp.insert(QuadRef::new(
+                &vp_id,
+                PREDICATE,
+                &predicate.id,
+                GraphNameRef::DefaultGraph,
+            ));
+            vp.insert(QuadRef::new(
+                &predicate.id,
+                TYPE,
+                PREDICATE_TYPE,
+                GraphNameRef::DefaultGraph,
+            ));
+            vp.insert(QuadRef::new(
+                &predicate.id,
+                CIRCUIT,
+                &predicate.circuit,
+                GraphNameRef::DefaultGraph,
+            ));
+
+            // add private variables
+            let mut private_iter = predicate.private.iter();
+            let mut node = BlankNode::default();
+            if let Some((var, val)) = private_iter.next() {
+                let private_id = BlankNode::default();
+                vp.insert(QuadRef::new(
+                    &predicate.id,
+                    PRIVATE,
+                    &node,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &node,
+                    FIRST,
+                    &private_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
+                    TYPE,
+                    PRIVATE_VARIABLE,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
+                    PREDICATE_VAR,
+                    LiteralRef::new_simple_literal(var),
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
+                    PREDICATE_VAL,
+                    val,
+                    GraphNameRef::DefaultGraph,
+                ));
+            }
+            for (var, val) in private_iter {
+                let private_id = BlankNode::default();
+                let new_node = BlankNode::default();
+                vp.insert(QuadRef::new(
+                    &node,
+                    REST,
+                    &new_node,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &new_node,
+                    FIRST,
+                    &private_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
+                    TYPE,
+                    PRIVATE_VARIABLE,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
+                    PREDICATE_VAR,
+                    LiteralRef::new_simple_literal(var),
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
+                    PREDICATE_VAL,
+                    val,
+                    GraphNameRef::DefaultGraph,
+                ));
+                node = new_node;
+            }
+            vp.insert(QuadRef::new(&node, REST, NIL, GraphNameRef::DefaultGraph));
+
+            // add public variables
+            let mut public_iter = predicate.public.iter();
+            let mut node = BlankNode::default();
+            if let Some((var, val)) = public_iter.next() {
+                let public_id = BlankNode::default();
+                vp.insert(QuadRef::new(
+                    &predicate.id,
+                    PUBLIC,
+                    &node,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &node,
+                    FIRST,
+                    &public_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
+                    TYPE,
+                    PUBLIC_VARIABLE,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
+                    PREDICATE_VAR,
+                    LiteralRef::new_simple_literal(var),
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
+                    PREDICATE_VAL,
+                    val,
+                    GraphNameRef::DefaultGraph,
+                ));
+            }
+            for (var, val) in public_iter {
+                let public_id = BlankNode::default();
+                let new_node = BlankNode::default();
+                vp.insert(QuadRef::new(
+                    &node,
+                    REST,
+                    &new_node,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &new_node,
+                    FIRST,
+                    &public_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
+                    TYPE,
+                    PUBLIC_VARIABLE,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
+                    PREDICATE_VAR,
+                    LiteralRef::new_simple_literal(var),
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
+                    PREDICATE_VAL,
+                    val,
+                    GraphNameRef::DefaultGraph,
+                ));
+                node = new_node;
+            }
+            vp.insert(QuadRef::new(&node, REST, NIL, GraphNameRef::DefaultGraph));
         }
     }
 
@@ -885,6 +1155,9 @@ fn derive_proof_value<R: RngCore>(
     challenge: Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
+    predicates: &Option<Vec<PredicateProofStatement>>,
+    deanon_map: &HashMap<NamedOrBlankNode, Term>,
+    vp_draft_bnode_map: &HashMap<String, String>,
 ) -> Result<String, RDFProofsError> {
     let hasher = get_hasher();
 
@@ -952,9 +1225,6 @@ fn derive_proof_value<R: RngCore>(
                 .extend(v.clone());
         }
     }
-    // drop single-element vecs from equivs
-    let equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> =
-        equivs.into_iter().filter(|(_, v)| v.len() > 1).collect();
 
     // build statements
     let mut statements = Statements::new();
@@ -986,6 +1256,20 @@ fn derive_proof_value<R: RngCore>(
         ));
         secret_commitment_index = Some(statements.len() - 1);
     }
+    // statements for predicates
+    let mut predicate_indexes = vec![];
+    if let Some(predicates) = predicates {
+        for predicate in predicates {
+            let r1cs = R1CS::from_file("circom/bls12381/less_than_public_32.r1cs").unwrap(); // TODO: fix it
+            let wasm_bytes = std::fs::read("circom/bls12381/less_than_public_32.wasm").unwrap(); // TODO: fix it
+            statements.add(R1CSCircomProver::new_statement_from_params(
+                r1cs,
+                wasm_bytes,
+                predicate.snark_proving_key.clone(),
+            )?);
+            predicate_indexes.push(statements.len() - 1);
+        }
+    }
 
     // build meta statements
     let mut meta_statements = MetaStatements::new();
@@ -1011,11 +1295,43 @@ fn derive_proof_value<R: RngCore>(
         meta_statements.add_witness_equality(EqualWitnesses(secret_equiv_set));
     }
 
-    // proof of equality for attributes
-    for (_, equiv_vec) in equivs {
-        let equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
-        meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
+    let canonicalized_predicate_private_vars = if let Some(predicates) = predicates {
+        Some(
+            predicates
+                .iter()
+                .map(|predicate| predicate.canonicalize_privates(vp_draft_bnode_map))
+                .collect::<Result<Vec<_>, RDFProofsError>>()?,
+        )
+    } else {
+        None
+    };
+
+    // proof of equality
+    for (equiv_c14n_id, equiv_vec) in equivs {
+        // add equality for attributes in credentials
+        let mut equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
+
+        // add equality for predicate private variables
+        if let Some(predicate_vars_list) = &canonicalized_predicate_private_vars {
+            for (predicate_vars, predicate_index) in
+                predicate_vars_list.iter().zip(&predicate_indexes)
+            {
+                if let NamedOrBlankNode::BlankNode(bnode_in_equiv) = &equiv_c14n_id.0 {
+                    if let Some(idx_in_predicate) = predicate_vars
+                        .iter()
+                        .position(|(_, bnode_in_private)| bnode_in_private == bnode_in_equiv)
+                    {
+                        equiv_set.insert((*predicate_index, idx_in_predicate));
+                    }
+                }
+            }
+        }
+        println!("equiv_set: {:?}", equiv_set);
+        if equiv_set.len() > 1 {
+            meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
+        }
     }
+    println!("meta_statements: {:?}", meta_statements);
 
     // build proof spec
     let context = generate_proof_spec_context(&canonicalized_vp, &index_map)?;
@@ -1053,6 +1369,27 @@ fn derive_proof_value<R: RngCore>(
             ]));
         } else {
             return Err(RDFProofsError::MissingSecret);
+        }
+    }
+    // witness for predicates
+    if let Some(predicates) = predicates {
+        for predicate in predicates {
+            let mut r1cs_wit = R1CSCircomWitness::new();
+            for (var, val) in &predicate.deanon_privates(deanon_map)? {
+                println!("{}", val);
+                r1cs_wit.set_private(
+                    var.to_string(),
+                    vec![hash_term_to_field(val.into(), &hasher)?],
+                )
+            }
+            for (var, val) in &predicate.public {
+                println!("{}", val);
+                r1cs_wit.set_public(
+                    var.to_string(),
+                    vec![hash_term_to_field(val.into(), &hasher)?],
+                )
+            }
+            witnesses.add(Witness::R1CSLegoGroth16(r1cs_wit));
         }
     }
     println!("witnesses:\n{:#?}\n", witnesses);
@@ -1256,9 +1593,10 @@ fn build_disclosed_and_undisclosed_terms(
 
 #[cfg(test)]
 mod tests {
+    use super::PredicateProofStatementString;
     use crate::{
-        blind_sign_string, blind_verify_string,
-        common::{get_dataset_from_nquads, get_graph_from_ntriples},
+        ark_to_base64url, blind_sign_string, blind_verify_string,
+        common::{get_dataset_from_nquads, get_graph_from_ntriples, CircomCircuit},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
@@ -1316,7 +1654,7 @@ mod tests {
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
     const VC_PROOF_1: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "ulyXJi_kpGXb2nUqVCRTzw03zFZyswkPLszC47yoRvUbGSkw2-v6GnY7X31hRYt4AnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <https://w3id.org/security#proofValue> "ui_TYLyZXnF1LRhdzEDrKiAWA0Tbrm1GmCHXBVnX39BTBnIbdFLc9p2jRAw0H4jzznHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -1359,7 +1697,7 @@ mod tests {
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
     "#;
     const VC_PROOF_2: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "uh-n1eUTNbs6fG9NMTPTL98zwcwfA1N4GCm0XXl__t5tMKOKU1LBfwt1f7Dtoy9dHnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <https://w3id.org/security#proofValue> "uoB9zdaILAqel15HTh6MtIkDZjoeQn2g-fqACEgZvKNMRbgGqTOmNDclM2Pv-WF7BnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -1418,46 +1756,46 @@ mod tests {
         get_deanon_map_from_string(&get_example_deanon_map_string()).unwrap()
     }
     const VP: &str = r#"
-    _:c14n10 <http://example.org/vocab/vaccine> _:c14n5 _:c14n6 .
-    _:c14n10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n6 .
-    _:c14n12 <http://example.org/vocab/isPatientOf> _:c14n10 _:c14n6 .
-    _:c14n12 <http://schema.org/worksFor> _:c14n8 _:c14n6 .
-    _:c14n12 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n6 .
-    _:c14n13 <http://purl.org/dc/terms/created> "2023-10-03T13:26:37.104284579Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n1 .
-    _:c14n13 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n1 .
-    _:c14n13 <https://w3id.org/security#challenge> "abcde" _:c14n1 .
-    _:c14n13 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n1 .
-    _:c14n13 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#authenticationMethod> _:c14n1 .
-    _:c14n13 <https://w3id.org/security#proofValue> "uomFhWQnaAgAAAAAAAAAAiAvTWnfhK5FK9n4FTbueRNfjipNVS5MNyvEPc2IJOuvQ0C3fp8hCuAIRc1_Lhf-Atw-gSU7LG7ia71FC2ozwOABP3GLWPBmU3fwEu7ooM5PYmQt1U9zsIGB1RVtG-T8huOdclYb-wiZFb7of3H6cRIcy7ujTzwgeTisDURUIZ18uiU1d5waitcTMFppTyi2StbtPjPxCObRd68AaVop3K37J1HCIIr9FjynFecH-dn3druVBnHgpeY9bKuOnneAHAgAAAAAAAAB0gQB8Y07o1FjHaYHN88Kn3VxBxMT2bTW9JFJSqSFZQS172iGa17amguXiCSLxcDNqD5R8EJ6sJak4vRyD9dEDqSyyS11Ab3OJR2VzAvWaULSUYkOFQGxe7dzPUZD_z5zGUdXRc4bq9bo8Ud259gtZJQAAAAAAAACDbkwVN7XbvtiMjGCiabreNNDeZVciqEJNyj_TEVZwNUasgovyyDL1GmbIywPUhuwDOJlMT9EHAnIZ540as7lB7m5v0-YpK2phdXCpCUz9fiEwerTsiANOFEnL8L1uRFJGi8td5XAMdG-FnlW7bX9lfBXSo_TWUNVKsMhksJ3PTgY2uhfLnsGqaeufUjtzffrklYfOW4PDounHgHlnkpxGCF6Qx_3YjZVuocrosE2oc33HDyDwVx2F1qQeeIotzwDhbqrsuwua46Tfptresn82N26hjsMCvAuYDCkKGZ8KK-5ub9PmKStqYXVwqQlM_X4hMHq07IgDThRJy_C9bkRSg8c227CciJGnNSLif3pxOmbTO3Crg9P4RM9QZhHP3V7ubm_T5ikramF1cKkJTP1-ITB6tOyIA04UScvwvW5EUhZoNXE1CsOHAKUp7sZ38rA1yRTu4tKRonOkjuirWtNlFmg1cTUKw4cApSnuxnfysDXJFO7i0pGic6SO6Kta02Xubm_T5ikramF1cKkJTP1-ITB6tOyIA04UScvwvW5EUhZoNXE1CsOHAKUp7sZ38rA1yRTu4tKRonOkjuirWtNlFmg1cTUKw4cApSnuxnfysDXJFO7i0pGic6SO6Kta02UWaDVxNQrDhwClKe7Gd_KwNckU7uLSkaJzpI7oq1rTZbVy6P89hsfsq87DvNP2W5JkM-h-jb5RM1xaiKfxupQ3TnpjmcjXrxkUfvxLhXxvip06u9RYNBi4anqLBsLjZChe7o2i6ayi1Eq_MjF7l9jlfc2LaanYDVcH6FeoOHbTQYPHNtuwnIiRpzUi4n96cTpm0ztwq4PT-ETPUGYRz91eW1jNRxi4UDb1MHfa8SAdhN9DBbBNGiOZc2UbF6BTxTt-ymheOO-NovhKjhytGLFTgYWFF85x5zuSs2hgIqYRRrKESU_LN6NvWkDEERi7twGLHBVi8lK9M1izdn_ifOxW8iXanntVleKhO4lbwnTZu4lGLOgD_Dwg9JxSmtWwCDMT6duhV8nytyLVsffWcD2N459i_QBd-Oe7XGjV5bDccea4WB-a8HXaDsLocIlq9uIbRE-pmxmieod08n91ojA8RovLXeVwDHRvhZ5Vu21_ZXwV0qP01lDVSrDIZLCdz04HmV_dAzNnGowgrBdlh88dpG2FZbTkcPdOmvc4ussVGDleGSLEjTByMbewr_W0vxV2H1UWZOH2WAo4AEaOGMtznVtYRnAG_Hxh0Nl33opKjHJZtY-RexmJqPFXnplFEUobWnvbzDGUR2HpcfqhXRBXYA140rYin8ZT2hq7RRoaaUaLy13lcAx0b4WeVbttf2V8FdKj9NZQ1UqwyGSwnc9OljhsqvcxWc17Whg89FRwQls1wzOmWGWR49oa37G1cFOWOGyq9zFZzXtaGDz0VHBCWzXDM6ZYZZHj2hrfsbVwU5Y4bKr3MVnNe1oYPPRUcEJbNcMzplhlkePaGt-xtXBTljhsqvcxWc17Whg89FRwQls1wzOmWGWR49oa37G1cFOWOGyq9zFZzXtaGDz0VHBCWzXDM6ZYZZHj2hrfsbVwUwCsfuTQjkFAt7HLPg5IlqNbtDUXlV8BSo1MO-TnkS5XZa7O2BcJjzR0fc8VHkioAx-ThPGRsf9IMPQU37SQH8fxpAf9irC-ghKxPvaH6Q1vKU8mmSikLMI7XcxstAyrghaUfEzS6V0G4bFYLJ86vyPi83tBGDDy_RLtN_er8NxgZUNyql_8ra_GRUpm62E09g2V3t1H_bL2FHMCfSok3__0xTGHSwbIgIvxnbpHADwih2jfLXmcN5_iDnFWVjVQwaMCAAAAAAAAAMrE0hLVm7PUbvSRvKZCArE8Jind71_3GZhd5r67wT8vdztp2O75J-BYHF0Bq5jY2GcfqEWDPvyv9wyP0B7aZkashM-m4EVeP4feH7p_12qH_sI5ME1L4JxDuFG962JrK-SZJiEGnAMwJOyu0B0ZV9kVAAAAAAAAAFzymO34aZzzQ5ohsvzlptWX8ZLKni7bi2Vgs-toPscfP1h51Qboucq51771E-Pm3ZK7ZrrBUnOr-J9cMDMAfANepD-P-3fTJGMTIJHT5wWUNSNFiwA5rVerqaGfuvD3WnuZXr38wogFUKYNT_u4qkhjBOrduSDWoFNkvj3S0YsjHJO7dua1NLwkpLyYAteZL7lb3yxdV6cxxxDMuzjwhkdTwF9ThqSQp7W0JUxpjs2tpQKq27L6dp1XOhWopqKoMHvOD6o9BPCSWFwA_bm35769chq0AhfSrRntgJZCQ3wqjDY5h22qeKljnWt3youPhnzaKQ0cFz4bmvbOvfu6L3IHmV_dAzNnGowgrBdlh88dpG2FZbTkcPdOmvc4ussVGAeZX90DM2cajCCsF2WHzx2kbYVltORw906a9zi6yxUYfC7uyV2squtppFcmCorsrGqoIxx0nd3eHePYbDjD4gZ8Lu7JXayq62mkVyYKiuysaqgjHHSd3d4d49hsOMPiBgeZX90DM2cajCCsF2WHzx2kbYVltORw906a9zi6yxUYfC7uyV2squtppFcmCorsrGqoIxx0nd3eHePYbDjD4gZ8Lu7JXayq62mkVyYKiuysaqgjHHSd3d4d49hsOMPiBnwu7sldrKrraaRXJgqK7KxqqCMcdJ3d3h3j2Gw4w-IGKsLfnB_YRe-C9tU8oRMfXcVg4pUCDMOsWHy_fEnbYikqwt-cH9hF74L21TyhEx9dxWDilQIMw6xYfL98SdtiKSrC35wf2EXvgvbVPKETH13FYOKVAgzDrFh8v3xJ22IpKsLfnB_YRe-C9tU8oRMfXcVg4pUCDMOsWHy_fEnbYikqwt-cH9hF74L21TyhEx9dxWDilQIMw6xYfL98SdtiKQEFAAAAAAAAAGFiY2RlAABhYoKkYWGLDQ8AAgMEBQYHCAphYhBhY4UAAQIDBGFkBaRhYYcCAwQFBgcIYWIJYWOFAAECAwRhZAU"^^<https://w3id.org/security#multibase> _:c14n1 .
-    _:c14n14 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n6 .
-    _:c14n14 <https://w3id.org/security#proof> _:c14n11 _:c14n6 .
-    _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n12 _:c14n6 .
-    _:c14n14 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
-    _:c14n14 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
-    _:c14n14 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n6 .
-    _:c14n2 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n11 .
-    _:c14n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n11 .
-    _:c14n2 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n11 .
-    _:c14n2 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n11 .
-    _:c14n2 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n11 .
-    _:c14n3 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
-    _:c14n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
-    _:c14n3 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n0 .
-    _:c14n3 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
-    _:c14n3 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n0 .
-    _:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
-    _:c14n4 <https://w3id.org/security#proof> _:c14n1 .
-    _:c14n4 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n6 .
-    _:c14n4 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n7 .
-    _:c14n5 <http://schema.org/status> "active" _:c14n7 .
-    _:c14n5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n7 .
-    _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n6 .
-    _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n7 .
-    _:c14n9 <https://w3id.org/security#proof> _:c14n0 _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n5 _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n7 .
+    _:c14n1 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n10 .
+    _:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n10 .
+    _:c14n1 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n10 .
+    _:c14n1 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n10 .
+    _:c14n1 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n10 .
+    _:c14n11 <http://purl.org/dc/terms/created> "2023-10-06T05:40:05.941640167Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n13 .
+    _:c14n11 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n13 .
+    _:c14n11 <https://w3id.org/security#challenge> "abcde" _:c14n13 .
+    _:c14n11 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n13 .
+    _:c14n11 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#authenticationMethod> _:c14n13 .
+    _:c14n11 <https://w3id.org/security#proofValue> "uomFhWQnaAgAAAAAAAAAAlWj7ySOnU5mw_rG271EltSGHfh0Sabj6_FBXzZ7GBT7TTXM-OJk2y-UjU8hAYyS9p5SkDSPYysuFjUy9RUNu4ypsNdZrRJX2E3TmTg-186q3jvPKExzchRPg7LrE6pWeqzMXck8jrsaUR1_zIsH6KKuTO5gnDEOV4Ufg8zCm7nDLetSoflGoX0d-AUrr9-C_j1WOnJ0-lOnlLr3Mg5hOjxDktjaDvUdwDJ36rFx7agxBvtUKa7deW1Ta-Vq1vFiiAgAAAAAAAACTBwTiEdk00-BvIIfqz8oDk2xDYnTLtUDSu6P0xdL0RjQuKBHV6xaVhb5qoBYP-IdGKx2-2Sk21iHIjrVlQFBup830cauPb0nhTDonFpZRwL7ncq9hXu62basWvqFM3ThJWXiTXss4OpuJW5D0E5h6JQAAAAAAAAB-w7b_iVOFQAQGHgFpp06QV6gwCTxWfLJyxKxKSK-kHpm0wTrncrlMfDmqvHqaHWlcXvv6p7dTHnX0tJLWYC9XUt2I6oyQBKKHQlBI7ZDXkk0Xq9P7QGXrH48bcAW7dTbHdgGgIIBxJ3n8mg1zvsidRWNMNUJx7nHIWxKWIRe5BGqk0y5xBZvij7h_8R64Vw4RfbjtajslQPUN0fiu3s0qP0Iq0VyjWycJ6uAn8i4kZWNWbafJLH8ki8rz_H_o3zC0n0S_-meUXC7Ok2cVmKmcZrZuC-sjgMLdJbVjhqWUD1LdiOqMkASih0JQSO2Q15JNF6vT-0Bl6x-PG3AFu3U2R3eQBscDGEj2SejHCKIW5AQ3vI2u81WOkaojzcsfMR5S3YjqjJAEoodCUEjtkNeSTRer0_tAZesfjxtwBbt1NlltLFFHMcT568va2232ixBc7DF1IviaZJdNvtrU1nxqWW0sUUcxxPnry9rbbfaLEFzsMXUi-Jpkl02-2tTWfGpS3YjqjJAEoodCUEjtkNeSTRer0_tAZesfjxtwBbt1NlltLFFHMcT568va2232ixBc7DF1IviaZJdNvtrU1nxqWW0sUUcxxPnry9rbbfaLEFzsMXUi-Jpkl02-2tTWfGpZbSxRRzHE-evL2ttt9osQXOwxdSL4mmSXTb7a1NZ8anaD_nngpqe5xaQdji-u3evtHCq1bi56QEEZ6eyhzJhQhV79oieifauuxhKLxl3re4PJGFwyCXpXH6Bgi7eedVhKPDD2T3YTIj22AH4inhAyV368j4d3voLJAa4inSwSXUd3kAbHAxhI9knoxwiiFuQEN7yNrvNVjpGqI83LHzEe17WRQdZOAXg-5RYkYZm1ubixq0p0HoNmrqa-L4hCSjEg-SkiGOJYUfBxFAgkYTauH2E2FLz5_NHR4g0mxD2_NcVmZ1okq1eLeIdzUV9RPd4cUbr5uiGObyTu2miM3SsUboOemDnsRSTr7yilMe1x8WK00oIqAJ3tLt71sr2fjSjdAXrIJwtaz3pK0--RrrgOzC2OWjzZWOna0i5WVnhcZZ_SUYwus1fQv3H5VCsXgIA0Sztj5kM0msSkvOQ9sc4bx3YBoCCAcSd5_JoNc77InUVjTDVCce5xyFsSliEXuQRUD-bXOni6wTd1ZJKGXVsu3cDKGrwRcMLtUcLCmo-bCLW73RuCJOGzemtQ-WQtWEtPjfuwiuVWJkV5o152B1BpBgNslfYVji5qEQYcG9iz0suNjVlTC8mcKN4vDspNBW71xFFH-CBvYGoSHgKZ3l0tIJylcX5FMV_FjZO03bLqO8d2AaAggHEnefyaDXO-yJ1FY0w1QnHucchbEpYhF7kELS0TeuolCiEnceAsJagqrgL7AE3FaIpDybD_b6xVaFstLRN66iUKISdx4CwlqCquAvsATcVoikPJsP9vrFVoWy0tE3rqJQohJ3HgLCWoKq4C-wBNxWiKQ8mw_2-sVWhbLS0TeuolCiEnceAsJagqrgL7AE3FaIpDybD_b6xVaFstLRN66iUKISdx4CwlqCquAvsATcVoikPJsP9vrFVoWwCMUROvw7h9P0TgM_oleY-MmLKq9MTn6Y29NKPvmCbprfIx7f4jMu8SRN84CZ0fIv6vvzRo0BC2b_XFb218o1weMHOr8tTs_YfpnJa2qoB0WmgC5Z86ol9FQqGUYi8WVCixy-FMlRZ6nwjJm_4gCSPEKeFVbmUwkqR79KdKDvuMkmrzSX20mYUp1fD6TgghZk2PRSnarn64FqMNRlkwc2K0P30L2iySXPeJEqAUf8TUekHwtVLTyDz_a9Obmz9lYuwCAAAAAAAAAOlK1niDJgDT9pxIwsMeCg3yNSt7nzQ_Ja30N2HYcts0K3EQ_3v04hCcZNINbmYwTZ98XSwMgURCHZaIV-7RvQeiuAl3770_97VvG7-bLPJj35GhJmUwK8Tbw_xBFoMz9yWTIew6ivMP3F-9W2hCyzQVAAAAAAAAAGNy0ZdMnEafcDVeEYYXTavNQsN_5yO8taRWovPJyGUU0quwoJjxTyu_wstf4jKhU32wUodzmFoPOL_qMVLX-hXbLtdBit55MNFE2mgjaOWUWAbk0RVpQrdGXSAzxXnvJ8t3NM6QHw22JEN1L_fCE1C369SkBPsAlRffB8eW8IJrw05KiuEou1_vvDGtEJnbLwX1Orps8mkJQVQ-ZM6BVw7RSvcFFAs3syJC3iO8smoCzr3qK9ACRjA7azFlBNONcbKyqbOczr0k86QWPPuYY7CjAXg73OszTc4SVhs4_oxaKnoln7pNO2VB0NjFbn2mrcrRFc_hJlLnilmo4Uf0kiZUD-bXOni6wTd1ZJKGXVsu3cDKGrwRcMLtUcLCmo-bCFQP5tc6eLrBN3VkkoZdWy7dwMoavBFwwu1RwsKaj5sICvra712P-6jgiuZixbofwrWQdF_3NrtGO6QFRbq7YB4K-trvXY_7qOCK5mLFuh_CtZB0X_c2u0Y7pAVFurtgHlQP5tc6eLrBN3VkkoZdWy7dwMoavBFwwu1RwsKaj5sICvra712P-6jgiuZixbofwrWQdF_3NrtGO6QFRbq7YB4K-trvXY_7qOCK5mLFuh_CtZB0X_c2u0Y7pAVFurtgHgr62u9dj_uo4IrmYsW6H8K1kHRf9za7RjukBUW6u2AeYUx4jiPSsMEUawCLAAqtsBaRY7_AujfoOeDybUPZNA5hTHiOI9KwwRRrAIsACq2wFpFjv8C6N-g54PJtQ9k0DmFMeI4j0rDBFGsAiwAKrbAWkWO_wLo36Dng8m1D2TQOYUx4jiPSsMEUawCLAAqtsBaRY7_AujfoOeDybUPZNA5hTHiOI9KwwRRrAIsACq2wFpFjv8C6N-g54PJtQ9k0DgEFAAAAAAAAAGFiY2RlAABhYoKkYWGLAAIDBAUGBwgKDQ9hYhBhY4UAAQIDBGFkBaRhYYcCAwQFBgcIYWIJYWOFAAECAwRhZAU"^^<https://w3id.org/security#multibase> _:c14n13 .
+    _:c14n12 <http://example.org/vocab/isPatientOf> _:c14n9 _:c14n5 .
+    _:c14n12 <http://schema.org/worksFor> _:c14n7 _:c14n5 .
+    _:c14n12 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n5 .
+    _:c14n14 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n5 .
+    _:c14n14 <https://w3id.org/security#proof> _:c14n10 _:c14n5 .
+    _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n12 _:c14n5 .
+    _:c14n14 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
+    _:c14n14 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
+    _:c14n14 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n5 .
+    _:c14n2 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
+    _:c14n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
+    _:c14n2 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n0 .
+    _:c14n2 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
+    _:c14n2 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n0 .
+    _:c14n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
+    _:c14n3 <https://w3id.org/security#proof> _:c14n13 .
+    _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n5 .
+    _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n6 .
+    _:c14n4 <http://schema.org/status> "active" _:c14n6 .
+    _:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n6 .
+    _:c14n7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n5 .
+    _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n6 .
+    _:c14n8 <https://w3id.org/security#proof> _:c14n0 _:c14n6 .
+    _:c14n8 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n4 _:c14n6 .
+    _:c14n8 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
+    _:c14n8 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
+    _:c14n8 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n6 .
+    _:c14n9 <http://example.org/vocab/vaccine> _:c14n4 _:c14n5 .
+    _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n5 .
     "#;
 
     #[test]
@@ -1499,11 +1837,19 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof.vp: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(&mut rng, &derived_proof, &key_graph, Some(challenge), None);
+        let verified = verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1530,12 +1876,19 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof);
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1545,7 +1898,7 @@ mod tests {
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let vp = get_dataset_from_nquads(VP).unwrap();
         let challenge = "abcde";
-        let verified = verify_proof(&mut rng, &vp, &key_graph, Some(challenge), None);
+        let verified = verify_proof(&mut rng, &vp, &key_graph, Some(challenge), None, None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1553,7 +1906,7 @@ mod tests {
     fn verify_proof_string_success() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let challenge = "abcde";
-        let verified = verify_proof_string(&mut rng, VP, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(&mut rng, VP, KEY_GRAPH, Some(challenge), None, None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1597,19 +1950,28 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain).is_ok());
+        assert!(verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            challenge,
+            domain,
+            None
+        )
+        .is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1623,19 +1985,27 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                domain,
+                None
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, domain).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None).is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
 
@@ -1649,19 +2019,27 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                domain,
+                None
+            ),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None).is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1675,21 +2053,29 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                domain,
+                None
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, None).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None).is_ok());
     }
 
     #[test]
@@ -1716,21 +2102,23 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain).is_ok()
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None)
+                .is_ok()
         );
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1744,19 +2132,22 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain).is_ok());
+        assert!(
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None).is_ok()
+        );
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
 
@@ -1770,19 +2161,22 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
-        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None).is_ok());
+        assert!(
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None).is_ok()
+        );
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1796,21 +2190,22 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None).is_ok());
+        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None).is_ok());
     }
 
     const DISCLOSED_VC_1_WITH_HIDDEN_LITERALS: &str = r#"
@@ -1877,11 +2272,19 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(&mut rng, &derived_proof, &key_graph, Some(challenge), None);
+        let verified = verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1911,11 +2314,18 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
 
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -1969,6 +2379,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         );
         assert!(matches!(
             derived_proof,
@@ -2003,6 +2414,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         );
 
         assert!(matches!(
@@ -2014,7 +2426,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     const VC_PROOF_BOUND_1: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "usYxFJJw9C0KHipWTTevDyU44iLEd6OWcqd1k33w0iuectnnNpDGS5D_kTULrexnpAWQCF5cBR1F0h3FXGsm2xh7Fafg49VG-Slte0XnTgDzpRqn0nqhO4I57s-b3TPVbA_t5uyJnGllyB6QcwVtRQA"^^<https://w3id.org/security#multibase> .
+    _:b0 <https://w3id.org/security#proofValue> "utXwiR3cqE_vytaKRk1jO5bijPewZ8Vx67WqHBjJ1TAN8BoEnhdu7zXyZ1WTYuLHqAWQCF5cBR1F0h3FXGsm2xh7Fafg49VG-Slte0XnTgDzpRqn0nqhO4I57s-b3TPVbA_t5uyJnGllyB6QcwVtRQA"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -2059,11 +2471,18 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             None,
             None,
+            None,
         )
         .unwrap();
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2095,6 +2514,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret),
+            None,
             None,
             None,
         );
@@ -2130,6 +2550,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -2247,12 +2668,19 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof);
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2330,6 +2758,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret1),
             None,
             None,
+            None,
         );
         assert!(derived_proof.is_err(), "{:?}", derived_proof)
     }
@@ -2386,11 +2815,18 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             Some(blind_sign_request),
             None,
+            None,
         )
         .unwrap();
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2413,11 +2849,18 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             Some(blind_sign_request),
             None,
+            None,
         )
         .unwrap();
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2452,6 +2895,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             None,
             Some(true),
+            None,
         )
         .unwrap();
         println!("derived_proof:\n{}", derived_proof);
@@ -2462,6 +2906,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             KEY_GRAPH,
             Some(challenge),
             Some(domain),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -2500,6 +2945,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             Some(blind_sign_request),
             Some(true),
+            None,
         )
         .unwrap();
 
@@ -2509,7 +2955,114 @@ _:b1 <http://schema.org/name> "ABC inc." .
             KEY_GRAPH,
             Some(challenge),
             Some(domain),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_predicates_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let vc_pairs = vec![VcPairString::new(
+            VC_1,
+            VC_PROOF_1,
+            DISCLOSED_VC_1_WITH_HIDDEN_LITERALS,
+            DISCLOSED_VC_PROOF_1,
+        )];
+
+        let mut deanon_map = get_example_deanon_map_string();
+        deanon_map.extend(get_example_deanon_map_string_with_hidden_literal());
+
+        let commit_witness_count = 1;
+        let r1cs_file_path = "circom/bls12381/less_than_public_32.r1cs";
+        let wasm_file_path = "circom/bls12381/less_than_public_32.wasm";
+        let circuit = CircomCircuit::from_r1cs_file(r1cs_file_path).unwrap();
+        let snark_pk = circuit
+            .generate_proving_key(commit_witness_count, &mut rng)
+            .unwrap();
+        let snark_pk = ark_to_base64url(&snark_pk).unwrap();
+
+        let predicates = vec![PredicateProofStatementString {
+            id: "<https://example.org/predicate/01>".to_string(),
+            circuit: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            snark_proving_key: snark_pk.clone(),
+            private: vec![("a".to_string(), "_:e5".to_string())],
+            public: vec![(
+                "b".to_string(),
+                "\"2022-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )],
+        }];
+
+        let snark_verifying_keys = HashMap::from([(
+            "<https://example.org/predicate/01>".to_string(),
+            snark_pk.clone(),
+        )]);
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&predicates),
+        )
+        .unwrap();
+
+        println!("derive_proof: {}", derived_proof);
+
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys.clone()),
+        );
+        assert!(verified.is_ok(), "{:?}", verified);
+
+        // negative test
+        let unsatisfied_predicates = vec![PredicateProofStatementString {
+            id: "<https://example.org/predicate/01>".to_string(),
+            circuit: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            snark_proving_key: snark_pk.clone(),
+            private: vec![("a".to_string(), "_:e5".to_string())],
+            public: vec![(
+                "b".to_string(),
+                "\"2019-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )],
+        }];
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&unsatisfied_predicates),
+        )
+        .unwrap();
+        println!("derive_proof: {}", derived_proof);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys),
+        );
+        assert!(matches!(
+            verified,
+            Err(RDFProofsError::ProofSystem(
+                proof_system::prelude::ProofSystemError::LegoGroth16Error(_)
+            ))
+        ));
     }
 }

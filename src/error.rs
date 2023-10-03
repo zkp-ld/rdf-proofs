@@ -18,6 +18,7 @@ pub enum RDFProofsError {
     MissingInputToDeriveProof,
     IriParse(oxiri::IriParseError),
     TtlParse(oxttl::ParseError),
+    TtlTermParse(String),
     InvalidDeanonMapFormat(String),
     VCWithoutProofValue,
     VCWithInvalidProofValue,
@@ -46,6 +47,14 @@ pub enum RDFProofsError {
     MessageSizeOverflow,
     MissingSecret,
     MissingSecretOrDomain,
+    InvalidPredicate,
+    MissingPredicateURI,
+    MissingPredicateCircuit,
+    MissingSnarkVK(String),
+    InvalidInteger(String),
+    InvalidDateTime(String),
+    DateTimeParse(chrono::ParseError),
+    ParseInt(std::num::ParseIntError),
     Other(String),
 }
 
@@ -79,6 +88,9 @@ impl std::fmt::Display for RDFProofsError {
             }
             RDFProofsError::IriParse(_) => write!(f, "IRI parse error"),
             RDFProofsError::TtlParse(e) => write!(f, "N-Triples / N-Quads parse error: {}", e),
+            RDFProofsError::TtlTermParse(e) => {
+                write!(f, "N-Triples / N-Quads term parse error: {}", e)
+            }
             RDFProofsError::InvalidDeanonMapFormat(e) => {
                 write!(f, "invalid deanon map error: {}", e)
             }
@@ -96,7 +108,7 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::LanguageTagParse(_) => write!(f, "language tag parse error"),
             RDFProofsError::DeAnonymization => write!(f, "deanonymization error"),
             RDFProofsError::InvalidVP => write!(f, "invalid VP error"),
-            RDFProofsError::InvalidPPID => write!(f, "VP contains invalid PPID"),   
+            RDFProofsError::InvalidPPID => write!(f, "VP contains invalid PPID"),
             RDFProofsError::BlankNodeCollision => write!(f, "blank node collision error"),
             RDFProofsError::DisclosedVCIsNotSubsetOfOriginalVC => {
                 write!(f, "disclosed VC is not subset of original VC error")
@@ -144,6 +156,34 @@ impl std::fmt::Display for RDFProofsError {
                     "both `secret` and `domain` must be given if `with_nym` is true"
                 )
             }
+            RDFProofsError::InvalidPredicate => {
+                write!(f, "invalid predicate (for predicate proof) error")
+            }
+            RDFProofsError::MissingPredicateURI => {
+                write!(f, "predicate (for predicate proof) must have URI as its id")
+            }
+            RDFProofsError::MissingPredicateCircuit => {
+                write!(f, "predicate (for predicate proof) must have circuit")
+            }
+            RDFProofsError::MissingSnarkVK(v) => {
+                write!(
+                    f,
+                    "missing SNARK verifying key corresponding to the predicate {}",
+                    v
+                )
+            }
+            RDFProofsError::InvalidInteger(v) => {
+                write!(f, "invalid integer: {}", v)
+            }
+            RDFProofsError::InvalidDateTime(v) => {
+                write!(
+                    f,
+                    "invalid date time (cannot convert to UNIX timestamp): {}",
+                    v
+                )
+            }
+            RDFProofsError::DateTimeParse(e) => write!(f, "date time parse error: {}", e),
+            RDFProofsError::ParseInt(e) => write!(f, "parse int error: {}", e),
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
         }
     }
@@ -214,5 +254,17 @@ impl From<oxttl::ParseError> for RDFProofsError {
 impl From<regex::Error> for RDFProofsError {
     fn from(e: regex::Error) -> Self {
         Self::InvalidDeanonMapFormat(e.to_string())
+    }
+}
+
+impl From<chrono::ParseError> for RDFProofsError {
+    fn from(e: chrono::ParseError) -> Self {
+        Self::DateTimeParse(e)
+    }
+}
+
+impl From<std::num::ParseIntError> for RDFProofsError {
+    fn from(e: std::num::ParseIntError) -> Self {
+        Self::ParseInt(e)
     }
 }

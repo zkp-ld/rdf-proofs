@@ -557,7 +557,6 @@ mod tests {
         blind_sign(&mut rng, &request.commitment, &mut vc, &key_graph).unwrap();
 
         let result = unblind(&mut vc, &request.blinding);
-
         assert!(result.is_ok());
         assert_eq!(vc.proof.triples_for_predicate(PROOF_VALUE).count(), 1)
     }

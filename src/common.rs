@@ -14,23 +14,32 @@ use bbs_plus::{
     signature::SignatureG1,
 };
 use blake2::Blake2b512;
-use chrono::Utc;
+use chrono::{DateTime, NaiveDate, Utc};
+use legogroth16::circom::{CircomCircuit as CircomCircuitOrig, R1CS as R1CSOrig};
 use multibase::Base;
 use oxrdf::{
-    vocab::{self, rdf::TYPE, xsd},
-    BlankNode, Dataset, Graph, LiteralRef, NamedNode, NamedNodeRef, SubjectRef, Term, TermRef,
-    Triple, TripleRef,
+    vocab::{
+        self,
+        rdf::TYPE,
+        xsd::{self, DATE, DATE_TIME, INTEGER},
+    },
+    BlankNode, Dataset, Graph, Literal, LiteralRef, NamedNode, NamedNodeRef, SubjectRef, Term,
+    TermRef, Triple, TripleRef,
 };
-use oxsdatatypes::DateTime;
+use oxsdatatypes::DateTime as DateTimeOxsDataTypes;
 use oxttl::{NQuadsParser, NTriplesParser};
 use proof_system::{
+    prelude::R1CSCircomWitness as R1CSCircomWitnessOrig,
     proof::Proof as ProofOrig,
     statement::{
-        bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, ped_comm::PedersenCommitment,
+        bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
+        ped_comm::PedersenCommitment,
+        r1cs_legogroth16::{ProvingKey as ProvingKeyOrig, VerifyingKey as VerifyingKeyOrig},
         Statements as StatementsOrig,
     },
     witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
 };
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -51,6 +60,11 @@ pub type BBSPlusSignature = SignatureG1<Bls12_381>;
 pub type PoKBBSPlusStmt<E> = PoKBBSSignatureG1Stmt<E>;
 pub type PoKBBSPlusWit<E> = PoKBBSSignatureG1Wit<E>;
 pub type PedersenCommitmentStmt = PedersenCommitment<G1Affine>;
+pub type ProvingKey = ProvingKeyOrig<Bls12_381>;
+pub type VerifyingKey = VerifyingKeyOrig<Bls12_381>;
+pub type CircomCircuit = CircomCircuitOrig<Bls12_381>;
+pub type R1CS = R1CSOrig<Bls12_381>;
+pub type R1CSCircomWitness = R1CSCircomWitnessOrig<Bls12_381>;
 
 pub fn serialize_ark<S: serde::Serializer, A: CanonicalSerialize>(
     ark: &A,
@@ -183,10 +197,32 @@ pub fn hash_term_to_field(
     term: TermRef,
     hasher: &BBSPlusDefaultFieldHasher,
 ) -> Result<Fr, RDFProofsError> {
-    hasher
-        .hash_to_field(term.to_string().as_bytes(), 1)
-        .pop()
-        .ok_or(RDFProofsError::HashToField)
+    // limit integers to 64-bits
+    match term {
+        TermRef::Literal(v) if v.datatype() == INTEGER => {
+            let num: i64 = v.value().parse()?;
+            Ok(Fr::from(num))
+        }
+        TermRef::Literal(v) if v.datatype() == DATE_TIME => {
+            let datetime: DateTime<Utc> = v.value().parse()?;
+            let timestamp = datetime.timestamp();
+            Fr::try_from(timestamp)
+                .map_err(|_| RDFProofsError::InvalidDateTime(v.value().to_string()))
+        }
+        TermRef::Literal(v) if v.datatype() == DATE => {
+            let date: NaiveDate = v.value().parse()?;
+            let datetime = date
+                .and_hms_opt(0, 0, 0)
+                .ok_or(RDFProofsError::InvalidDateTime(v.value().to_string()))?;
+            let timestamp = datetime.timestamp();
+            Fr::try_from(timestamp)
+                .map_err(|_| RDFProofsError::InvalidDateTime(v.value().to_string()))
+        }
+        _ => hasher
+            .hash_to_field(term.to_string().as_bytes(), 1)
+            .pop()
+            .ok_or(RDFProofsError::HashToField),
+    }
 }
 
 pub fn hash_byte_to_field(
@@ -380,7 +416,8 @@ pub(crate) fn configure_proof_core(
     let created = proof_options.object_for_subject_predicate(proof_options_subject, CREATED);
     if let Some(TermRef::Literal(v)) = created {
         let (datetime, typ, _) = v.destruct();
-        if DateTime::from_str(datetime).is_err() || !typ.is_some_and(|t| t == vocab::xsd::DATE_TIME)
+        if DateTimeOxsDataTypes::from_str(datetime).is_err()
+            || !typ.is_some_and(|t| t == vocab::xsd::DATE_TIME)
         {
             return Err(RDFProofsError::InvalidProofDatetime);
         }
@@ -403,4 +440,147 @@ pub(crate) fn canonicalize_graph_into_terms(graph: &Graph) -> Result<Vec<Term>, 
         .into_iter()
         .flat_map(|t| vec![t.subject.into(), t.predicate.into(), t.object])
         .collect())
+}
+
+pub(crate) fn get_term_from_string(term_string: &str) -> Result<Term, RDFProofsError> {
+    let re_iri = Regex::new(r"^<([^>]+)>$")?;
+    let re_blank_node = Regex::new(r"^_:(.+)$")?;
+    let re_simple_literal = Regex::new(r#"^"([^"]+)"$"#)?;
+    let re_typed_literal = Regex::new(r#"^"([^"]+)"\^\^<([^>]+)>$"#)?;
+    let re_literal_with_langtag = Regex::new(r#"^"([^"]+)"@(.+)$"#)?;
+
+    if let Some(caps) = re_iri.captures(term_string) {
+        Ok(NamedNode::new_unchecked(&caps[1]).into())
+    } else if let Some(caps) = re_blank_node.captures(term_string) {
+        Ok(BlankNode::new_unchecked(&caps[1]).into())
+    } else if let Some(caps) = re_simple_literal.captures(term_string) {
+        Ok(Literal::new_simple_literal(&caps[1]).into())
+    } else if let Some(caps) = re_typed_literal.captures(term_string) {
+        Ok(Literal::new_typed_literal(&caps[1], NamedNode::new_unchecked(&caps[2])).into())
+    } else if let Some(caps) = re_literal_with_langtag.captures(term_string) {
+        Ok(Literal::new_language_tagged_literal(&caps[1], &caps[2])?.into())
+    } else {
+        Err(RDFProofsError::TtlTermParse(term_string.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_hasher, hash_term_to_field, Fr};
+    use ark_ff::BigInt;
+    use oxrdf::{
+        vocab::xsd::{DATE, DATE_TIME, INTEGER},
+        LiteralRef, NamedNodeRef, TermRef,
+    };
+
+    #[test]
+    fn hash_terms_success() {
+        let hasher = get_hasher();
+
+        let eqs: Vec<(TermRef, Fr)> = vec![
+            (
+                NamedNodeRef::new_unchecked("did:example:john").into(),
+                BigInt([
+                    2024815526171708096,
+                    2099760857422642053,
+                    7708857115834156063,
+                    3809904842201934428,
+                ])
+                .into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("123", INTEGER).into(),
+                BigInt([123, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("-123", INTEGER).into(),
+                BigInt([
+                    18446744069414584198,
+                    6034159408538082302,
+                    3691218898639771653,
+                    8353516859464449352,
+                ])
+                .into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("9223372036854775807", INTEGER).into(),
+                BigInt([9223372036854775807, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("1970-01-01", DATE).into(),
+                BigInt([0, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("1970-01-01T00:00:00Z", DATE_TIME).into(),
+                BigInt([0, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("2022-01-01", DATE).into(),
+                BigInt([1640995200, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("2022-01-01T00:00:00Z", DATE_TIME).into(),
+                BigInt([1640995200, 0, 0, 0]).into(),
+            ),
+            // Times less than one second are rounded down
+            (
+                LiteralRef::new_typed_literal("2022-01-01T00:00:00.12345678Z", DATE_TIME).into(),
+                BigInt([1640995200, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("0000-01-01", DATE).into(),
+                BigInt([
+                    18446744007247365121,
+                    6034159408538082302,
+                    3691218898639771653,
+                    8353516859464449352,
+                ])
+                .into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("0000-01-01T00:00:00Z", DATE_TIME).into(),
+                BigInt([
+                    18446744007247365121,
+                    6034159408538082302,
+                    3691218898639771653,
+                    8353516859464449352,
+                ])
+                .into(),
+            ),
+        ];
+
+        for (term, hashed) in eqs {
+            assert_eq!(hash_term_to_field(term, &hasher).unwrap(), hashed);
+        }
+    }
+
+    #[test]
+    fn hash_terms_failed() {
+        let hasher = get_hasher();
+
+        assert!(matches!(
+            hash_term_to_field(
+                LiteralRef::new_typed_literal("123.456", INTEGER).into(),
+                &hasher
+            ),
+            Err(crate::error::RDFProofsError::ParseInt(_))
+        ));
+
+        // 9223372036854775808 = i64.MAX + 1
+        assert!(matches!(
+            hash_term_to_field(
+                LiteralRef::new_typed_literal("9223372036854775808", INTEGER).into(),
+                &hasher
+            ),
+            Err(crate::error::RDFProofsError::ParseInt(_))
+        ));
+
+        assert!(matches!(
+            hash_term_to_field(
+                LiteralRef::new_typed_literal("1234-56-78T99:99:99Z", DATE_TIME).into(),
+                &hasher
+            ),
+            Err(crate::error::RDFProofsError::DateTimeParse(_))
+        ));
+    }
 }
