@@ -18,6 +18,7 @@ pub enum RDFProofsError {
     MissingInputToDeriveProof,
     IriParse(oxiri::IriParseError),
     TtlParse(oxttl::ParseError),
+    TtlTermParse(String),
     InvalidDeanonMapFormat(String),
     VCWithoutProofValue,
     VCWithInvalidProofValue,
@@ -46,6 +47,7 @@ pub enum RDFProofsError {
     MessageSizeOverflow,
     MissingSecret,
     MissingSecretOrDomain,
+    InvalidPredicate,
     Other(String),
 }
 
@@ -79,6 +81,9 @@ impl std::fmt::Display for RDFProofsError {
             }
             RDFProofsError::IriParse(_) => write!(f, "IRI parse error"),
             RDFProofsError::TtlParse(e) => write!(f, "N-Triples / N-Quads parse error: {}", e),
+            RDFProofsError::TtlTermParse(e) => {
+                write!(f, "N-Triples / N-Quads term parse error: {}", e)
+            }
             RDFProofsError::InvalidDeanonMapFormat(e) => {
                 write!(f, "invalid deanon map error: {}", e)
             }
@@ -96,7 +101,7 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::LanguageTagParse(_) => write!(f, "language tag parse error"),
             RDFProofsError::DeAnonymization => write!(f, "deanonymization error"),
             RDFProofsError::InvalidVP => write!(f, "invalid VP error"),
-            RDFProofsError::InvalidPPID => write!(f, "VP contains invalid PPID"),   
+            RDFProofsError::InvalidPPID => write!(f, "VP contains invalid PPID"),
             RDFProofsError::BlankNodeCollision => write!(f, "blank node collision error"),
             RDFProofsError::DisclosedVCIsNotSubsetOfOriginalVC => {
                 write!(f, "disclosed VC is not subset of original VC error")
@@ -143,6 +148,9 @@ impl std::fmt::Display for RDFProofsError {
                     f,
                     "both `secret` and `domain` must be given if `with_nym` is true"
                 )
+            }
+            RDFProofsError::InvalidPredicate => {
+                write!(f, "invalid predicate error")
             }
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
         }

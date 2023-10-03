@@ -15,11 +15,12 @@ use bbs_plus::{
 };
 use blake2::Blake2b512;
 use chrono::Utc;
+use legogroth16::circom::{CircomCircuit as CircomCircuitOrig, R1CS as R1CSOrig};
 use multibase::Base;
 use oxrdf::{
     vocab::{self, rdf::TYPE, xsd},
-    BlankNode, Dataset, Graph, LiteralRef, NamedNode, NamedNodeRef, SubjectRef, Term, TermRef,
-    Triple, TripleRef,
+    BlankNode, Dataset, Graph, Literal, LiteralRef, NamedNode, NamedNodeRef, SubjectRef, Term,
+    TermRef, Triple, TripleRef,
 };
 use oxsdatatypes::DateTime;
 use oxttl::{NQuadsParser, NTriplesParser};
@@ -27,10 +28,11 @@ use proof_system::{
     proof::Proof as ProofOrig,
     statement::{
         bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, ped_comm::PedersenCommitment,
-        Statements as StatementsOrig,
+        r1cs_legogroth16::ProvingKey as ProvingKeyOrig, Statements as StatementsOrig,
     },
     witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
 };
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -51,6 +53,9 @@ pub type BBSPlusSignature = SignatureG1<Bls12_381>;
 pub type PoKBBSPlusStmt<E> = PoKBBSSignatureG1Stmt<E>;
 pub type PoKBBSPlusWit<E> = PoKBBSSignatureG1Wit<E>;
 pub type PedersenCommitmentStmt = PedersenCommitment<G1Affine>;
+pub type ProvingKey = ProvingKeyOrig<Bls12_381>;
+pub type CircomCircuit = CircomCircuitOrig<Bls12_381>;
+pub type R1CS = R1CSOrig<Bls12_381>;
 
 pub fn serialize_ark<S: serde::Serializer, A: CanonicalSerialize>(
     ark: &A,
@@ -403,4 +408,26 @@ pub(crate) fn canonicalize_graph_into_terms(graph: &Graph) -> Result<Vec<Term>, 
         .into_iter()
         .flat_map(|t| vec![t.subject.into(), t.predicate.into(), t.object])
         .collect())
+}
+
+pub(crate) fn get_term_from_string(term_string: &str) -> Result<Term, RDFProofsError> {
+    let re_iri = Regex::new(r"^<([^>]+)>$")?;
+    let re_blank_node = Regex::new(r"^_:(.+)$")?;
+    let re_simple_literal = Regex::new(r#"^"([^"]+)"$"#)?;
+    let re_typed_literal = Regex::new(r#"^"([^"]+)"\^\^<([^>]+)>$"#)?;
+    let re_literal_with_langtag = Regex::new(r#"^"([^"]+)"@(.+)$"#)?;
+
+    if let Some(caps) = re_iri.captures(term_string) {
+        Ok(NamedNode::new_unchecked(&caps[1]).into())
+    } else if let Some(caps) = re_blank_node.captures(term_string) {
+        Ok(BlankNode::new_unchecked(&caps[1]).into())
+    } else if let Some(caps) = re_simple_literal.captures(term_string) {
+        Ok(Literal::new_simple_literal(&caps[1]).into())
+    } else if let Some(caps) = re_typed_literal.captures(term_string) {
+        Ok(Literal::new_typed_literal(&caps[1], NamedNode::new_unchecked(&caps[2])).into())
+    } else if let Some(caps) = re_literal_with_langtag.captures(term_string) {
+        Ok(Literal::new_language_tagged_literal(&caps[1], &caps[2])?.into())
+    } else {
+        Err(RDFProofsError::TtlTermParse(term_string.to_string()))
+    }
 }

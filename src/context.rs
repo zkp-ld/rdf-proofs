@@ -43,3 +43,18 @@ pub const MULTIBASE: NamedNodeRef =
 pub const SECRET_COMMITMENT: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://zkp-ld.org/security#secretCommitment");
 pub const FILTER: NamedNodeRef = NamedNodeRef::new_unchecked("https://zkp-ld.org/security#filter");
+pub const PREDICATE: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#predicate");
+pub const PREDICATE_TYPE: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#Predicate");
+pub const CIRCUIT: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#circuit");
+pub const INPUT: NamedNodeRef = NamedNodeRef::new_unchecked("https://zkp-ld.org/security#input");
+pub const PRIVATE_VARIABLE: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#PrivateVariable");
+pub const PUBLIC_VARIABLE: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#PublicVariable");
+pub const PREDICATE_VAR: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#var");
+pub const PREDICATE_VAL: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#val");

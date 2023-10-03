@@ -4,16 +4,19 @@ use crate::{
     blind_signature::{blind_verify, BlindSignRequest, BlindSignRequestString},
     common::{
         canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
-        get_hasher, get_vc_from_ntriples, hash_byte_to_field, hash_term_to_field, is_nym,
-        multibase_to_ark, randomize_bnodes, reorder_vc_triples, BBSPlusDefaultFieldHasher,
-        BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr, PedersenCommitmentStmt,
-        PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap, StatementIndexMap, Statements,
+        get_hasher, get_term_from_string, get_vc_from_ntriples, hash_byte_to_field,
+        hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes, reorder_vc_triples,
+        BBSPlusDefaultFieldHasher, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr,
+        PedersenCommitmentStmt, PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap,
+        ProvingKey, StatementIndexMap, Statements, R1CS,
     },
     constants::PPID_PREFIX,
     context::{
-        AUTHENTICATION, CHALLENGE, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN, HOLDER,
-        MULTIBASE, PROOF, PROOF_PURPOSE, PROOF_VALUE, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL,
-        VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
+        AUTHENTICATION, CHALLENGE, CIRCUIT, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN,
+        HOLDER, INPUT, MULTIBASE, PREDICATE, PREDICATE_TYPE, PREDICATE_VAL, PREDICATE_VAR,
+        PRIVATE_VARIABLE, PROOF, PROOF_PURPOSE, PROOF_VALUE, PUBLIC_VARIABLE, SECRET_COMMITMENT,
+        VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE,
+        VERIFICATION_METHOD,
     },
     error::RDFProofsError,
     key_gen::{generate_params, generate_ppid, PPID},
@@ -30,16 +33,52 @@ use chrono::offset::Utc;
 use multibase::Base;
 use oxrdf::{
     vocab::{rdf::TYPE, xsd},
-    BlankNode, Dataset, Graph, GraphNameRef, Literal, LiteralRef, NamedNode, NamedOrBlankNode,
-    Quad, QuadRef, Subject, Term, TermRef, Triple,
+    BlankNode, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode, NamedOrBlankNode, Quad,
+    QuadRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
     prelude::{EqualWitnesses, MetaStatements},
     proof_spec::ProofSpec,
+    statement::r1cs_legogroth16::R1CSCircomProver,
     witness::{Witness, Witnesses},
 };
-use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+pub struct PredicateProofStatement {
+    pub circuit: NamedNode,
+    pub snark_proving_key: ProvingKey,
+    pub private: HashMap<String, BlankNode>,
+    pub public: HashMap<String, Term>,
+}
+
+impl PredicateProofStatement {
+    fn resolve_predicate_privates(
+        &self,
+        deanon_map: &HashMap<NamedOrBlankNode, Term>,
+    ) -> Result<HashMap<String, Term>, RDFProofsError> {
+        let resolved_private = self
+            .private
+            .iter()
+            .map(|(k, v)| {
+                Ok((
+                    k.clone(),
+                    deanon_map
+                        .get(&v.to_owned().into())
+                        .ok_or(RDFProofsError::InvalidPredicate)?
+                        .clone(),
+                ))
+            })
+            .collect::<Result<HashMap<_, _>, RDFProofsError>>()?;
+        Ok(resolved_private)
+    }
+}
+
+pub struct PredicateProofStatementString {
+    pub circuit: String,
+    pub snark_proving_key: String,
+    pub private: HashMap<String, String>,
+    pub public: HashMap<String, String>,
+}
 
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
@@ -52,6 +91,7 @@ pub fn derive_proof<R: RngCore>(
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequest>,
     with_ppid: Option<bool>,
+    predicates: Option<Vec<PredicateProofStatement>>,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
@@ -124,6 +164,17 @@ pub fn derive_proof<R: RngCore>(
     // get PPID
     let ppid = get_ppid(&domain, &secret, with_ppid)?;
 
+    // // get witnesses for predicate proofs
+    // let private_witnesses = match predicates {
+    //     Some(p) => Some(
+    //         p.iter()
+    //             .map(|statement| resolve_predicate_privates(statement, deanon_map))
+    //             .collect::<Result<Vec<_>, RDFProofsError>>()?,
+    //     ),
+    //     None => None,
+    // };
+    // println!("private_witnesses: {:?}", private_witnesses);
+
     // build VP draft (= canonicalized VP without proofValue) based on disclosed VCs
     let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) = build_vp(
         disclosed_vcs,
@@ -131,6 +182,7 @@ pub fn derive_proof<R: RngCore>(
         &domain,
         &blind_sign_request,
         &ppid,
+        &predicates,
     )?;
 
     // decompose VP draft into graphs
@@ -242,6 +294,8 @@ pub fn derive_proof<R: RngCore>(
         challenge,
         &blind_sign_request,
         &ppid,
+        &predicates,
+        deanon_map,
     )?;
 
     // add derived proof value to VP
@@ -270,8 +324,9 @@ pub fn derive_proof_string<R: RngCore>(
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequestString>,
     with_ppid: Option<bool>,
+    predicates: Option<&Vec<PredicateProofStatementString>>,
 ) -> Result<String, RDFProofsError> {
-    // construct input for `derive_proof` from string-based input
+    // construct inputs for `derive_proof` from string-based inputs
     let vc_pairs = vc_pairs
         .iter()
         .map(|pair| {
@@ -296,6 +351,23 @@ pub fn derive_proof_string<R: RngCore>(
     } else {
         None
     };
+    let predicates = if let Some(predicates) = predicates {
+        Some(
+            predicates
+                .iter()
+                .map(|predicate| {
+                    Ok(PredicateProofStatement {
+                        circuit: NamedNode::new(&predicate.circuit)?,
+                        snark_proving_key: multibase_to_ark(&predicate.snark_proving_key)?,
+                        private: get_predicate_private_map_from_string(&predicate.private)?,
+                        public: get_predicate_public_map_from_string(&predicate.public)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, RDFProofsError>>()?,
+        )
+    } else {
+        None
+    };
 
     let derived_proof = derive_proof(
         rng,
@@ -307,6 +379,7 @@ pub fn derive_proof_string<R: RngCore>(
         secret,
         blind_sign_request,
         with_ppid,
+        predicates,
     )?;
 
     Ok(rdf_canon::serialize(&derived_proof))
@@ -333,38 +406,45 @@ fn get_ppid(
     }
 }
 
-pub(crate) fn get_deanon_map_from_string(
+fn get_predicate_private_map_from_string(
+    private_map_string: &HashMap<String, String>,
+) -> Result<HashMap<String, BlankNode>, RDFProofsError> {
+    private_map_string
+        .iter()
+        .map(|(k, v)| {
+            let value = match get_term_from_string(v)? {
+                Term::BlankNode(n) => Ok(n),
+                _ => Err(RDFProofsError::InvalidPredicate),
+            }?;
+            Ok((k.clone(), value))
+        })
+        .collect()
+}
+
+fn get_predicate_public_map_from_string(
+    public_map_string: &HashMap<String, String>,
+) -> Result<HashMap<String, Term>, RDFProofsError> {
+    public_map_string
+        .iter()
+        .map(|(k, v)| {
+            let value = get_term_from_string(v)?;
+            Ok((k.clone(), value))
+        })
+        .collect()
+}
+
+fn get_deanon_map_from_string(
     deanon_map_string: &HashMap<String, String>,
 ) -> Result<HashMap<NamedOrBlankNode, Term>, RDFProofsError> {
-    let re_iri = Regex::new(r"^<([^>]+)>$")?;
-    let re_blank_node = Regex::new(r"^_:(.+)$")?;
-    let re_simple_literal = Regex::new(r#"^"([^"]+)"$"#)?;
-    let re_typed_literal = Regex::new(r#"^"([^"]+)"\^\^<([^>]+)>$"#)?;
-    let re_literal_with_langtag = Regex::new(r#"^"([^"]+)"@(.+)$"#)?;
-
     deanon_map_string
         .iter()
         .map(|(k, v)| {
-            let key: NamedOrBlankNode = if let Some(caps) = re_blank_node.captures(k) {
-                Ok(BlankNode::new_unchecked(&caps[1]).into())
-            } else if let Some(caps) = re_iri.captures(k) {
-                Ok(NamedNode::new_unchecked(&caps[1]).into())
-            } else {
-                Err(RDFProofsError::InvalidDeanonMapFormat(k.to_string()))
+            let key: NamedOrBlankNode = match get_term_from_string(k)? {
+                Term::NamedNode(n) => Ok(n.into()),
+                Term::BlankNode(n) => Ok(n.into()),
+                Term::Literal(_) => Err(RDFProofsError::InvalidDeanonMapFormat(k.to_string())),
             }?;
-
-            let value: Term = if let Some(caps) = re_iri.captures(v) {
-                Ok(NamedNode::new_unchecked(&caps[1]).into())
-            } else if let Some(caps) = re_simple_literal.captures(v) {
-                Ok(Literal::new_simple_literal(&caps[1]).into())
-            } else if let Some(caps) = re_typed_literal.captures(v) {
-                Ok(Literal::new_typed_literal(&caps[1], NamedNode::new_unchecked(&caps[2])).into())
-            } else if let Some(caps) = re_literal_with_langtag.captures(v) {
-                Ok(Literal::new_language_tagged_literal(&caps[1], &caps[2])?.into())
-            } else {
-                Err(RDFProofsError::InvalidDeanonMapFormat(v.to_string()))
-            }?;
-
+            let value = get_term_from_string(v)?;
             Ok((key, value))
         })
         .collect()
@@ -492,6 +572,7 @@ fn build_vp(
     domain: &Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
+    predicates: &Option<Vec<PredicateProofStatement>>,
 ) -> Result<(Dataset, HashMap<String, String>, Vec<BlankNode>), RDFProofsError> {
     let vp_id = BlankNode::default();
     let vp_proof_id = BlankNode::default();
@@ -588,6 +669,89 @@ fn build_vp(
                     &vp_holder_id,
                     SECRET_COMMITMENT,
                     LiteralRef::new_typed_literal(&ark_to_base64url(&req.commitment)?, MULTIBASE),
+                    GraphNameRef::DefaultGraph,
+                ));
+            }
+        }
+    }
+
+    // add predicates if exist
+    if let Some(predicates) = predicates {
+        for predicate in predicates {
+            let predicate_id = BlankNode::default();
+            vp.insert(QuadRef::new(
+                &vp_id,
+                PREDICATE,
+                &predicate_id,
+                GraphNameRef::DefaultGraph,
+            ));
+            vp.insert(QuadRef::new(
+                &predicate_id,
+                TYPE,
+                PREDICATE_TYPE,
+                GraphNameRef::DefaultGraph,
+            ));
+            vp.insert(QuadRef::new(
+                &predicate_id,
+                CIRCUIT,
+                &predicate.circuit,
+                GraphNameRef::DefaultGraph,
+            ));
+
+            // add private variables
+            for (var, val) in &predicate.private {
+                let input_id = BlankNode::default();
+                vp.insert(QuadRef::new(
+                    &predicate_id,
+                    INPUT,
+                    &input_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &input_id,
+                    TYPE,
+                    PRIVATE_VARIABLE,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &input_id,
+                    PREDICATE_VAR,
+                    LiteralRef::new_simple_literal(var),
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &input_id,
+                    PREDICATE_VAL,
+                    val,
+                    GraphNameRef::DefaultGraph,
+                ));
+            }
+
+            // add public variables
+            for (var, val) in &predicate.public {
+                let input_id = BlankNode::default();
+                vp.insert(QuadRef::new(
+                    &predicate_id,
+                    INPUT,
+                    &input_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &input_id,
+                    TYPE,
+                    PUBLIC_VARIABLE,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &input_id,
+                    PREDICATE_VAR,
+                    LiteralRef::new_simple_literal(var),
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &input_id,
+                    PREDICATE_VAL,
+                    val,
                     GraphNameRef::DefaultGraph,
                 ));
             }
@@ -885,6 +1049,8 @@ fn derive_proof_value<R: RngCore>(
     challenge: Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
+    predicates: &Option<Vec<PredicateProofStatement>>,
+    deanon_map: &HashMap<NamedOrBlankNode, Term>,
 ) -> Result<String, RDFProofsError> {
     let hasher = get_hasher();
 
@@ -952,6 +1118,7 @@ fn derive_proof_value<R: RngCore>(
                 .extend(v.clone());
         }
     }
+    println!("equivs (before dropping single-element vecs): {:?}", equivs);
     // drop single-element vecs from equivs
     let equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> =
         equivs.into_iter().filter(|(_, v)| v.len() > 1).collect();
@@ -985,6 +1152,20 @@ fn derive_proof_value<R: RngCore>(
             req.commitment,
         ));
         secret_commitment_index = Some(statements.len() - 1);
+    }
+    // statement for predicates
+    let mut predicates_index = vec![];
+    if let Some(predicates) = predicates {
+        for predicate in predicates {
+            let r1cs = R1CS::from_file("circom/bls12381/less_than_public_32.r1cs").unwrap(); // TODO: fix it
+            let wasm_bytes = std::fs::read("circom/bls12381/less_than_public_32.wasm").unwrap(); // TODO: fix it
+            statements.add(R1CSCircomProver::new_statement_from_params(
+                r1cs,
+                wasm_bytes,
+                predicate.snark_proving_key.clone(),
+            )?);
+            predicates_index.push(statements.len() - 1);
+        }
     }
 
     // build meta statements
@@ -1256,9 +1437,10 @@ fn build_disclosed_and_undisclosed_terms(
 
 #[cfg(test)]
 mod tests {
+    use super::PredicateProofStatementString;
     use crate::{
-        blind_sign_string, blind_verify_string,
-        common::{get_dataset_from_nquads, get_graph_from_ntriples},
+        ark_to_base64url, blind_sign_string, blind_verify_string,
+        common::{get_dataset_from_nquads, get_graph_from_ntriples, CircomCircuit},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
@@ -1499,6 +1681,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof.vp: {}", rdf_canon::serialize(&derived_proof));
@@ -1526,6 +1709,7 @@ mod tests {
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -1597,6 +1781,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain).is_ok());
@@ -1620,6 +1805,7 @@ mod tests {
             &key_graph,
             None,
             domain,
+            None,
             None,
             None,
             None,
@@ -1649,6 +1835,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1670,6 +1857,7 @@ mod tests {
             &vcs,
             &deanon_map,
             &key_graph,
+            None,
             None,
             None,
             None,
@@ -1716,6 +1904,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(
@@ -1741,6 +1930,7 @@ mod tests {
             KEY_GRAPH,
             None,
             domain,
+            None,
             None,
             None,
             None,
@@ -1770,6 +1960,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1791,6 +1982,7 @@ mod tests {
             &vc_pairs,
             &deanon_map,
             KEY_GRAPH,
+            None,
             None,
             None,
             None,
@@ -1877,6 +2069,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
@@ -1907,6 +2100,7 @@ mod tests {
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -1969,6 +2163,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         );
         assert!(matches!(
             derived_proof,
@@ -1999,6 +2194,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -2059,6 +2255,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -2097,6 +2294,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             None,
             None,
+            None,
         );
         assert!(matches!(
             derived_proof,
@@ -2130,6 +2328,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -2247,6 +2446,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof);
@@ -2330,6 +2530,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret1),
             None,
             None,
+            None,
         );
         assert!(derived_proof.is_err(), "{:?}", derived_proof)
     }
@@ -2386,6 +2587,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             Some(blind_sign_request),
             None,
+            None,
         )
         .unwrap();
 
@@ -2412,6 +2614,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(secret),
             Some(blind_sign_request),
+            None,
             None,
         )
         .unwrap();
@@ -2452,6 +2655,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             None,
             Some(true),
+            None,
         )
         .unwrap();
         println!("derived_proof:\n{}", derived_proof);
@@ -2500,6 +2704,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             Some(blind_sign_request),
             Some(true),
+            None,
         )
         .unwrap();
 
@@ -2511,5 +2716,55 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(domain),
         );
         assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_predicates_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let vc_pairs = vec![VcPairString::new(
+            VC_1,
+            VC_PROOF_1,
+            DISCLOSED_VC_1_WITH_HIDDEN_LITERALS,
+            DISCLOSED_VC_PROOF_1,
+        )];
+
+        let mut deanon_map = get_example_deanon_map_string();
+        deanon_map.extend(get_example_deanon_map_string_with_hidden_literal());
+
+        let commit_witness_count = 1;
+        let r1cs_file_path = "circom/bls12381/less_than_public_32.r1cs";
+        let wasm_file_path = "circom/bls12381/less_than_public_32.wasm";
+        let circuit = CircomCircuit::from_r1cs_file(r1cs_file_path).unwrap();
+        let snark_pk = circuit
+            .generate_proving_key(commit_witness_count, &mut rng)
+            .unwrap();
+
+        let predicates = vec![PredicateProofStatementString {
+            circuit: "https://example.org/circuit/lessThan".to_string(),
+            snark_proving_key: ark_to_base64url(&snark_pk).unwrap(),
+            private: HashMap::from([("a".to_string(), "_:e5".to_string())]),
+            public: HashMap::from([(
+                "b".to_string(),
+                "\"2022-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )]),
+        }];
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&predicates),
+        )
+        .unwrap();
+
+        // let verified = verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None);
+        // assert!(verified.is_ok(), "{:?}", verified)
     }
 }
