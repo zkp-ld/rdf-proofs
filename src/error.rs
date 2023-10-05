@@ -48,6 +48,10 @@ pub enum RDFProofsError {
     MissingSecret,
     MissingSecretOrDomain,
     InvalidPredicate,
+    InvalidInteger(String),
+    InvalidDateTime(String),
+    DateTimeParse(chrono::ParseError),
+    ParseInt(std::num::ParseIntError),
     Other(String),
 }
 
@@ -152,6 +156,18 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::InvalidPredicate => {
                 write!(f, "invalid predicate error")
             }
+            RDFProofsError::InvalidInteger(v) => {
+                write!(f, "invalid integer: {}", v)
+            }
+            RDFProofsError::InvalidDateTime(v) => {
+                write!(
+                    f,
+                    "invalid date time (cannot convert to UNIX timestamp): {}",
+                    v
+                )
+            }
+            RDFProofsError::DateTimeParse(e) => write!(f, "date time parse error: {}", e),
+            RDFProofsError::ParseInt(e) => write!(f, "parse int error: {}", e),
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
         }
     }
@@ -222,5 +238,17 @@ impl From<oxttl::ParseError> for RDFProofsError {
 impl From<regex::Error> for RDFProofsError {
     fn from(e: regex::Error) -> Self {
         Self::InvalidDeanonMapFormat(e.to_string())
+    }
+}
+
+impl From<chrono::ParseError> for RDFProofsError {
+    fn from(e: chrono::ParseError) -> Self {
+        Self::DateTimeParse(e)
+    }
+}
+
+impl From<std::num::ParseIntError> for RDFProofsError {
+    fn from(e: std::num::ParseIntError) -> Self {
+        Self::ParseInt(e)
     }
 }

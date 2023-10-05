@@ -8,7 +8,7 @@ use crate::{
         hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes, reorder_vc_triples,
         BBSPlusDefaultFieldHasher, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr,
         PedersenCommitmentStmt, PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap,
-        ProvingKey, StatementIndexMap, Statements, R1CS,
+        ProvingKey, R1CSCircomWitness, StatementIndexMap, Statements, R1CS,
     },
     constants::PPID_PREFIX,
     context::{
@@ -47,15 +47,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub struct PredicateProofStatement {
     pub circuit: NamedNode,
     pub snark_proving_key: ProvingKey,
-    pub private: HashMap<String, BlankNode>,
-    pub public: HashMap<String, Term>,
+    pub private: Vec<(String, BlankNode)>,
+    pub public: Vec<(String, Term)>,
 }
 
 impl PredicateProofStatement {
-    fn resolve_predicate_privates(
+    fn deanon_privates(
         &self,
         deanon_map: &HashMap<NamedOrBlankNode, Term>,
-    ) -> Result<HashMap<String, Term>, RDFProofsError> {
+    ) -> Result<Vec<(String, Term)>, RDFProofsError> {
         let resolved_private = self
             .private
             .iter()
@@ -68,16 +68,33 @@ impl PredicateProofStatement {
                         .clone(),
                 ))
             })
-            .collect::<Result<HashMap<_, _>, RDFProofsError>>()?;
+            .collect::<Result<Vec<_>, RDFProofsError>>()?;
         Ok(resolved_private)
+    }
+
+    fn canonicalize_privates(
+        &self,
+        issued_identifiers_map: &HashMap<String, String>,
+    ) -> Result<Vec<(String, BlankNode)>, RDFProofsError> {
+        let canonical_privates = self
+            .private
+            .iter()
+            .map(|(k, v)| {
+                let canonical_id = issued_identifiers_map
+                    .get(v.as_str())
+                    .ok_or(RDFProofsError::InvalidPredicate)?;
+                Ok((k.clone(), BlankNode::new_unchecked(canonical_id)))
+            })
+            .collect::<Result<Vec<_>, RDFProofsError>>()?;
+        Ok(canonical_privates)
     }
 }
 
 pub struct PredicateProofStatementString {
     pub circuit: String,
     pub snark_proving_key: String,
-    pub private: HashMap<String, String>,
-    pub public: HashMap<String, String>,
+    pub private: Vec<(String, String)>,
+    pub public: Vec<(String, String)>,
 }
 
 /// derive VP from VCs, disclosed VCs, and deanonymization map
@@ -163,17 +180,6 @@ pub fn derive_proof<R: RngCore>(
 
     // get PPID
     let ppid = get_ppid(&domain, &secret, with_ppid)?;
-
-    // // get witnesses for predicate proofs
-    // let private_witnesses = match predicates {
-    //     Some(p) => Some(
-    //         p.iter()
-    //             .map(|statement| resolve_predicate_privates(statement, deanon_map))
-    //             .collect::<Result<Vec<_>, RDFProofsError>>()?,
-    //     ),
-    //     None => None,
-    // };
-    // println!("private_witnesses: {:?}", private_witnesses);
 
     // build VP draft (= canonicalized VP without proofValue) based on disclosed VCs
     let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) = build_vp(
@@ -296,6 +302,7 @@ pub fn derive_proof<R: RngCore>(
         &ppid,
         &predicates,
         deanon_map,
+        &vp_draft_bnode_map,
     )?;
 
     // add derived proof value to VP
@@ -407,8 +414,8 @@ fn get_ppid(
 }
 
 fn get_predicate_private_map_from_string(
-    private_map_string: &HashMap<String, String>,
-) -> Result<HashMap<String, BlankNode>, RDFProofsError> {
+    private_map_string: &Vec<(String, String)>,
+) -> Result<Vec<(String, BlankNode)>, RDFProofsError> {
     private_map_string
         .iter()
         .map(|(k, v)| {
@@ -422,8 +429,8 @@ fn get_predicate_private_map_from_string(
 }
 
 fn get_predicate_public_map_from_string(
-    public_map_string: &HashMap<String, String>,
-) -> Result<HashMap<String, Term>, RDFProofsError> {
+    public_map_string: &Vec<(String, String)>,
+) -> Result<Vec<(String, Term)>, RDFProofsError> {
     public_map_string
         .iter()
         .map(|(k, v)| {
@@ -1051,6 +1058,7 @@ fn derive_proof_value<R: RngCore>(
     ppid: &Option<PPID>,
     predicates: &Option<Vec<PredicateProofStatement>>,
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
+    vp_draft_bnode_map: &HashMap<String, String>,
 ) -> Result<String, RDFProofsError> {
     let hasher = get_hasher();
 
@@ -1118,10 +1126,6 @@ fn derive_proof_value<R: RngCore>(
                 .extend(v.clone());
         }
     }
-    println!("equivs (before dropping single-element vecs): {:?}", equivs);
-    // drop single-element vecs from equivs
-    let equivs: BTreeMap<OrderedNamedOrBlankNode, Vec<(usize, usize)>> =
-        equivs.into_iter().filter(|(_, v)| v.len() > 1).collect();
 
     // build statements
     let mut statements = Statements::new();
@@ -1154,7 +1158,7 @@ fn derive_proof_value<R: RngCore>(
         secret_commitment_index = Some(statements.len() - 1);
     }
     // statement for predicates
-    let mut predicates_index = vec![];
+    let mut predicate_indexes = vec![];
     if let Some(predicates) = predicates {
         for predicate in predicates {
             let r1cs = R1CS::from_file("circom/bls12381/less_than_public_32.r1cs").unwrap(); // TODO: fix it
@@ -1164,7 +1168,7 @@ fn derive_proof_value<R: RngCore>(
                 wasm_bytes,
                 predicate.snark_proving_key.clone(),
             )?);
-            predicates_index.push(statements.len() - 1);
+            predicate_indexes.push(statements.len() - 1);
         }
     }
 
@@ -1192,11 +1196,43 @@ fn derive_proof_value<R: RngCore>(
         meta_statements.add_witness_equality(EqualWitnesses(secret_equiv_set));
     }
 
-    // proof of equality for attributes
-    for (_, equiv_vec) in equivs {
-        let equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
-        meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
+    let canonicalized_predicate_private_vars = if let Some(predicates) = predicates {
+        Some(
+            predicates
+                .iter()
+                .map(|predicate| predicate.canonicalize_privates(vp_draft_bnode_map))
+                .collect::<Result<Vec<_>, RDFProofsError>>()?,
+        )
+    } else {
+        None
+    };
+
+    // proof of equality
+    for (equiv_c14n_id, equiv_vec) in equivs {
+        // add equality for attributes in credentials
+        let mut equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
+
+        // add equality for predicate private variables
+        if let Some(predicate_vars_list) = &canonicalized_predicate_private_vars {
+            for (predicate_vars, predicate_index) in
+                predicate_vars_list.iter().zip(&predicate_indexes)
+            {
+                if let NamedOrBlankNode::BlankNode(bnode_in_equiv) = &equiv_c14n_id.0 {
+                    if let Some(idx_in_predicate) = predicate_vars
+                        .iter()
+                        .position(|(_, bnode_in_private)| bnode_in_private == bnode_in_equiv)
+                    {
+                        equiv_set.insert((*predicate_index, idx_in_predicate));
+                    }
+                }
+            }
+        }
+        println!("equiv_set: {:?}", equiv_set);
+        if equiv_set.len() > 1 {
+            meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
+        }
     }
+    println!("meta_statements: {:?}", meta_statements);
 
     // build proof spec
     let context = generate_proof_spec_context(&canonicalized_vp, &index_map)?;
@@ -1234,6 +1270,27 @@ fn derive_proof_value<R: RngCore>(
             ]));
         } else {
             return Err(RDFProofsError::MissingSecret);
+        }
+    }
+    // witness for predicates
+    if let Some(predicates) = predicates {
+        for predicate in predicates {
+            let mut r1cs_wit = R1CSCircomWitness::new();
+            for (var, val) in &predicate.deanon_privates(deanon_map)? {
+                println!("{}", val);
+                r1cs_wit.set_private(
+                    var.to_string(),
+                    vec![hash_term_to_field(val.into(), &hasher)?],
+                )
+            }
+            for (var, val) in &predicate.public {
+                println!("{}", val);
+                r1cs_wit.set_public(
+                    var.to_string(),
+                    vec![hash_term_to_field(val.into(), &hasher)?],
+                )
+            }
+            witnesses.add(Witness::R1CSLegoGroth16(r1cs_wit));
         }
     }
     println!("witnesses:\n{:#?}\n", witnesses);
@@ -1498,7 +1555,7 @@ mod tests {
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
     const VC_PROOF_1: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "ulyXJi_kpGXb2nUqVCRTzw03zFZyswkPLszC47yoRvUbGSkw2-v6GnY7X31hRYt4AnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <https://w3id.org/security#proofValue> "usJMJRM42kLwmIiij9exzfld16VOpPN2A0sFu5p7FQEteoOM_XUdrkOzyi10eso6DnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -1541,7 +1598,7 @@ mod tests {
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
     "#;
     const VC_PROOF_2: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "uh-n1eUTNbs6fG9NMTPTL98zwcwfA1N4GCm0XXl__t5tMKOKU1LBfwt1f7Dtoy9dHnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <https://w3id.org/security#proofValue> "ui6NGHU7LIVdKTmg0K6tadfEpCRtW35cnQ4eB7i1eAKE-3vtNAiHR5P9bUClxX58YnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -1600,46 +1657,46 @@ mod tests {
         get_deanon_map_from_string(&get_example_deanon_map_string()).unwrap()
     }
     const VP: &str = r#"
-    _:c14n10 <http://example.org/vocab/vaccine> _:c14n5 _:c14n6 .
-    _:c14n10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n6 .
-    _:c14n12 <http://example.org/vocab/isPatientOf> _:c14n10 _:c14n6 .
-    _:c14n12 <http://schema.org/worksFor> _:c14n8 _:c14n6 .
-    _:c14n12 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n6 .
-    _:c14n13 <http://purl.org/dc/terms/created> "2023-10-03T13:26:37.104284579Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n1 .
-    _:c14n13 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n1 .
-    _:c14n13 <https://w3id.org/security#challenge> "abcde" _:c14n1 .
-    _:c14n13 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n1 .
-    _:c14n13 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#authenticationMethod> _:c14n1 .
-    _:c14n13 <https://w3id.org/security#proofValue> "uomFhWQnaAgAAAAAAAAAAiAvTWnfhK5FK9n4FTbueRNfjipNVS5MNyvEPc2IJOuvQ0C3fp8hCuAIRc1_Lhf-Atw-gSU7LG7ia71FC2ozwOABP3GLWPBmU3fwEu7ooM5PYmQt1U9zsIGB1RVtG-T8huOdclYb-wiZFb7of3H6cRIcy7ujTzwgeTisDURUIZ18uiU1d5waitcTMFppTyi2StbtPjPxCObRd68AaVop3K37J1HCIIr9FjynFecH-dn3druVBnHgpeY9bKuOnneAHAgAAAAAAAAB0gQB8Y07o1FjHaYHN88Kn3VxBxMT2bTW9JFJSqSFZQS172iGa17amguXiCSLxcDNqD5R8EJ6sJak4vRyD9dEDqSyyS11Ab3OJR2VzAvWaULSUYkOFQGxe7dzPUZD_z5zGUdXRc4bq9bo8Ud259gtZJQAAAAAAAACDbkwVN7XbvtiMjGCiabreNNDeZVciqEJNyj_TEVZwNUasgovyyDL1GmbIywPUhuwDOJlMT9EHAnIZ540as7lB7m5v0-YpK2phdXCpCUz9fiEwerTsiANOFEnL8L1uRFJGi8td5XAMdG-FnlW7bX9lfBXSo_TWUNVKsMhksJ3PTgY2uhfLnsGqaeufUjtzffrklYfOW4PDounHgHlnkpxGCF6Qx_3YjZVuocrosE2oc33HDyDwVx2F1qQeeIotzwDhbqrsuwua46Tfptresn82N26hjsMCvAuYDCkKGZ8KK-5ub9PmKStqYXVwqQlM_X4hMHq07IgDThRJy_C9bkRSg8c227CciJGnNSLif3pxOmbTO3Crg9P4RM9QZhHP3V7ubm_T5ikramF1cKkJTP1-ITB6tOyIA04UScvwvW5EUhZoNXE1CsOHAKUp7sZ38rA1yRTu4tKRonOkjuirWtNlFmg1cTUKw4cApSnuxnfysDXJFO7i0pGic6SO6Kta02Xubm_T5ikramF1cKkJTP1-ITB6tOyIA04UScvwvW5EUhZoNXE1CsOHAKUp7sZ38rA1yRTu4tKRonOkjuirWtNlFmg1cTUKw4cApSnuxnfysDXJFO7i0pGic6SO6Kta02UWaDVxNQrDhwClKe7Gd_KwNckU7uLSkaJzpI7oq1rTZbVy6P89hsfsq87DvNP2W5JkM-h-jb5RM1xaiKfxupQ3TnpjmcjXrxkUfvxLhXxvip06u9RYNBi4anqLBsLjZChe7o2i6ayi1Eq_MjF7l9jlfc2LaanYDVcH6FeoOHbTQYPHNtuwnIiRpzUi4n96cTpm0ztwq4PT-ETPUGYRz91eW1jNRxi4UDb1MHfa8SAdhN9DBbBNGiOZc2UbF6BTxTt-ymheOO-NovhKjhytGLFTgYWFF85x5zuSs2hgIqYRRrKESU_LN6NvWkDEERi7twGLHBVi8lK9M1izdn_ifOxW8iXanntVleKhO4lbwnTZu4lGLOgD_Dwg9JxSmtWwCDMT6duhV8nytyLVsffWcD2N459i_QBd-Oe7XGjV5bDccea4WB-a8HXaDsLocIlq9uIbRE-pmxmieod08n91ojA8RovLXeVwDHRvhZ5Vu21_ZXwV0qP01lDVSrDIZLCdz04HmV_dAzNnGowgrBdlh88dpG2FZbTkcPdOmvc4ussVGDleGSLEjTByMbewr_W0vxV2H1UWZOH2WAo4AEaOGMtznVtYRnAG_Hxh0Nl33opKjHJZtY-RexmJqPFXnplFEUobWnvbzDGUR2HpcfqhXRBXYA140rYin8ZT2hq7RRoaaUaLy13lcAx0b4WeVbttf2V8FdKj9NZQ1UqwyGSwnc9OljhsqvcxWc17Whg89FRwQls1wzOmWGWR49oa37G1cFOWOGyq9zFZzXtaGDz0VHBCWzXDM6ZYZZHj2hrfsbVwU5Y4bKr3MVnNe1oYPPRUcEJbNcMzplhlkePaGt-xtXBTljhsqvcxWc17Whg89FRwQls1wzOmWGWR49oa37G1cFOWOGyq9zFZzXtaGDz0VHBCWzXDM6ZYZZHj2hrfsbVwUwCsfuTQjkFAt7HLPg5IlqNbtDUXlV8BSo1MO-TnkS5XZa7O2BcJjzR0fc8VHkioAx-ThPGRsf9IMPQU37SQH8fxpAf9irC-ghKxPvaH6Q1vKU8mmSikLMI7XcxstAyrghaUfEzS6V0G4bFYLJ86vyPi83tBGDDy_RLtN_er8NxgZUNyql_8ra_GRUpm62E09g2V3t1H_bL2FHMCfSok3__0xTGHSwbIgIvxnbpHADwih2jfLXmcN5_iDnFWVjVQwaMCAAAAAAAAAMrE0hLVm7PUbvSRvKZCArE8Jind71_3GZhd5r67wT8vdztp2O75J-BYHF0Bq5jY2GcfqEWDPvyv9wyP0B7aZkashM-m4EVeP4feH7p_12qH_sI5ME1L4JxDuFG962JrK-SZJiEGnAMwJOyu0B0ZV9kVAAAAAAAAAFzymO34aZzzQ5ohsvzlptWX8ZLKni7bi2Vgs-toPscfP1h51Qboucq51771E-Pm3ZK7ZrrBUnOr-J9cMDMAfANepD-P-3fTJGMTIJHT5wWUNSNFiwA5rVerqaGfuvD3WnuZXr38wogFUKYNT_u4qkhjBOrduSDWoFNkvj3S0YsjHJO7dua1NLwkpLyYAteZL7lb3yxdV6cxxxDMuzjwhkdTwF9ThqSQp7W0JUxpjs2tpQKq27L6dp1XOhWopqKoMHvOD6o9BPCSWFwA_bm35769chq0AhfSrRntgJZCQ3wqjDY5h22qeKljnWt3youPhnzaKQ0cFz4bmvbOvfu6L3IHmV_dAzNnGowgrBdlh88dpG2FZbTkcPdOmvc4ussVGAeZX90DM2cajCCsF2WHzx2kbYVltORw906a9zi6yxUYfC7uyV2squtppFcmCorsrGqoIxx0nd3eHePYbDjD4gZ8Lu7JXayq62mkVyYKiuysaqgjHHSd3d4d49hsOMPiBgeZX90DM2cajCCsF2WHzx2kbYVltORw906a9zi6yxUYfC7uyV2squtppFcmCorsrGqoIxx0nd3eHePYbDjD4gZ8Lu7JXayq62mkVyYKiuysaqgjHHSd3d4d49hsOMPiBnwu7sldrKrraaRXJgqK7KxqqCMcdJ3d3h3j2Gw4w-IGKsLfnB_YRe-C9tU8oRMfXcVg4pUCDMOsWHy_fEnbYikqwt-cH9hF74L21TyhEx9dxWDilQIMw6xYfL98SdtiKSrC35wf2EXvgvbVPKETH13FYOKVAgzDrFh8v3xJ22IpKsLfnB_YRe-C9tU8oRMfXcVg4pUCDMOsWHy_fEnbYikqwt-cH9hF74L21TyhEx9dxWDilQIMw6xYfL98SdtiKQEFAAAAAAAAAGFiY2RlAABhYoKkYWGLDQ8AAgMEBQYHCAphYhBhY4UAAQIDBGFkBaRhYYcCAwQFBgcIYWIJYWOFAAECAwRhZAU"^^<https://w3id.org/security#multibase> _:c14n1 .
+    _:c14n10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n8 .
+    _:c14n10 <https://w3id.org/security#proof> _:c14n1 _:c14n8 .
+    _:c14n10 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n5 _:c14n8 .
+    _:c14n10 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n8 .
+    _:c14n10 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n8 .
+    _:c14n10 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n8 .
+    _:c14n11 <http://example.org/vocab/vaccine> _:c14n5 _:c14n6 .
+    _:c14n11 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n6 .
+    _:c14n13 <http://example.org/vocab/isPatientOf> _:c14n11 _:c14n6 .
+    _:c14n13 <http://schema.org/worksFor> _:c14n9 _:c14n6 .
+    _:c14n13 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n6 .
     _:c14n14 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n6 .
-    _:c14n14 <https://w3id.org/security#proof> _:c14n11 _:c14n6 .
-    _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n12 _:c14n6 .
+    _:c14n14 <https://w3id.org/security#proof> _:c14n12 _:c14n6 .
+    _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n13 _:c14n6 .
     _:c14n14 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
     _:c14n14 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
     _:c14n14 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n6 .
-    _:c14n2 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n11 .
-    _:c14n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n11 .
-    _:c14n2 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n11 .
-    _:c14n2 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n11 .
-    _:c14n2 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n11 .
-    _:c14n3 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
-    _:c14n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
-    _:c14n3 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n0 .
-    _:c14n3 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
-    _:c14n3 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n0 .
+    _:c14n2 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n12 .
+    _:c14n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n12 .
+    _:c14n2 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n12 .
+    _:c14n2 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n12 .
+    _:c14n2 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n12 .
+    _:c14n3 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n1 .
+    _:c14n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n1 .
+    _:c14n3 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n1 .
+    _:c14n3 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n1 .
+    _:c14n3 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n1 .
     _:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
-    _:c14n4 <https://w3id.org/security#proof> _:c14n1 .
+    _:c14n4 <https://w3id.org/security#proof> _:c14n0 .
     _:c14n4 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n6 .
-    _:c14n4 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n7 .
-    _:c14n5 <http://schema.org/status> "active" _:c14n7 .
-    _:c14n5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n7 .
-    _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n6 .
-    _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n7 .
-    _:c14n9 <https://w3id.org/security#proof> _:c14n0 _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n5 _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n7 .
-    _:c14n9 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n7 .
+    _:c14n4 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n8 .
+    _:c14n5 <http://schema.org/status> "active" _:c14n8 .
+    _:c14n5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n8 .
+    _:c14n7 <http://purl.org/dc/terms/created> "2023-10-05T10:06:50.685857378Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
+    _:c14n7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
+    _:c14n7 <https://w3id.org/security#challenge> "abcde" _:c14n0 .
+    _:c14n7 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n0 .
+    _:c14n7 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#authenticationMethod> _:c14n0 .
+    _:c14n7 <https://w3id.org/security#proofValue> "uomFhWQnaAgAAAAAAAAAAtg0qLW9_HWQ2OK181unRQTEUTEawgvd06_Nx9kya9gv28-v9F4E_-Op5GItGge97l-47kx1q7HX8wyVF_y_p_Eo3kUBf1UQZesg74O6FlVKWic3X_bz1E681cxMvDQ7-h4PoKh4eatlTEtNvcMipLtFkoreCJkH82ec0FWmgsHiFX5ekeHd7u4M0U2UoaJu7k4s2xBUNlscRwFvVaSnPaIQJWG3ac9_5gxgGNW28F0XrB5TLyif9YVTZUnAY-pvwAgAAAAAAAAAurfRVVsIedEfpCDtQ-rqnIlUIZdwMLnhZlfUtWd3OKeHSvcqA07Lv7n_OT-sxBK5dLCdCUSapm7v28Czh-UpVhCULIl7Whe1ugE06V4YYW5f2vBK0qPb9RbpnOfQK41Wg7QT48BHMirzIsjHQbxJrJQAAAAAAAABBK9NveJzSrzE-FpJFhNgef_ck7prGUED4i3UoY05zPjKRoVTQy-hA3Mm6fKlPmD-soGp9RaCwXm9bGGeL7ecEJcEUOMaBVzbq1L_0nalRv-x2e0K6sqlRIN955uuwF2vvx3AHMXcgFTQuybx2CjqmXdDC4oL7BMFbjgdH3mjQZ-JvZAA11CwB9oLtDhlbH-hH4egBeFjaz4Pl0dmEZDFvGDf4GrMJhGrWDt_ZNwSM27qehHD0qr1qrqkDozafZF1ay-lenM4ZfTA68Ft7zFaOtkke1rpe84xRZFs4QpECHCXBFDjGgVc26tS_9J2pUb_sdntCurKpUSDfeebrsBdrZ0QD4q02CjkouN0KGYzO6szwT1rPgTIi4P472u3CUgklwRQ4xoFXNurUv_SdqVG_7HZ7QrqyqVEg33nm67AXa4p5NqtFMF2pFHPbIwX95rvboxdSmJijNUdcAvWKUoxTink2q0UwXakUc9sjBf3mu9ujF1KYmKM1R1wC9YpSjFMlwRQ4xoFXNurUv_SdqVG_7HZ7QrqyqVEg33nm67AXa4p5NqtFMF2pFHPbIwX95rvboxdSmJijNUdcAvWKUoxTink2q0UwXakUc9sjBf3mu9ujF1KYmKM1R1wC9YpSjFOKeTarRTBdqRRz2yMF_ea726MXUpiYozVHXAL1ilKMU70YLydu8l-v1pBfjB2TtpOYzha7HV0GAnuGnboG3TRtXVPL7H4Ipu58jxI9CY-VntU5jhtVr35q-gHTBxuuDBE4l1fgPM0tKDuN545xTSwNGWxWlSccMgXyftVac1g-bWdEA-KtNgo5KLjdChmMzurM8E9az4EyIuD-O9rtwlIJCYbtUe3iDtFY0_k5pcLegguVPBFnNsxu8VUfQkPjRVQ6MwF0ygC3zfPJMt5-9VFUK3jFsPt7VBuNbvf1yUJkGqvfdU94KGZd7reJjYa2oX7ysJH9WPKXhf4aZOjJup1eoFP6qFCAU30F3gu7dRaburWXY0kdGOb1cY1WxXhAiUtYJm-Dj8RYfi0WxnQWyDrRYmxPZzGCUG7FZmW0M4mSSTDeMOfBxzkqKbtVJ45I0Wu-cdPxgy8CtOgqNQ5wLD4R78dwBzF3IBU0Lsm8dgo6pl3QwuKC-wTBW44HR95o0GfQel_6dmLXk2aoCngrWrsSeXZcszYFJOlPtmTXNpohUeaLOSyauO4Mlv00D6ayw8CcmOptdSVm-z-rZkfeAF4Y814NT91fBikqaBj28ZLmwP3cdKOwNOx5QIqD7ZjH_Ge1Ptwxnjk-FuDtWZLoJn336Ya1uCvV1nAh3lpY5YkhDe_HcAcxdyAVNC7JvHYKOqZd0MLigvsEwVuOB0feaNBnRf6MPBE7uetV41eHNY-G9ar4VVjUKKSchBKB-SbeCi1F_ow8ETu561XjV4c1j4b1qvhVWNQopJyEEoH5Jt4KLUX-jDwRO7nrVeNXhzWPhvWq-FVY1CiknIQSgfkm3gotRf6MPBE7uetV41eHNY-G9ar4VVjUKKSchBKB-SbeCi1F_ow8ETu561XjV4c1j4b1qvhVWNQopJyEEoH5Jt4KLQChz8vVs08Inb8ro3GHT87VyrvQ1RiCa_NAduUzUbanFAtCkCK2JA54TUEGJYk8lS-vXPNLWTGju_JMUJnJ0wAGZ50XSoJ9lJLvZjeOCk-9rxg7JVOuW8K-aSSgIqt1LCOkOj0lDdSLWjep7-1wfd_DfEyV_O1PWpc5ZuXX4nGu33BdB24KZORSsVUSikygG9iNkKvnDB5eHGwxxcq9iZUsNWsA5rSwiT02vSE24OG5OEBkFz06VWuXDdF4oluUfosCAAAAAAAAAITwxuzHD-pzXRYxdilJ-rCBHvB9B3a3XDTOiZprfbUX2aW_ivB6m9WAvIhSaFFQLfOIMV8OSUXh6KrcDgsUIWansNH-H3y6iHRgqs4NKjMjINK7z6SBDKEswUGZC4stE6GOE5Qd-GtHvyb2Y5zocDYVAAAAAAAAAOra-etn-G7oQKl1r9fcyvmkxtcULrOCGHPWFT_2P-pDu_6NqBSqTtw0QDj-hylV-pkEeZBoqIXe_mzwVw4R4i4qJYNd4u3yh3LZ6gXHKhXZH6ZawKRZutET4oBfQf5SOjYfEdOvsBR8eE06cZ3ua7EGG4PJWTGwgnV5UrtGFVUqoX51ro9b2-AXnf4yTnMRhl7GstIvqr9URWFNW47ajTYfQaMhbRqwCsV68MBc0dzyj4W_EFcbhBfAcvRnLbADEIqnd_3zNOZnwW0W7j3KDdP1ce36_pE4YKl0yJebDSQTTUDUjWnafQh80QZ42dSGsotmfRXREPcDAZnsyUzZ_UbQel_6dmLXk2aoCngrWrsSeXZcszYFJOlPtmTXNpohUdB6X_p2YteTZqgKeCtauxJ5dlyzNgUk6U-2ZNc2miFRl-UylPrj1PWi24vnTwEPTNMy0smrY3ptmM-HL0kBuCOX5TKU-uPU9aLbi-dPAQ9M0zLSyatjem2Yz4cvSQG4I9B6X_p2YteTZqgKeCtauxJ5dlyzNgUk6U-2ZNc2miFRl-UylPrj1PWi24vnTwEPTNMy0smrY3ptmM-HL0kBuCOX5TKU-uPU9aLbi-dPAQ9M0zLSyatjem2Yz4cvSQG4I5flMpT649T1otuL508BD0zTMtLJq2N6bZjPhy9JAbgjSKEZ0kd778rXYtrFteaxmuvHVB2Yx4BjZ0H2jrZUDTRIoRnSR3vvytdi2sW15rGa68dUHZjHgGNnQfaOtlQNNEihGdJHe-_K12LaxbXmsZrrx1QdmMeAY2dB9o62VA00SKEZ0kd778rXYtrFteaxmuvHVB2Yx4BjZ0H2jrZUDTRIoRnSR3vvytdi2sW15rGa68dUHZjHgGNnQfaOtlQNNAEFAAAAAAAAAGFiY2RlAABhYoKkYWGLDQ8AAgMEBQYHCAphYhBhY4UAAQIDBGFkBaRhYYcEBQYHCAIDYWIJYWOFAAECAwRhZAU"^^<https://w3id.org/security#multibase> _:c14n0 .
+    _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n6 .
     "#;
 
     #[test]
@@ -2210,7 +2267,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     const VC_PROOF_BOUND_1: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "usYxFJJw9C0KHipWTTevDyU44iLEd6OWcqd1k33w0iuectnnNpDGS5D_kTULrexnpAWQCF5cBR1F0h3FXGsm2xh7Fafg49VG-Slte0XnTgDzpRqn0nqhO4I57s-b3TPVbA_t5uyJnGllyB6QcwVtRQA"^^<https://w3id.org/security#multibase> .
+    _:b0 <https://w3id.org/security#proofValue> "uplcZ95iJsNeXhOnpZANIsKrOHRuZ8TR4Im6PEuXFq2Hzn8eohweViCIXvp-7IE_nAWQCF5cBR1F0h3FXGsm2xh7Fafg49VG-Slte0XnTgDzpRqn0nqhO4I57s-b3TPVbA_t5uyJnGllyB6QcwVtRQA"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
     _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
@@ -2743,11 +2800,11 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let predicates = vec![PredicateProofStatementString {
             circuit: "https://example.org/circuit/lessThan".to_string(),
             snark_proving_key: ark_to_base64url(&snark_pk).unwrap(),
-            private: HashMap::from([("a".to_string(), "_:e5".to_string())]),
-            public: HashMap::from([(
+            private: vec![("a".to_string(), "_:e5".to_string())],
+            public: vec![(
                 "b".to_string(),
-                "\"2022-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
-            )]),
+                "\"2022-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )],
         }];
 
         let derived_proof = derive_proof_string(

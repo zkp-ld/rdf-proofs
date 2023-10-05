@@ -52,7 +52,7 @@ impl std::fmt::Display for OrderedGraphNameRef<'_> {
 
 /// `oxrdf::triple::NamedOrBlankNode` with string-based ordering
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub struct OrderedNamedOrBlankNode(NamedOrBlankNode);
+pub struct OrderedNamedOrBlankNode(pub NamedOrBlankNode);
 impl Ord for OrderedNamedOrBlankNode {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0.to_string().cmp(&other.0.to_string())

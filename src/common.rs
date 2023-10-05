@@ -1,5 +1,7 @@
 use crate::{
-    constants::{DELIMITER, MAP_TO_SCALAR_AS_HASH_DST, NYM_IRI_PREFIX},
+    constants::{
+        DELIMITER, INTEGER32_OFFSET, MAP_TO_SCALAR_AS_HASH_DST, NYM_IRI_PREFIX, TIMESTAMP_OFFSET,
+    },
     context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, VERIFICATION_METHOD},
     error::RDFProofsError,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples},
@@ -14,17 +16,22 @@ use bbs_plus::{
     signature::SignatureG1,
 };
 use blake2::Blake2b512;
-use chrono::Utc;
+use chrono::{DateTime, NaiveDate, Utc};
 use legogroth16::circom::{CircomCircuit as CircomCircuitOrig, R1CS as R1CSOrig};
 use multibase::Base;
 use oxrdf::{
-    vocab::{self, rdf::TYPE, xsd},
+    vocab::{
+        self,
+        rdf::TYPE,
+        xsd::{self, DATE, DATE_TIME, INTEGER},
+    },
     BlankNode, Dataset, Graph, Literal, LiteralRef, NamedNode, NamedNodeRef, SubjectRef, Term,
     TermRef, Triple, TripleRef,
 };
-use oxsdatatypes::DateTime;
+use oxsdatatypes::DateTime as DateTimeOxsDataTypes;
 use oxttl::{NQuadsParser, NTriplesParser};
 use proof_system::{
+    prelude::R1CSCircomWitness as R1CSCircomWitnessOrig,
     proof::Proof as ProofOrig,
     statement::{
         bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, ped_comm::PedersenCommitment,
@@ -56,6 +63,7 @@ pub type PedersenCommitmentStmt = PedersenCommitment<G1Affine>;
 pub type ProvingKey = ProvingKeyOrig<Bls12_381>;
 pub type CircomCircuit = CircomCircuitOrig<Bls12_381>;
 pub type R1CS = R1CSOrig<Bls12_381>;
+pub type R1CSCircomWitness = R1CSCircomWitnessOrig<Bls12_381>;
 
 pub fn serialize_ark<S: serde::Serializer, A: CanonicalSerialize>(
     ark: &A,
@@ -188,10 +196,31 @@ pub fn hash_term_to_field(
     term: TermRef,
     hasher: &BBSPlusDefaultFieldHasher,
 ) -> Result<Fr, RDFProofsError> {
-    hasher
-        .hash_to_field(term.to_string().as_bytes(), 1)
-        .pop()
-        .ok_or(RDFProofsError::HashToField)
+    match term {
+        TermRef::Literal(v) if v.datatype() == INTEGER => {
+            let num: i64 = v.value().parse()?;
+            Ok(Fr::from(num + INTEGER32_OFFSET))
+        }
+        TermRef::Literal(v) if v.datatype() == DATE_TIME => {
+            let datetime: DateTime<Utc> = v.value().parse()?;
+            let timestamp = datetime.timestamp() + TIMESTAMP_OFFSET;
+            Fr::try_from(timestamp)
+                .map_err(|_| RDFProofsError::InvalidDateTime(v.value().to_string()))
+        }
+        TermRef::Literal(v) if v.datatype() == DATE => {
+            let date: NaiveDate = v.value().parse()?;
+            let datetime = date
+                .and_hms_opt(0, 0, 0)
+                .ok_or(RDFProofsError::InvalidDateTime(v.value().to_string()))?;
+            let timestamp = datetime.timestamp() + TIMESTAMP_OFFSET;
+            Fr::try_from(timestamp)
+                .map_err(|_| RDFProofsError::InvalidDateTime(v.value().to_string()))
+        }
+        _ => hasher
+            .hash_to_field(term.to_string().as_bytes(), 1)
+            .pop()
+            .ok_or(RDFProofsError::HashToField),
+    }
 }
 
 pub fn hash_byte_to_field(
@@ -385,7 +414,8 @@ pub(crate) fn configure_proof_core(
     let created = proof_options.object_for_subject_predicate(proof_options_subject, CREATED);
     if let Some(TermRef::Literal(v)) = created {
         let (datetime, typ, _) = v.destruct();
-        if DateTime::from_str(datetime).is_err() || !typ.is_some_and(|t| t == vocab::xsd::DATE_TIME)
+        if DateTimeOxsDataTypes::from_str(datetime).is_err()
+            || !typ.is_some_and(|t| t == vocab::xsd::DATE_TIME)
         {
             return Err(RDFProofsError::InvalidProofDatetime);
         }
@@ -429,5 +459,99 @@ pub(crate) fn get_term_from_string(term_string: &str) -> Result<Term, RDFProofsE
         Ok(Literal::new_language_tagged_literal(&caps[1], &caps[2])?.into())
     } else {
         Err(RDFProofsError::TtlTermParse(term_string.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::constants::{INTEGER32_OFFSET, TIMESTAMP_OFFSET};
+
+    use super::{get_hasher, hash_term_to_field, Fr};
+    use ark_ff::BigInt;
+    use oxrdf::{
+        vocab::xsd::{DATE, DATE_TIME, INTEGER},
+        LiteralRef, NamedNodeRef, TermRef,
+    };
+
+    #[test]
+    fn hash_terms_success() {
+        let hasher = get_hasher();
+        let integer32_offset: u64 = INTEGER32_OFFSET.try_into().unwrap();
+        let timestamp_offset: u64 = TIMESTAMP_OFFSET.try_into().unwrap();
+
+        let eqs: Vec<(TermRef, Fr)> = vec![
+            (
+                NamedNodeRef::new_unchecked("did:example:john").into(),
+                BigInt([
+                    2024815526171708096,
+                    2099760857422642053,
+                    7708857115834156063,
+                    3809904842201934428,
+                ])
+                .into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("123", INTEGER).into(),
+                BigInt([integer32_offset + 123, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("-123", INTEGER).into(),
+                BigInt([integer32_offset - 123, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("0000-01-01", DATE).into(),
+                BigInt([0, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("0000-01-01T00:00:00Z", DATE_TIME).into(),
+                BigInt([0, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("1970-01-01", DATE).into(),
+                BigInt([timestamp_offset, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("1970-01-01T00:00:00Z", DATE_TIME).into(),
+                BigInt([timestamp_offset, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("2022-01-01", DATE).into(),
+                BigInt([timestamp_offset + 1640995200, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("2022-01-01T00:00:00Z", DATE_TIME).into(),
+                BigInt([timestamp_offset + 1640995200, 0, 0, 0]).into(),
+            ),
+            // Times less than one second are rounded down
+            (
+                LiteralRef::new_typed_literal("2022-01-01T00:00:00.12345678Z", DATE_TIME).into(),
+                BigInt([timestamp_offset + 1640995200, 0, 0, 0]).into(),
+            ),
+        ];
+
+        for (term, hashed) in eqs {
+            assert_eq!(hash_term_to_field(term, &hasher).unwrap(), hashed);
+        }
+    }
+
+    #[test]
+    fn hash_terms_failed() {
+        let hasher = get_hasher();
+
+        assert!(matches!(
+            hash_term_to_field(
+                LiteralRef::new_typed_literal("123.456", INTEGER).into(),
+                &hasher
+            ),
+            Err(crate::error::RDFProofsError::ParseInt(_))
+        ));
+
+        assert!(matches!(
+            hash_term_to_field(
+                LiteralRef::new_typed_literal("1234-56-78T99:99:99Z", DATE_TIME).into(),
+                &hasher
+            ),
+            Err(crate::error::RDFProofsError::DateTimeParse(_))
+        ));
     }
 }
