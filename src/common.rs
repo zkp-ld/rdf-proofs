@@ -1,7 +1,5 @@
 use crate::{
-    constants::{
-        DELIMITER, INTEGER32_OFFSET, MAP_TO_SCALAR_AS_HASH_DST, NYM_IRI_PREFIX, TIMESTAMP_OFFSET,
-    },
+    constants::{DELIMITER, MAP_TO_SCALAR_AS_HASH_DST, NYM_IRI_PREFIX},
     context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, VERIFICATION_METHOD},
     error::RDFProofsError,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples},
@@ -196,14 +194,15 @@ pub fn hash_term_to_field(
     term: TermRef,
     hasher: &BBSPlusDefaultFieldHasher,
 ) -> Result<Fr, RDFProofsError> {
+    // limit integers to 64-bits
     match term {
         TermRef::Literal(v) if v.datatype() == INTEGER => {
             let num: i64 = v.value().parse()?;
-            Ok(Fr::from(num + INTEGER32_OFFSET))
+            Ok(Fr::from(num))
         }
         TermRef::Literal(v) if v.datatype() == DATE_TIME => {
             let datetime: DateTime<Utc> = v.value().parse()?;
-            let timestamp = datetime.timestamp() + TIMESTAMP_OFFSET;
+            let timestamp = datetime.timestamp();
             Fr::try_from(timestamp)
                 .map_err(|_| RDFProofsError::InvalidDateTime(v.value().to_string()))
         }
@@ -212,7 +211,7 @@ pub fn hash_term_to_field(
             let datetime = date
                 .and_hms_opt(0, 0, 0)
                 .ok_or(RDFProofsError::InvalidDateTime(v.value().to_string()))?;
-            let timestamp = datetime.timestamp() + TIMESTAMP_OFFSET;
+            let timestamp = datetime.timestamp();
             Fr::try_from(timestamp)
                 .map_err(|_| RDFProofsError::InvalidDateTime(v.value().to_string()))
         }
@@ -464,8 +463,6 @@ pub(crate) fn get_term_from_string(term_string: &str) -> Result<Term, RDFProofsE
 
 #[cfg(test)]
 mod tests {
-    use crate::constants::{INTEGER32_OFFSET, TIMESTAMP_OFFSET};
-
     use super::{get_hasher, hash_term_to_field, Fr};
     use ark_ff::BigInt;
     use oxrdf::{
@@ -476,8 +473,6 @@ mod tests {
     #[test]
     fn hash_terms_success() {
         let hasher = get_hasher();
-        let integer32_offset: u64 = INTEGER32_OFFSET.try_into().unwrap();
-        let timestamp_offset: u64 = TIMESTAMP_OFFSET.try_into().unwrap();
 
         let eqs: Vec<(TermRef, Fr)> = vec![
             (
@@ -492,40 +487,62 @@ mod tests {
             ),
             (
                 LiteralRef::new_typed_literal("123", INTEGER).into(),
-                BigInt([integer32_offset + 123, 0, 0, 0]).into(),
+                BigInt([123, 0, 0, 0]).into(),
             ),
             (
                 LiteralRef::new_typed_literal("-123", INTEGER).into(),
-                BigInt([integer32_offset - 123, 0, 0, 0]).into(),
+                BigInt([
+                    18446744069414584198,
+                    6034159408538082302,
+                    3691218898639771653,
+                    8353516859464449352,
+                ])
+                .into(),
             ),
             (
-                LiteralRef::new_typed_literal("0000-01-01", DATE).into(),
-                BigInt([0, 0, 0, 0]).into(),
-            ),
-            (
-                LiteralRef::new_typed_literal("0000-01-01T00:00:00Z", DATE_TIME).into(),
-                BigInt([0, 0, 0, 0]).into(),
+                LiteralRef::new_typed_literal("9223372036854775807", INTEGER).into(),
+                BigInt([9223372036854775807, 0, 0, 0]).into(),
             ),
             (
                 LiteralRef::new_typed_literal("1970-01-01", DATE).into(),
-                BigInt([timestamp_offset, 0, 0, 0]).into(),
+                BigInt([0, 0, 0, 0]).into(),
             ),
             (
                 LiteralRef::new_typed_literal("1970-01-01T00:00:00Z", DATE_TIME).into(),
-                BigInt([timestamp_offset, 0, 0, 0]).into(),
+                BigInt([0, 0, 0, 0]).into(),
             ),
             (
                 LiteralRef::new_typed_literal("2022-01-01", DATE).into(),
-                BigInt([timestamp_offset + 1640995200, 0, 0, 0]).into(),
+                BigInt([1640995200, 0, 0, 0]).into(),
             ),
             (
                 LiteralRef::new_typed_literal("2022-01-01T00:00:00Z", DATE_TIME).into(),
-                BigInt([timestamp_offset + 1640995200, 0, 0, 0]).into(),
+                BigInt([1640995200, 0, 0, 0]).into(),
             ),
             // Times less than one second are rounded down
             (
                 LiteralRef::new_typed_literal("2022-01-01T00:00:00.12345678Z", DATE_TIME).into(),
-                BigInt([timestamp_offset + 1640995200, 0, 0, 0]).into(),
+                BigInt([1640995200, 0, 0, 0]).into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("0000-01-01", DATE).into(),
+                BigInt([
+                    18446744007247365121,
+                    6034159408538082302,
+                    3691218898639771653,
+                    8353516859464449352,
+                ])
+                .into(),
+            ),
+            (
+                LiteralRef::new_typed_literal("0000-01-01T00:00:00Z", DATE_TIME).into(),
+                BigInt([
+                    18446744007247365121,
+                    6034159408538082302,
+                    3691218898639771653,
+                    8353516859464449352,
+                ])
+                .into(),
             ),
         ];
 
@@ -541,6 +558,15 @@ mod tests {
         assert!(matches!(
             hash_term_to_field(
                 LiteralRef::new_typed_literal("123.456", INTEGER).into(),
+                &hasher
+            ),
+            Err(crate::error::RDFProofsError::ParseInt(_))
+        ));
+
+        // 9223372036854775808 = i64.MAX + 1
+        assert!(matches!(
+            hash_term_to_field(
+                LiteralRef::new_typed_literal("9223372036854775808", INTEGER).into(),
                 &hasher
             ),
             Err(crate::error::RDFProofsError::ParseInt(_))

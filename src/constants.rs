@@ -8,5 +8,3 @@ pub const DELIMITER: &[u8; 13] = b"__DELIMITER__"; // TODO: fix it later
 pub const BLIND_SIG_REQUEST_CONTEXT: &[u8; 23] = b"BBS_*_BLIND_SIG_REQUEST"; // TODO: fix it later
 pub const PPID_SEED: &[u8; 15] = b"BBS_*_PPID_SEED"; // TODO: fix it later
 pub const PPID_PREFIX: &str = "https://zkp-ld.org/.well-known/genid/"; // TODO: fix it later
-pub const TIMESTAMP_OFFSET: i64 = 62167219200; // Offset to set the timestamp `0000-01-01T00:00:00Z` to `0_i64`
-pub const INTEGER32_OFFSET: i64 = 2147483648; // Offset to set the negative integer `-2^31` to `0_i64`
