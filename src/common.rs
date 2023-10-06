@@ -32,8 +32,10 @@ use proof_system::{
     prelude::R1CSCircomWitness as R1CSCircomWitnessOrig,
     proof::Proof as ProofOrig,
     statement::{
-        bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt, ped_comm::PedersenCommitment,
-        r1cs_legogroth16::ProvingKey as ProvingKeyOrig, Statements as StatementsOrig,
+        bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
+        ped_comm::PedersenCommitment,
+        r1cs_legogroth16::{ProvingKey as ProvingKeyOrig, VerifyingKey as VerifyingKeyOrig},
+        Statements as StatementsOrig,
     },
     witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
 };
@@ -59,6 +61,7 @@ pub type PoKBBSPlusStmt<E> = PoKBBSSignatureG1Stmt<E>;
 pub type PoKBBSPlusWit<E> = PoKBBSSignatureG1Wit<E>;
 pub type PedersenCommitmentStmt = PedersenCommitment<G1Affine>;
 pub type ProvingKey = ProvingKeyOrig<Bls12_381>;
+pub type VerifyingKey = VerifyingKeyOrig<Bls12_381>;
 pub type CircomCircuit = CircomCircuitOrig<Bls12_381>;
 pub type R1CS = R1CSOrig<Bls12_381>;
 pub type R1CSCircomWitness = R1CSCircomWitnessOrig<Bls12_381>;

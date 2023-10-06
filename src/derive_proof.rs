@@ -13,10 +13,10 @@ use crate::{
     constants::PPID_PREFIX,
     context::{
         AUTHENTICATION, CHALLENGE, CIRCUIT, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN,
-        HOLDER, INPUT, MULTIBASE, PREDICATE, PREDICATE_TYPE, PREDICATE_VAL, PREDICATE_VAR,
-        PRIVATE_VARIABLE, PROOF, PROOF_PURPOSE, PROOF_VALUE, PUBLIC_VARIABLE, SECRET_COMMITMENT,
-        VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE, VERIFIABLE_PRESENTATION_TYPE,
-        VERIFICATION_METHOD,
+        HOLDER, MULTIBASE, PREDICATE, PREDICATE_TYPE, PREDICATE_VAL, PREDICATE_VAR, PRIVATE,
+        PRIVATE_VARIABLE, PROOF, PROOF_PURPOSE, PROOF_VALUE, PUBLIC, PUBLIC_VARIABLE,
+        SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
+        VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
     key_gen::{generate_params, generate_ppid, PPID},
@@ -32,7 +32,10 @@ use ark_std::rand::RngCore;
 use chrono::offset::Utc;
 use multibase::Base;
 use oxrdf::{
-    vocab::{rdf::TYPE, xsd},
+    vocab::{
+        rdf::{FIRST, NIL, REST, TYPE},
+        xsd,
+    },
     BlankNode, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode, NamedOrBlankNode, Quad,
     QuadRef, Subject, Term, TermRef, Triple,
 };
@@ -45,6 +48,7 @@ use proof_system::{
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub struct PredicateProofStatement {
+    pub id: NamedNode,
     pub circuit: NamedNode,
     pub snark_proving_key: ProvingKey,
     pub private: Vec<(String, BlankNode)>,
@@ -91,6 +95,7 @@ impl PredicateProofStatement {
 }
 
 pub struct PredicateProofStatementString {
+    pub id: String,
     pub circuit: String,
     pub snark_proving_key: String,
     pub private: Vec<(String, String)>,
@@ -363,8 +368,15 @@ pub fn derive_proof_string<R: RngCore>(
             predicates
                 .iter()
                 .map(|predicate| {
+                    let Term::NamedNode(predicate_id) = get_term_from_string(&predicate.id)? else {
+                        return Err(RDFProofsError::MissingPredicateURI)
+                    };
+                    let Term::NamedNode(circuit) = get_term_from_string(&predicate.circuit)? else {
+                        return Err(RDFProofsError::MissingPredicateCircuit)
+                    };
                     Ok(PredicateProofStatement {
-                        circuit: NamedNode::new(&predicate.circuit)?,
+                        id: predicate_id,
+                        circuit,
                         snark_proving_key: multibase_to_ark(&predicate.snark_proving_key)?,
                         private: get_predicate_private_map_from_string(&predicate.private)?,
                         public: get_predicate_public_map_from_string(&predicate.public)?,
@@ -685,83 +697,170 @@ fn build_vp(
     // add predicates if exist
     if let Some(predicates) = predicates {
         for predicate in predicates {
-            let predicate_id = BlankNode::default();
             vp.insert(QuadRef::new(
                 &vp_id,
                 PREDICATE,
-                &predicate_id,
+                &predicate.id,
                 GraphNameRef::DefaultGraph,
             ));
             vp.insert(QuadRef::new(
-                &predicate_id,
+                &predicate.id,
                 TYPE,
                 PREDICATE_TYPE,
                 GraphNameRef::DefaultGraph,
             ));
             vp.insert(QuadRef::new(
-                &predicate_id,
+                &predicate.id,
                 CIRCUIT,
                 &predicate.circuit,
                 GraphNameRef::DefaultGraph,
             ));
 
             // add private variables
-            for (var, val) in &predicate.private {
-                let input_id = BlankNode::default();
+            let mut private_iter = predicate.private.iter();
+            let mut node = BlankNode::default();
+            if let Some((var, val)) = private_iter.next() {
+                let private_id = BlankNode::default();
                 vp.insert(QuadRef::new(
-                    &predicate_id,
-                    INPUT,
-                    &input_id,
+                    &predicate.id,
+                    PRIVATE,
+                    &node,
                     GraphNameRef::DefaultGraph,
                 ));
                 vp.insert(QuadRef::new(
-                    &input_id,
+                    &node,
+                    FIRST,
+                    &private_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
                     TYPE,
                     PRIVATE_VARIABLE,
                     GraphNameRef::DefaultGraph,
                 ));
                 vp.insert(QuadRef::new(
-                    &input_id,
+                    &private_id,
                     PREDICATE_VAR,
                     LiteralRef::new_simple_literal(var),
                     GraphNameRef::DefaultGraph,
                 ));
                 vp.insert(QuadRef::new(
-                    &input_id,
+                    &private_id,
                     PREDICATE_VAL,
                     val,
                     GraphNameRef::DefaultGraph,
                 ));
             }
-
-            // add public variables
-            for (var, val) in &predicate.public {
-                let input_id = BlankNode::default();
+            for (var, val) in private_iter {
+                let private_id = BlankNode::default();
+                let new_node = BlankNode::default();
                 vp.insert(QuadRef::new(
-                    &predicate_id,
-                    INPUT,
-                    &input_id,
+                    &node,
+                    REST,
+                    &new_node,
                     GraphNameRef::DefaultGraph,
                 ));
                 vp.insert(QuadRef::new(
-                    &input_id,
+                    &new_node,
+                    FIRST,
+                    &private_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
+                    TYPE,
+                    PRIVATE_VARIABLE,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
+                    PREDICATE_VAR,
+                    LiteralRef::new_simple_literal(var),
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &private_id,
+                    PREDICATE_VAL,
+                    val,
+                    GraphNameRef::DefaultGraph,
+                ));
+                node = new_node;
+            }
+            vp.insert(QuadRef::new(&node, REST, NIL, GraphNameRef::DefaultGraph));
+
+            // add public variables
+            let mut public_iter = predicate.public.iter();
+            let mut node = BlankNode::default();
+            if let Some((var, val)) = public_iter.next() {
+                let public_id = BlankNode::default();
+                vp.insert(QuadRef::new(
+                    &predicate.id,
+                    PUBLIC,
+                    &node,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &node,
+                    FIRST,
+                    &public_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
                     TYPE,
                     PUBLIC_VARIABLE,
                     GraphNameRef::DefaultGraph,
                 ));
                 vp.insert(QuadRef::new(
-                    &input_id,
+                    &public_id,
                     PREDICATE_VAR,
                     LiteralRef::new_simple_literal(var),
                     GraphNameRef::DefaultGraph,
                 ));
                 vp.insert(QuadRef::new(
-                    &input_id,
+                    &public_id,
                     PREDICATE_VAL,
                     val,
                     GraphNameRef::DefaultGraph,
                 ));
             }
+            for (var, val) in public_iter {
+                let public_id = BlankNode::default();
+                let new_node = BlankNode::default();
+                vp.insert(QuadRef::new(
+                    &node,
+                    REST,
+                    &new_node,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &new_node,
+                    FIRST,
+                    &public_id,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
+                    TYPE,
+                    PUBLIC_VARIABLE,
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
+                    PREDICATE_VAR,
+                    LiteralRef::new_simple_literal(var),
+                    GraphNameRef::DefaultGraph,
+                ));
+                vp.insert(QuadRef::new(
+                    &public_id,
+                    PREDICATE_VAL,
+                    val,
+                    GraphNameRef::DefaultGraph,
+                ));
+                node = new_node;
+            }
+            vp.insert(QuadRef::new(&node, REST, NIL, GraphNameRef::DefaultGraph));
         }
     }
 
@@ -1157,7 +1256,7 @@ fn derive_proof_value<R: RngCore>(
         ));
         secret_commitment_index = Some(statements.len() - 1);
     }
-    // statement for predicates
+    // statements for predicates
     let mut predicate_indexes = vec![];
     if let Some(predicates) = predicates {
         for predicate in predicates {
@@ -1743,7 +1842,14 @@ mod tests {
         .unwrap();
         println!("derived_proof.vp: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(&mut rng, &derived_proof, &key_graph, Some(challenge), None);
+        let verified = verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1775,8 +1881,14 @@ mod tests {
         .unwrap();
         println!("derived_proof: {}", derived_proof);
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1786,7 +1898,7 @@ mod tests {
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let vp = get_dataset_from_nquads(VP).unwrap();
         let challenge = "abcde";
-        let verified = verify_proof(&mut rng, &vp, &key_graph, Some(challenge), None);
+        let verified = verify_proof(&mut rng, &vp, &key_graph, Some(challenge), None, None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1794,7 +1906,7 @@ mod tests {
     fn verify_proof_string_success() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let challenge = "abcde";
-        let verified = verify_proof_string(&mut rng, VP, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(&mut rng, VP, KEY_GRAPH, Some(challenge), None, None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1841,17 +1953,25 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain).is_ok());
+        assert!(verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            challenge,
+            domain,
+            None
+        )
+        .is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1869,16 +1989,23 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                domain,
+                None
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, domain).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None).is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
 
@@ -1896,16 +2023,23 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                domain,
+                None
+            ),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None).is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1923,18 +2057,25 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, domain),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                domain,
+                None
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain),
+            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None),
+            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, None).is_ok());
+        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None).is_ok());
     }
 
     #[test]
@@ -1965,18 +2106,19 @@ mod tests {
         )
         .unwrap();
         assert!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain).is_ok()
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None)
+                .is_ok()
         );
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1994,16 +2136,18 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain).is_ok());
+        assert!(
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None).is_ok()
+        );
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
 
@@ -2021,16 +2165,18 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
-        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None).is_ok());
+        assert!(
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None).is_ok()
+        );
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -2048,18 +2194,18 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None).is_ok());
+        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None).is_ok());
     }
 
     const DISCLOSED_VC_1_WITH_HIDDEN_LITERALS: &str = r#"
@@ -2131,7 +2277,14 @@ mod tests {
         .unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
 
-        let verified = verify_proof(&mut rng, &derived_proof, &key_graph, Some(challenge), None);
+        let verified = verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2165,8 +2318,14 @@ mod tests {
         )
         .unwrap();
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
 
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -2316,8 +2475,14 @@ _:b1 <http://schema.org/name> "ABC inc." .
         )
         .unwrap();
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2508,8 +2673,14 @@ _:b1 <http://schema.org/name> "ABC inc." .
         .unwrap();
         println!("derived_proof: {}", derived_proof);
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2648,8 +2819,14 @@ _:b1 <http://schema.org/name> "ABC inc." .
         )
         .unwrap();
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2676,8 +2853,14 @@ _:b1 <http://schema.org/name> "ABC inc." .
         )
         .unwrap();
 
-        let verified =
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, Some(challenge), None);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -2723,6 +2906,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             KEY_GRAPH,
             Some(challenge),
             Some(domain),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -2771,6 +2955,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             KEY_GRAPH,
             Some(challenge),
             Some(domain),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -2796,16 +2981,23 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let snark_pk = circuit
             .generate_proving_key(commit_witness_count, &mut rng)
             .unwrap();
+        let snark_pk = ark_to_base64url(&snark_pk).unwrap();
 
         let predicates = vec![PredicateProofStatementString {
-            circuit: "https://example.org/circuit/lessThan".to_string(),
-            snark_proving_key: ark_to_base64url(&snark_pk).unwrap(),
+            id: "<https://example.org/predicate/01>".to_string(),
+            circuit: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            snark_proving_key: snark_pk.clone(),
             private: vec![("a".to_string(), "_:e5".to_string())],
             public: vec![(
                 "b".to_string(),
                 "\"2022-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
             )],
         }];
+
+        let snark_verifying_keys = HashMap::from([(
+            "<https://example.org/predicate/01>".to_string(),
+            snark_pk.clone(),
+        )]);
 
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -2821,7 +3013,56 @@ _:b1 <http://schema.org/name> "ABC inc." .
         )
         .unwrap();
 
-        // let verified = verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None);
-        // assert!(verified.is_ok(), "{:?}", verified)
+        println!("derive_proof: {}", derived_proof);
+
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys.clone()),
+        );
+        assert!(verified.is_ok(), "{:?}", verified);
+
+        // negative test
+        let unsatisfied_predicates = vec![PredicateProofStatementString {
+            id: "<https://example.org/predicate/01>".to_string(),
+            circuit: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            snark_proving_key: snark_pk.clone(),
+            private: vec![("a".to_string(), "_:e5".to_string())],
+            public: vec![(
+                "b".to_string(),
+                "\"2019-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )],
+        }];
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&unsatisfied_predicates),
+        )
+        .unwrap();
+        println!("derive_proof: {}", derived_proof);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys),
+        );
+        assert!(matches!(
+            verified,
+            Err(RDFProofsError::ProofSystem(
+                proof_system::prelude::ProofSystemError::LegoGroth16Error(_)
+            ))
+        ));
     }
 }

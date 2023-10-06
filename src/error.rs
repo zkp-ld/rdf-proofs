@@ -48,6 +48,9 @@ pub enum RDFProofsError {
     MissingSecret,
     MissingSecretOrDomain,
     InvalidPredicate,
+    MissingPredicateURI,
+    MissingPredicateCircuit,
+    MissingSnarkVK(String),
     InvalidInteger(String),
     InvalidDateTime(String),
     DateTimeParse(chrono::ParseError),
@@ -154,7 +157,20 @@ impl std::fmt::Display for RDFProofsError {
                 )
             }
             RDFProofsError::InvalidPredicate => {
-                write!(f, "invalid predicate error")
+                write!(f, "invalid predicate (for predicate proof) error")
+            }
+            RDFProofsError::MissingPredicateURI => {
+                write!(f, "predicate (for predicate proof) must have URI as its id")
+            }
+            RDFProofsError::MissingPredicateCircuit => {
+                write!(f, "predicate (for predicate proof) must have circuit")
+            }
+            RDFProofsError::MissingSnarkVK(v) => {
+                write!(
+                    f,
+                    "missing SNARK verifying key corresponding to the predicate {}",
+                    v
+                )
             }
             RDFProofsError::InvalidInteger(v) => {
                 write!(f, "invalid integer: {}", v)

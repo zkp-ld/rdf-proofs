@@ -49,7 +49,9 @@ pub const PREDICATE_TYPE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://zkp-ld.org/security#Predicate");
 pub const CIRCUIT: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://zkp-ld.org/security#circuit");
-pub const INPUT: NamedNodeRef = NamedNodeRef::new_unchecked("https://zkp-ld.org/security#input");
+pub const PRIVATE: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://zkp-ld.org/security#private");
+pub const PUBLIC: NamedNodeRef = NamedNodeRef::new_unchecked("https://zkp-ld.org/security#public");
 pub const PRIVATE_VARIABLE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://zkp-ld.org/security#PrivateVariable");
 pub const PUBLIC_VARIABLE: NamedNodeRef =
