@@ -34,7 +34,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug)]
 struct VerifierPredicateProofStatement {
-    pub circuit: NamedNode,
     pub snark_verifying_key: VerifyingKey,
     pub private: Vec<(String, BlankNode)>,
     pub public: Vec<(String, Term)>,
@@ -408,7 +407,11 @@ fn get_predicates(
         .ok_or(RDFProofsError::InvalidVP)?;
 
     for predicate in metadata.objects_for_subject_predicate(vp_subject, PREDICATE) {
-        let TermRef::NamedNode(predicate_subject) = predicate else { return Err(RDFProofsError::MissingPredicateURI) };
+        let predicate_subject = match predicate {
+            TermRef::NamedNode(n) => Ok(NamedOrBlankNodeRef::NamedNode(n)),
+            TermRef::BlankNode(n) => Ok(NamedOrBlankNodeRef::BlankNode(n)),
+            TermRef::Literal(_) => Err(RDFProofsError::InvalidPredicate),
+        }?;
 
         let TermRef::NamedNode(predicate_circuit) = metadata
             .object_for_subject_predicate(predicate_subject, CIRCUIT)
@@ -417,9 +420,9 @@ fn get_predicates(
             };
 
         let snark_verifying_key = snark_verifying_keys
-            .get(&predicate_subject.into_owned())
+            .get(&predicate_circuit.into_owned())
             .ok_or(RDFProofsError::MissingSnarkVK(
-                predicate_subject.to_string(),
+                predicate_circuit.to_string(),
             ))?;
 
         let mut privates = vec![];
@@ -445,7 +448,6 @@ fn get_predicates(
         read_var_list(public, &mut publics, metadata)?;
 
         result.push(VerifierPredicateProofStatement {
-            circuit: predicate_circuit.into(),
             snark_verifying_key: snark_verifying_key.clone(),
             private: privates,
             public: publics,

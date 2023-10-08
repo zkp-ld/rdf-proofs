@@ -48,7 +48,6 @@ pub enum RDFProofsError {
     MissingSecret,
     MissingSecretOrDomain,
     InvalidPredicate,
-    MissingPredicateURI,
     MissingPredicateCircuit,
     MissingSnarkVK(String),
     InvalidInteger(String),
@@ -161,9 +160,6 @@ impl std::fmt::Display for RDFProofsError {
             }
             RDFProofsError::InvalidPredicate => {
                 write!(f, "invalid predicate (for predicate proof) error")
-            }
-            RDFProofsError::MissingPredicateURI => {
-                write!(f, "predicate (for predicate proof) must have URI as its id")
             }
             RDFProofsError::MissingPredicateCircuit => {
                 write!(f, "predicate (for predicate proof) must have circuit")

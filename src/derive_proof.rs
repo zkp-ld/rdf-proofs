@@ -314,15 +314,11 @@ pub fn derive_proof_string<R: RngCore>(
             predicates
                 .into_iter()
                 .map(|predicate| {
-                    let Term::NamedNode(predicate_id) = get_term_from_string(&predicate.id)? else {
-                        return Err(RDFProofsError::MissingPredicateURI)
-                    };
                     let Term::NamedNode(circuit_id) = get_term_from_string(&predicate.circuit_id)? else {
                         return Err(RDFProofsError::MissingPredicateCircuit)
                     };
                     let circuit = Circuit::new(circuit_id, predicate.circuit_r1cs.clone(), predicate.circuit_wasm.clone())?;
                     Ok(PredicateProofStatement {
-                        id: predicate_id,
                         circuit,
                         snark_proving_key: multibase_to_ark(&predicate.snark_proving_key)?,
                         private: get_predicate_private_map_from_string(&predicate.private)?,
@@ -644,20 +640,21 @@ fn build_vp(
     // add predicates if exist
     if let Some(predicates) = predicates {
         for predicate in predicates {
+            let predicate_id = BlankNode::default();
             vp.insert(QuadRef::new(
                 &vp_id,
                 PREDICATE,
-                &predicate.id,
+                &predicate_id,
                 GraphNameRef::DefaultGraph,
             ));
             vp.insert(QuadRef::new(
-                &predicate.id,
+                &predicate_id,
                 TYPE,
                 PREDICATE_TYPE,
                 GraphNameRef::DefaultGraph,
             ));
             vp.insert(QuadRef::new(
-                &predicate.id,
+                &predicate_id,
                 CIRCUIT,
                 &predicate.circuit.circuit_id,
                 GraphNameRef::DefaultGraph,
@@ -669,7 +666,7 @@ fn build_vp(
             if let Some((var, val)) = private_iter.next() {
                 let private_id = BlankNode::default();
                 vp.insert(QuadRef::new(
-                    &predicate.id,
+                    &predicate_id,
                     PRIVATE,
                     &node,
                     GraphNameRef::DefaultGraph,
@@ -742,7 +739,7 @@ fn build_vp(
             if let Some((var, val)) = public_iter.next() {
                 let public_id = BlankNode::default();
                 vp.insert(QuadRef::new(
-                    &predicate.id,
+                    &predicate_id,
                     PUBLIC,
                     &node,
                     GraphNameRef::DefaultGraph,
@@ -2920,16 +2917,26 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let mut deanon_map = get_example_deanon_map_string();
         deanon_map.extend(get_example_deanon_map_string_with_hidden_literal());
 
-        let commit_witness_count = 1;
-        let circuit_id = NamedNode::new("https://example.org/predicate/01").unwrap();
+        // define circuit
         let circuit_r1cs = std::fs::read("circom/bls12381/less_than_public_64.r1cs").unwrap();
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
-        let circuit = Circuit::new(circuit_id, circuit_r1cs.clone(), circuit_wasm.clone()).unwrap();
-        let snark_proving_key = circuit.generate_proving_key(commit_witness_count, &mut rng).unwrap();
+
+        // generate SNARK proving key (by Verifier)
+        let circuit_id = "https://zkp-ld.org/circuit/lessThan";
+        let circuit = Circuit::new(
+            NamedNode::new_unchecked(circuit_id),
+            circuit_r1cs.clone(),
+            circuit_wasm.clone(),
+        )
+        .unwrap();
+        let commit_witness_count = 1;
+        let snark_proving_key = circuit
+            .generate_proving_key(commit_witness_count, &mut rng)
+            .unwrap();
         let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+
         let predicates = vec![PredicateProofStatementString {
-            id: "<https://example.org/predicate/01>".to_string(),
-            circuit_id: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            circuit_id: format!("<{}>", circuit_id),
             circuit_r1cs: circuit_r1cs.clone(),
             circuit_wasm: circuit_wasm.clone(),
             snark_proving_key: snark_proving_key.clone(),
@@ -2939,11 +2946,6 @@ _:b1 <http://schema.org/name> "ABC inc." .
                 "\"2022-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
             )],
         }];
-
-        let snark_verifying_keys = HashMap::from([(
-            "<https://example.org/predicate/01>".to_string(),
-            snark_proving_key.clone(),
-        )]);
 
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -2961,6 +2963,11 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         println!("derive_proof: {}", derived_proof);
 
+        let snark_verifying_keys = HashMap::from([(
+            "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            snark_proving_key.clone(),
+        )]);
+
         let verified = verify_proof_string(
             &mut rng,
             &derived_proof,
@@ -2973,8 +2980,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // negative test
         let unsatisfied_predicates = vec![PredicateProofStatementString {
-            id: "<https://example.org/predicate/01>".to_string(),
-            circuit_id: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            circuit_id: format!("<{}>", circuit_id),
             circuit_r1cs,
             circuit_wasm,
             snark_proving_key,
@@ -3077,16 +3083,26 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let mut deanon_map = get_example_deanon_map_string();
         deanon_map.extend(get_example_deanon_map_string_with_hidden_literal_4());
 
-        let commit_witness_count = 1;
-        let circuit_id = NamedNode::new("https://example.org/predicate/01").unwrap();
+        // define circuit
         let circuit_r1cs = std::fs::read("circom/bls12381/less_than_public_64.r1cs").unwrap();
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
-        let circuit = Circuit::new(circuit_id, circuit_r1cs.clone(), circuit_wasm.clone()).unwrap();
-        let snark_proving_key = circuit.generate_proving_key(commit_witness_count, &mut rng).unwrap();
+
+        // generate SNARK proving key (by Verifier)
+        let circuit_id = "https://zkp-ld.org/circuit/lessThan";
+        let circuit = Circuit::new(
+            NamedNode::new_unchecked(circuit_id),
+            circuit_r1cs.clone(),
+            circuit_wasm.clone(),
+        )
+        .unwrap();
+        let commit_witness_count = 1;
+        let snark_proving_key = circuit
+            .generate_proving_key(commit_witness_count, &mut rng)
+            .unwrap();
         let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+
         let predicates = vec![PredicateProofStatementString {
-            id: "<https://example.org/predicate/01>".to_string(),
-            circuit_id: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            circuit_id: format!("<{}>", circuit_id),
             circuit_r1cs: circuit_r1cs.clone(),
             circuit_wasm: circuit_wasm.clone(),
             snark_proving_key: snark_proving_key.clone(),
@@ -3096,11 +3112,6 @@ _:b1 <http://schema.org/name> "ABC inc." .
                 "\"4300000000\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string(),
             )],
         }];
-
-        let snark_verifying_keys = HashMap::from([(
-            "<https://example.org/predicate/01>".to_string(),
-            snark_proving_key.clone(),
-        )]);
 
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -3118,6 +3129,11 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         println!("derive_proof: {}", derived_proof);
 
+        let snark_verifying_keys = HashMap::from([(
+            "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            snark_proving_key.clone(),
+        )]);
+
         let verified = verify_proof_string(
             &mut rng,
             &derived_proof,
@@ -3130,7 +3146,6 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // negative test
         let unsatisfied_predicates = vec![PredicateProofStatementString {
-            id: "<https://example.org/predicate/01>".to_string(),
             circuit_id: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
             circuit_r1cs,
             circuit_wasm,
