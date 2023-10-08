@@ -53,7 +53,6 @@ impl Circuit {
 }
 
 pub struct PredicateProofStatement {
-    pub id: NamedNode,
     pub circuit: Circuit,
     pub snark_proving_key: ProvingKey,
     pub private: Vec<(String, BlankNode)>,
@@ -100,7 +99,6 @@ impl PredicateProofStatement {
 }
 
 pub struct PredicateProofStatementString {
-    pub id: String,
     pub circuit_id: String,
     pub circuit_r1cs: Vec<u8>,
     pub circuit_wasm: Vec<u8>,
