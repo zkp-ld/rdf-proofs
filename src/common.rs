@@ -15,9 +15,7 @@ use bbs_plus::{
 };
 use blake2::Blake2b512;
 use chrono::{DateTime, NaiveDate, Utc};
-use legogroth16::circom::{
-    r1cs::R1CSFile as R1CSFileOrig, CircomCircuit as CircomCircuitOrig, R1CS as R1CSOrig,
-};
+use legogroth16::circom::{CircomCircuit as CircomCircuitOrig, R1CS as R1CSOrig};
 use multibase::Base;
 use oxrdf::{
     vocab::{
@@ -66,7 +64,6 @@ pub type ProvingKey = ProvingKeyOrig<Bls12_381>;
 pub type VerifyingKey = VerifyingKeyOrig<Bls12_381>;
 pub type CircomCircuit = CircomCircuitOrig<Bls12_381>;
 pub type R1CS = R1CSOrig<Bls12_381>;
-pub type R1CSFile = R1CSFileOrig<Bls12_381>;
 pub type R1CSCircomWitness = R1CSCircomWitnessOrig<Bls12_381>;
 
 pub fn serialize_ark<S: serde::Serializer, A: CanonicalSerialize>(

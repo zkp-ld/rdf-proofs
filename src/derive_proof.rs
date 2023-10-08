@@ -317,7 +317,7 @@ pub fn derive_proof_string<R: RngCore>(
                     let Term::NamedNode(circuit_id) = get_term_from_string(&predicate.circuit_id)? else {
                         return Err(RDFProofsError::MissingPredicateCircuit)
                     };
-                    let circuit = Circuit::new(circuit_id, predicate.circuit_r1cs.clone(), predicate.circuit_wasm.clone())?;
+                    let circuit = Circuit::new(circuit_id, &predicate.circuit_r1cs, predicate.circuit_wasm.clone())?;
                     Ok(PredicateProofStatement {
                         circuit,
                         snark_proving_key: multibase_to_ark(&predicate.snark_proving_key)?,
@@ -1538,7 +1538,7 @@ mod tests {
     use super::PredicateProofStatementString;
     use crate::{
         ark_to_base64url, blind_sign_string, blind_verify_string,
-        common::{get_dataset_from_nquads, get_graph_from_ntriples},
+        common::{get_dataset_from_nquads, get_graph_from_ntriples, R1CS},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
@@ -2918,14 +2918,15 @@ _:b1 <http://schema.org/name> "ABC inc." .
         deanon_map.extend(get_example_deanon_map_string_with_hidden_literal());
 
         // define circuit
-        let circuit_r1cs = std::fs::read("circom/bls12381/less_than_public_64.r1cs").unwrap();
+        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
+        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
 
         // generate SNARK proving key (by Verifier)
         let circuit_id = "https://zkp-ld.org/circuit/lessThan";
         let circuit = Circuit::new(
             NamedNode::new_unchecked(circuit_id),
-            circuit_r1cs.clone(),
+            &circuit_r1cs,
             circuit_wasm.clone(),
         )
         .unwrap();
@@ -3084,14 +3085,15 @@ _:b1 <http://schema.org/name> "ABC inc." .
         deanon_map.extend(get_example_deanon_map_string_with_hidden_literal_4());
 
         // define circuit
-        let circuit_r1cs = std::fs::read("circom/bls12381/less_than_public_64.r1cs").unwrap();
+        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
+        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
 
         // generate SNARK proving key (by Verifier)
         let circuit_id = "https://zkp-ld.org/circuit/lessThan";
         let circuit = Circuit::new(
             NamedNode::new_unchecked(circuit_id),
-            circuit_r1cs.clone(),
+            &circuit_r1cs,
             circuit_wasm.clone(),
         )
         .unwrap();
