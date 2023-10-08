@@ -1,13 +1,11 @@
 use crate::{
-    common::{CircomCircuit, ProvingKey, R1CSFile, R1CS},
+    common::{CircomCircuit, ProvingKey, R1CS},
     error::RDFProofsError,
+    multibase_to_ark,
 };
 use ark_std::rand::RngCore;
 use oxrdf::{BlankNode, NamedNode, NamedOrBlankNode, Term};
-use std::{
-    collections::HashMap,
-    io::{BufReader, Cursor},
-};
+use std::collections::HashMap;
 
 pub struct Circuit {
     pub circuit_id: NamedNode,
@@ -19,10 +17,10 @@ pub struct Circuit {
 impl Circuit {
     pub fn new(
         circuit_id: NamedNode,
-        r1cs: Vec<u8>,
+        r1cs: &str,
         wasm_bytes: Vec<u8>,
     ) -> Result<Self, RDFProofsError> {
-        let r1cs: R1CS = R1CSFile::new(BufReader::new(Cursor::new(r1cs)))?.into();
+        let r1cs: R1CS = multibase_to_ark(r1cs)?;
         let circuit = CircomCircuit::setup(r1cs.clone());
         Ok(Self {
             circuit_id,
@@ -100,7 +98,7 @@ impl PredicateProofStatement {
 
 pub struct PredicateProofStatementString {
     pub circuit_id: String,
-    pub circuit_r1cs: Vec<u8>,
+    pub circuit_r1cs: String,
     pub circuit_wasm: Vec<u8>,
     pub snark_proving_key: String,
     pub private: Vec<(String, String)>,
