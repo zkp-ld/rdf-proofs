@@ -8,7 +8,7 @@ use crate::{
         hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes, reorder_vc_triples,
         BBSPlusDefaultFieldHasher, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr,
         PedersenCommitmentStmt, PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap,
-        ProvingKey, R1CSCircomWitness, StatementIndexMap, Statements, R1CS,
+        R1CSCircomWitness, StatementIndexMap, Statements,
     },
     constants::PPID_PREFIX,
     context::{
@@ -22,6 +22,7 @@ use crate::{
     key_gen::{generate_params, generate_ppid, PPID},
     key_graph::KeyGraph,
     ordered_triple::{OrderedNamedOrBlankNode, OrderedVerifiableCredentialGraphViews},
+    predicate::{Circuit, PredicateProofStatement, PredicateProofStatementString},
     signature::verify,
     vc::{
         DisclosedVerifiableCredential, VcPair, VcPairString, VerifiableCredential,
@@ -47,61 +48,6 @@ use proof_system::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-pub struct PredicateProofStatement {
-    pub id: NamedNode,
-    pub circuit: NamedNode,
-    pub snark_proving_key: ProvingKey,
-    pub private: Vec<(String, BlankNode)>,
-    pub public: Vec<(String, Term)>,
-}
-
-impl PredicateProofStatement {
-    fn deanon_privates(
-        &self,
-        deanon_map: &HashMap<NamedOrBlankNode, Term>,
-    ) -> Result<Vec<(String, Term)>, RDFProofsError> {
-        let resolved_private = self
-            .private
-            .iter()
-            .map(|(k, v)| {
-                Ok((
-                    k.clone(),
-                    deanon_map
-                        .get(&v.to_owned().into())
-                        .ok_or(RDFProofsError::InvalidPredicate)?
-                        .clone(),
-                ))
-            })
-            .collect::<Result<Vec<_>, RDFProofsError>>()?;
-        Ok(resolved_private)
-    }
-
-    fn canonicalize_privates(
-        &self,
-        issued_identifiers_map: &HashMap<String, String>,
-    ) -> Result<Vec<(String, BlankNode)>, RDFProofsError> {
-        let canonical_privates = self
-            .private
-            .iter()
-            .map(|(k, v)| {
-                let canonical_id = issued_identifiers_map
-                    .get(v.as_str())
-                    .ok_or(RDFProofsError::InvalidPredicate)?;
-                Ok((k.clone(), BlankNode::new_unchecked(canonical_id)))
-            })
-            .collect::<Result<Vec<_>, RDFProofsError>>()?;
-        Ok(canonical_privates)
-    }
-}
-
-pub struct PredicateProofStatementString {
-    pub id: String,
-    pub circuit: String,
-    pub snark_proving_key: String,
-    pub private: Vec<(String, String)>,
-    pub public: Vec<(String, String)>,
-}
-
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
     rng: &mut R,
@@ -113,7 +59,7 @@ pub fn derive_proof<R: RngCore>(
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequest>,
     with_ppid: Option<bool>,
-    predicates: Option<Vec<PredicateProofStatement>>,
+    predicates: Option<&Vec<PredicateProofStatement>>,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
@@ -193,7 +139,7 @@ pub fn derive_proof<R: RngCore>(
         &domain,
         &blind_sign_request,
         &ppid,
-        &predicates,
+        predicates,
     )?;
 
     // decompose VP draft into graphs
@@ -305,7 +251,7 @@ pub fn derive_proof<R: RngCore>(
         challenge,
         &blind_sign_request,
         &ppid,
-        &predicates,
+        predicates,
         deanon_map,
         &vp_draft_bnode_map,
     )?;
@@ -366,14 +312,15 @@ pub fn derive_proof_string<R: RngCore>(
     let predicates = if let Some(predicates) = predicates {
         Some(
             predicates
-                .iter()
+                .into_iter()
                 .map(|predicate| {
                     let Term::NamedNode(predicate_id) = get_term_from_string(&predicate.id)? else {
                         return Err(RDFProofsError::MissingPredicateURI)
                     };
-                    let Term::NamedNode(circuit) = get_term_from_string(&predicate.circuit)? else {
+                    let Term::NamedNode(circuit_id) = get_term_from_string(&predicate.circuit_id)? else {
                         return Err(RDFProofsError::MissingPredicateCircuit)
                     };
+                    let circuit = Circuit::new(circuit_id, predicate.circuit_r1cs.clone(), predicate.circuit_wasm.clone())?;
                     Ok(PredicateProofStatement {
                         id: predicate_id,
                         circuit,
@@ -398,7 +345,7 @@ pub fn derive_proof_string<R: RngCore>(
         secret,
         blind_sign_request,
         with_ppid,
-        predicates,
+        predicates.as_ref(),
     )?;
 
     Ok(rdf_canon::serialize(&derived_proof))
@@ -591,7 +538,7 @@ fn build_vp(
     domain: &Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
-    predicates: &Option<Vec<PredicateProofStatement>>,
+    predicates: Option<&Vec<PredicateProofStatement>>,
 ) -> Result<(Dataset, HashMap<String, String>, Vec<BlankNode>), RDFProofsError> {
     let vp_id = BlankNode::default();
     let vp_proof_id = BlankNode::default();
@@ -712,7 +659,7 @@ fn build_vp(
             vp.insert(QuadRef::new(
                 &predicate.id,
                 CIRCUIT,
-                &predicate.circuit,
+                &predicate.circuit.circuit_id,
                 GraphNameRef::DefaultGraph,
             ));
 
@@ -1155,7 +1102,7 @@ fn derive_proof_value<R: RngCore>(
     challenge: Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
-    predicates: &Option<Vec<PredicateProofStatement>>,
+    predicates: Option<&Vec<PredicateProofStatement>>,
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     vp_draft_bnode_map: &HashMap<String, String>,
 ) -> Result<String, RDFProofsError> {
@@ -1260,11 +1207,9 @@ fn derive_proof_value<R: RngCore>(
     let mut predicate_indexes = vec![];
     if let Some(predicates) = predicates {
         for predicate in predicates {
-            let r1cs = R1CS::from_file("circom/bls12381/less_than_public_32.r1cs").unwrap(); // TODO: fix it
-            let wasm_bytes = std::fs::read("circom/bls12381/less_than_public_32.wasm").unwrap(); // TODO: fix it
             statements.add(R1CSCircomProver::new_statement_from_params(
-                r1cs,
-                wasm_bytes,
+                predicate.circuit.get_r1cs(),
+                predicate.circuit.get_wasm_bytes(),
                 predicate.snark_proving_key.clone(),
             )?);
             predicate_indexes.push(statements.len() - 1);
@@ -1596,16 +1541,17 @@ mod tests {
     use super::PredicateProofStatementString;
     use crate::{
         ark_to_base64url, blind_sign_string, blind_verify_string,
-        common::{get_dataset_from_nquads, get_graph_from_ntriples, CircomCircuit},
+        common::{get_dataset_from_nquads, get_graph_from_ntriples},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
         error::RDFProofsError,
+        predicate::Circuit,
         request_blind_sign_string, unblind_string, verify_blind_sign_request_string, verify_proof,
         verify_proof_string, KeyGraph, VcPair, VcPairString, VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use oxrdf::{NamedOrBlankNode, Term};
+    use oxrdf::{NamedNode, NamedOrBlankNode, Term};
     use std::collections::HashMap;
 
     const KEY_GRAPH: &str = r#"
@@ -2961,7 +2907,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     #[test]
-    fn derive_and_verify_proof_with_predicates_success() {
+    fn derive_and_verify_proof_with_less_than_predicates() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
         let vc_pairs = vec![VcPairString::new(
@@ -2975,18 +2921,18 @@ _:b1 <http://schema.org/name> "ABC inc." .
         deanon_map.extend(get_example_deanon_map_string_with_hidden_literal());
 
         let commit_witness_count = 1;
-        let r1cs_file_path = "circom/bls12381/less_than_public_32.r1cs";
-        let wasm_file_path = "circom/bls12381/less_than_public_32.wasm";
-        let circuit = CircomCircuit::from_r1cs_file(r1cs_file_path).unwrap();
-        let snark_pk = circuit
-            .generate_proving_key(commit_witness_count, &mut rng)
-            .unwrap();
-        let snark_pk = ark_to_base64url(&snark_pk).unwrap();
-
+        let circuit_id = NamedNode::new("https://example.org/predicate/01").unwrap();
+        let circuit_r1cs = std::fs::read("circom/bls12381/less_than_public_64.r1cs").unwrap();
+        let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
+        let circuit = Circuit::new(circuit_id, circuit_r1cs.clone(), circuit_wasm.clone()).unwrap();
+        let snark_proving_key = circuit.generate_proving_key(commit_witness_count, &mut rng).unwrap();
+        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
         let predicates = vec![PredicateProofStatementString {
             id: "<https://example.org/predicate/01>".to_string(),
-            circuit: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
-            snark_proving_key: snark_pk.clone(),
+            circuit_id: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            circuit_r1cs: circuit_r1cs.clone(),
+            circuit_wasm: circuit_wasm.clone(),
+            snark_proving_key: snark_proving_key.clone(),
             private: vec![("a".to_string(), "_:e5".to_string())],
             public: vec![(
                 "b".to_string(),
@@ -2996,7 +2942,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let snark_verifying_keys = HashMap::from([(
             "<https://example.org/predicate/01>".to_string(),
-            snark_pk.clone(),
+            snark_proving_key.clone(),
         )]);
 
         let derived_proof = derive_proof_string(
@@ -3028,12 +2974,171 @@ _:b1 <http://schema.org/name> "ABC inc." .
         // negative test
         let unsatisfied_predicates = vec![PredicateProofStatementString {
             id: "<https://example.org/predicate/01>".to_string(),
-            circuit: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
-            snark_proving_key: snark_pk.clone(),
+            circuit_id: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            circuit_r1cs,
+            circuit_wasm,
+            snark_proving_key,
             private: vec![("a".to_string(), "_:e5".to_string())],
             public: vec![(
                 "b".to_string(),
-                "\"2019-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+                "\"2019-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )],
+        }];
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&unsatisfied_predicates),
+        )
+        .unwrap();
+        println!("derive_proof: {}", derived_proof);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys),
+        );
+        assert!(matches!(
+            verified,
+            Err(RDFProofsError::ProofSystem(
+                proof_system::prelude::ProofSystemError::LegoGroth16Error(_)
+            ))
+        ));
+    }
+
+    const VC_4: &str = r#"
+    <urn:example:prod1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Product> .
+    <urn:example:prod1> <http://schema.org/name> "Awesome Product" .
+    <urn:example:prod1> <http://schema.org/price> "300"^^<http://www.w3.org/2001/XMLSchema#integer> .
+    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <urn:example:prod1> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
+    const VC_PROOF_4: &str = r#"
+    _:b0 <https://w3id.org/security#proofValue> "upHBxGAvQcU1hUDdvsT8eNvU6g_z9y446mzT78wxCOOToYdDAkX11C-Ga0w_8WNUHnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const DISCLOSED_VC_PROOF_4: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const DISCLOSED_VC_4_WITH_HIDDEN_LITERALS: &str = r#"
+    _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Product> .
+    _:e0 <http://schema.org/price> _:e1 .
+    _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    _:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
+    _:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+    _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
+    const DEANON_MAP_WITH_HIDDEN_LITERAL_4: [(&str, &str); 3] = [
+        ("_:e0", "<urn:example:prod1>"),
+        (
+            "_:e1",
+            "\"300\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+        ),
+        ("_:e2", "<http://example.org/vcred/00>"),
+    ];
+    fn get_example_deanon_map_string_with_hidden_literal_4() -> HashMap<String, String> {
+        DEANON_MAP_WITH_HIDDEN_LITERAL_4
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_less_than_predicates_2() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let vc_pairs = vec![VcPairString::new(
+            VC_4,
+            VC_PROOF_4,
+            DISCLOSED_VC_4_WITH_HIDDEN_LITERALS,
+            DISCLOSED_VC_PROOF_4,
+        )];
+
+        let mut deanon_map = get_example_deanon_map_string();
+        deanon_map.extend(get_example_deanon_map_string_with_hidden_literal_4());
+
+        let commit_witness_count = 1;
+        let circuit_id = NamedNode::new("https://example.org/predicate/01").unwrap();
+        let circuit_r1cs = std::fs::read("circom/bls12381/less_than_public_64.r1cs").unwrap();
+        let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
+        let circuit = Circuit::new(circuit_id, circuit_r1cs.clone(), circuit_wasm.clone()).unwrap();
+        let snark_proving_key = circuit.generate_proving_key(commit_witness_count, &mut rng).unwrap();
+        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+        let predicates = vec![PredicateProofStatementString {
+            id: "<https://example.org/predicate/01>".to_string(),
+            circuit_id: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            circuit_r1cs: circuit_r1cs.clone(),
+            circuit_wasm: circuit_wasm.clone(),
+            snark_proving_key: snark_proving_key.clone(),
+            private: vec![("a".to_string(), "_:e1".to_string())],
+            public: vec![(
+                "b".to_string(),
+                "\"4300000000\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string(),
+            )],
+        }];
+
+        let snark_verifying_keys = HashMap::from([(
+            "<https://example.org/predicate/01>".to_string(),
+            snark_proving_key.clone(),
+        )]);
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&predicates),
+        )
+        .unwrap();
+
+        println!("derive_proof: {}", derived_proof);
+
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys.clone()),
+        );
+        assert!(verified.is_ok(), "{:?}", verified);
+
+        // negative test
+        let unsatisfied_predicates = vec![PredicateProofStatementString {
+            id: "<https://example.org/predicate/01>".to_string(),
+            circuit_id: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            circuit_r1cs,
+            circuit_wasm,
+            snark_proving_key,
+            private: vec![("a".to_string(), "_:e1".to_string())],
+            public: vec![(
+                "b".to_string(),
+                "\"100\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string(), // "a < b" is not satisfied
             )],
         }];
         let derived_proof = derive_proof_string(

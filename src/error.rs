@@ -55,6 +55,9 @@ pub enum RDFProofsError {
     InvalidDateTime(String),
     DateTimeParse(chrono::ParseError),
     ParseInt(std::num::ParseIntError),
+    Circom(legogroth16::circom::CircomError),
+    IO(std::io::Error),
+    Legogroth16(legogroth16::error::Error),
     Other(String),
 }
 
@@ -184,6 +187,9 @@ impl std::fmt::Display for RDFProofsError {
             }
             RDFProofsError::DateTimeParse(e) => write!(f, "date time parse error: {}", e),
             RDFProofsError::ParseInt(e) => write!(f, "parse int error: {}", e),
+            RDFProofsError::Circom(e) => write!(f, "circom error: {:?}", e),
+            RDFProofsError::IO(e) => write!(f, "IO error: {}", e),
+            RDFProofsError::Legogroth16(e) => write!(f, "legogroth16 error: {:?}", e),
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
         }
     }
@@ -266,5 +272,23 @@ impl From<chrono::ParseError> for RDFProofsError {
 impl From<std::num::ParseIntError> for RDFProofsError {
     fn from(e: std::num::ParseIntError) -> Self {
         Self::ParseInt(e)
+    }
+}
+
+impl From<legogroth16::circom::CircomError> for RDFProofsError {
+    fn from(e: legogroth16::circom::CircomError) -> Self {
+        Self::Circom(e)
+    }
+}
+
+impl From<std::io::Error> for RDFProofsError {
+    fn from(e: std::io::Error) -> Self {
+        Self::IO(e)
+    }
+}
+
+impl From<legogroth16::error::Error> for RDFProofsError {
+    fn from(e: legogroth16::error::Error) -> Self {
+        Self::Legogroth16(e)
     }
 }
