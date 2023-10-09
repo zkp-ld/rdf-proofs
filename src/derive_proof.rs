@@ -317,7 +317,7 @@ pub fn derive_proof_string<R: RngCore>(
                     let Term::NamedNode(circuit_id) = get_term_from_string(&predicate.circuit_id)? else {
                         return Err(RDFProofsError::MissingPredicateCircuit)
                     };
-                    let circuit = Circuit::new(circuit_id, &predicate.circuit_r1cs, predicate.circuit_wasm.clone())?;
+                    let circuit = Circuit::new(circuit_id, &predicate.circuit_r1cs, &predicate.circuit_wasm)?;
                     Ok(PredicateProofStatement {
                         circuit,
                         snark_proving_key: multibase_to_ark(&predicate.snark_proving_key)?,
@@ -1206,7 +1206,7 @@ fn derive_proof_value<R: RngCore>(
         for predicate in predicates {
             statements.add(R1CSCircomProver::new_statement_from_params(
                 predicate.circuit.get_r1cs(),
-                predicate.circuit.get_wasm_bytes(),
+                predicate.circuit.get_wasm(),
                 predicate.snark_proving_key.clone(),
             )?);
             predicate_indexes.push(statements.len() - 1);
@@ -1548,6 +1548,7 @@ mod tests {
         verify_proof_string, KeyGraph, VcPair, VcPairString, VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
+    use multibase::Base;
     use oxrdf::{NamedNode, NamedOrBlankNode, Term};
     use std::collections::HashMap;
 
@@ -2921,13 +2922,14 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
         let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
+        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
 
         // generate SNARK proving key (by Verifier)
         let circuit_id = "https://zkp-ld.org/circuit/lessThan";
         let circuit = Circuit::new(
             NamedNode::new_unchecked(circuit_id),
             &circuit_r1cs,
-            circuit_wasm.clone(),
+            &circuit_wasm,
         )
         .unwrap();
         let commit_witness_count = 1;
@@ -3022,6 +3024,177 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     const VC_4: &str = r#"
+    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+    <did:example:john> <http://schema.org/name> "John Smith" .
+    <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+    _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://schema.org/DateTime> . # use schema.org instead of xsd
+    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
+    const VC_PROOF_4: &str = r#"
+    _:b0 <https://w3id.org/security#proofValue> "ugsvHVX5633ZzPuy5fKYFyth5Ws6M2mZ8FECcQuDViq_uMM9--yYBtnPdLase-jb_nHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const DISCLOSED_VC_4: &str = r#"
+    _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+    _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+    _:b0 <http://example.org/vocab/vaccinationDate> _:e1 .
+    _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    _:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
+    _:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+    _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
+    const DISCLOSED_VC_PROOF_4: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const DEANON_MAP_4: [(&str, &str); 3] = [
+        ("_:e0", "<did:example:john>"),
+        (
+            "_:e1",
+            "\"2022-01-01T00:00:00Z\"^^<http://schema.org/DateTime>",
+        ),
+        ("_:e2", "<http://example.org/vcred/00>"),
+    ];
+    fn get_example_deanon_map_4() -> HashMap<String, String> {
+        DEANON_MAP_4
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_less_than_predicates_schema_org_datetime() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let vc_pairs = vec![VcPairString::new(
+            VC_4,
+            VC_PROOF_4,
+            DISCLOSED_VC_4,
+            DISCLOSED_VC_PROOF_4,
+        )];
+
+        let deanon_map = get_example_deanon_map_4();
+
+        // define circuit
+        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
+        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
+        let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
+        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
+
+        // generate SNARK proving key (by Verifier)
+        let circuit_id = "https://zkp-ld.org/circuit/lessThan";
+        let circuit = Circuit::new(
+            NamedNode::new_unchecked(circuit_id),
+            &circuit_r1cs,
+            &circuit_wasm,
+        )
+        .unwrap();
+        let commit_witness_count = 1;
+        let snark_proving_key = circuit
+            .generate_proving_key(commit_witness_count, &mut rng)
+            .unwrap();
+        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+
+        let predicates = vec![PredicateProofStatementString {
+            circuit_id: format!("<{}>", circuit_id),
+            circuit_r1cs: circuit_r1cs.clone(),
+            circuit_wasm: circuit_wasm.clone(),
+            snark_proving_key: snark_proving_key.clone(),
+            private: vec![("a".to_string(), "_:e1".to_string())],
+            public: vec![(
+                "b".to_string(),
+                "\"2022-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )],
+        }];
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&predicates),
+        )
+        .unwrap();
+
+        println!("derive_proof: {}", derived_proof);
+
+        let snark_verifying_keys = HashMap::from([(
+            "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            snark_proving_key.clone(),
+        )]);
+
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys.clone()),
+        );
+        assert!(verified.is_ok(), "{:?}", verified);
+
+        // negative test
+        let unsatisfied_predicates = vec![PredicateProofStatementString {
+            circuit_id: format!("<{}>", circuit_id),
+            circuit_r1cs,
+            circuit_wasm,
+            snark_proving_key,
+            private: vec![("a".to_string(), "_:e1".to_string())],
+            public: vec![(
+                "b".to_string(),
+                "\"2019-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )],
+        }];
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&unsatisfied_predicates),
+        )
+        .unwrap();
+        println!("derive_proof: {}", derived_proof);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys),
+        );
+        assert!(matches!(
+            verified,
+            Err(RDFProofsError::ProofSystem(
+                proof_system::prelude::ProofSystemError::LegoGroth16Error(_)
+            ))
+        ));
+    }
+
+    const VC_5: &str = r#"
     <urn:example:prod1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Product> .
     <urn:example:prod1> <http://schema.org/name> "Awesome Product" .
     <urn:example:prod1> <http://schema.org/price> "300"^^<http://www.w3.org/2001/XMLSchema#integer> .
@@ -3031,7 +3204,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
-    const VC_PROOF_4: &str = r#"
+    const VC_PROOF_5: &str = r#"
     _:b0 <https://w3id.org/security#proofValue> "upHBxGAvQcU1hUDdvsT8eNvU6g_z9y446mzT78wxCOOToYdDAkX11C-Ga0w_8WNUHnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
     _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
     _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
@@ -3039,14 +3212,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
     _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
     "#;
-    const DISCLOSED_VC_PROOF_4: &str = r#"
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-    "#;
-    const DISCLOSED_VC_4_WITH_HIDDEN_LITERALS: &str = r#"
+    const DISCLOSED_VC_5: &str = r#"
     _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Product> .
     _:e0 <http://schema.org/price> _:e1 .
     _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
@@ -3055,7 +3221,14 @@ _:b1 <http://schema.org/name> "ABC inc." .
     _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
     "#;
-    const DEANON_MAP_WITH_HIDDEN_LITERAL_4: [(&str, &str); 3] = [
+    const DISCLOSED_VC_PROOF_5: &str = r#"
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+    "#;
+    const DEANON_MAP_5: [(&str, &str); 3] = [
         ("_:e0", "<urn:example:prod1>"),
         (
             "_:e1",
@@ -3063,8 +3236,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         ),
         ("_:e2", "<http://example.org/vcred/00>"),
     ];
-    fn get_example_deanon_map_string_with_hidden_literal_4() -> HashMap<String, String> {
-        DEANON_MAP_WITH_HIDDEN_LITERAL_4
+    fn get_example_deanon_map_5() -> HashMap<String, String> {
+        DEANON_MAP_5
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
@@ -3075,26 +3248,26 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let mut rng = StdRng::seed_from_u64(0u64);
 
         let vc_pairs = vec![VcPairString::new(
-            VC_4,
-            VC_PROOF_4,
-            DISCLOSED_VC_4_WITH_HIDDEN_LITERALS,
-            DISCLOSED_VC_PROOF_4,
+            VC_5,
+            VC_PROOF_5,
+            DISCLOSED_VC_5,
+            DISCLOSED_VC_PROOF_5,
         )];
 
-        let mut deanon_map = get_example_deanon_map_string();
-        deanon_map.extend(get_example_deanon_map_string_with_hidden_literal_4());
+        let deanon_map = get_example_deanon_map_5();
 
         // define circuit
         let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
         let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
+        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
 
         // generate SNARK proving key (by Verifier)
         let circuit_id = "https://zkp-ld.org/circuit/lessThan";
         let circuit = Circuit::new(
             NamedNode::new_unchecked(circuit_id),
             &circuit_r1cs,
-            circuit_wasm.clone(),
+            &circuit_wasm,
         )
         .unwrap();
         let commit_witness_count = 1;
@@ -3102,6 +3275,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             .generate_proving_key(commit_witness_count, &mut rng)
             .unwrap();
         let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+        println!("snark_pk: {}", snark_proving_key);
 
         let predicates = vec![PredicateProofStatementString {
             circuit_id: format!("<{}>", circuit_id),

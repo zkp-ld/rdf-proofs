@@ -10,22 +10,19 @@ use std::collections::HashMap;
 pub struct Circuit {
     pub circuit_id: NamedNode,
     r1cs: R1CS,
-    wasm_bytes: Vec<u8>,
+    wasm: Vec<u8>,
     circuit: CircomCircuit,
 }
 
 impl Circuit {
-    pub fn new(
-        circuit_id: NamedNode,
-        r1cs: &str,
-        wasm_bytes: Vec<u8>,
-    ) -> Result<Self, RDFProofsError> {
+    pub fn new(circuit_id: NamedNode, r1cs: &str, wasm: &str) -> Result<Self, RDFProofsError> {
         let r1cs: R1CS = multibase_to_ark(r1cs)?;
+        let (_, wasm) = multibase::decode(wasm)?;
         let circuit = CircomCircuit::setup(r1cs.clone());
         Ok(Self {
             circuit_id,
             r1cs,
-            wasm_bytes,
+            wasm,
             circuit,
         })
     }
@@ -45,8 +42,8 @@ impl Circuit {
         self.r1cs.clone()
     }
 
-    pub fn get_wasm_bytes(&self) -> Vec<u8> {
-        self.wasm_bytes.clone()
+    pub fn get_wasm(&self) -> Vec<u8> {
+        self.wasm.clone()
     }
 }
 
@@ -99,7 +96,7 @@ impl PredicateProofStatement {
 pub struct PredicateProofStatementString {
     pub circuit_id: String,
     pub circuit_r1cs: String,
-    pub circuit_wasm: Vec<u8>,
+    pub circuit_wasm: String,
     pub snark_proving_key: String,
     pub private: Vec<(String, String)>,
     pub public: Vec<(String, String)>,
