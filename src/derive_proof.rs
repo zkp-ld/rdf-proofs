@@ -2943,9 +2943,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             circuit_r1cs: circuit_r1cs.clone(),
             circuit_wasm: circuit_wasm.clone(),
             snark_proving_key: snark_proving_key.clone(),
-            private: vec![("a".to_string(), "_:e5".to_string())],
+            private: vec![("lesser".to_string(), "_:e5".to_string())],
             public: vec![(
-                "b".to_string(),
+                "greater".to_string(),
                 "\"2022-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
             )],
         }];
@@ -2987,9 +2987,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             circuit_r1cs,
             circuit_wasm,
             snark_proving_key,
-            private: vec![("a".to_string(), "_:e5".to_string())],
+            private: vec![("lesser".to_string(), "_:e5".to_string())],
             public: vec![(
-                "b".to_string(),
+                "greater".to_string(),
                 "\"2019-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
             )],
         }];
@@ -3114,9 +3114,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             circuit_r1cs: circuit_r1cs.clone(),
             circuit_wasm: circuit_wasm.clone(),
             snark_proving_key: snark_proving_key.clone(),
-            private: vec![("a".to_string(), "_:e1".to_string())],
+            private: vec![("lesser".to_string(), "_:e1".to_string())],
             public: vec![(
-                "b".to_string(),
+                "greater".to_string(),
                 "\"2022-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
             )],
         }];
@@ -3158,9 +3158,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             circuit_r1cs,
             circuit_wasm,
             snark_proving_key,
-            private: vec![("a".to_string(), "_:e1".to_string())],
+            private: vec![("lesser".to_string(), "_:e1".to_string())],
             public: vec![(
-                "b".to_string(),
+                "greater".to_string(),
                 "\"2019-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
             )],
         }];
@@ -3282,9 +3282,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             circuit_r1cs: circuit_r1cs.clone(),
             circuit_wasm: circuit_wasm.clone(),
             snark_proving_key: snark_proving_key.clone(),
-            private: vec![("a".to_string(), "_:e1".to_string())],
+            private: vec![("lesser".to_string(), "_:e1".to_string())],
             public: vec![(
-                "b".to_string(),
+                "greater".to_string(),
                 "\"4300000000\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string(),
             )],
         }];
@@ -3326,9 +3326,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             circuit_r1cs,
             circuit_wasm,
             snark_proving_key,
-            private: vec![("a".to_string(), "_:e1".to_string())],
+            private: vec![("lesser".to_string(), "_:e1".to_string())],
             public: vec![(
-                "b".to_string(),
+                "greater".to_string(),
                 "\"100\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string(), // "a < b" is not satisfied
             )],
         }];
