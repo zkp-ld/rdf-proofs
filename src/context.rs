@@ -60,3 +60,7 @@ pub const PREDICATE_VAR: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://zkp-ld.org/security#var");
 pub const PREDICATE_VAL: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://zkp-ld.org/security#val");
+
+// http://schema.org/
+pub const SCO_DATE: NamedNodeRef = NamedNodeRef::new_unchecked("http://schema.org/Date");
+pub const SCO_DATETIME: NamedNodeRef = NamedNodeRef::new_unchecked("http://schema.org/DateTime");

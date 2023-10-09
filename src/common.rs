@@ -1,6 +1,8 @@
 use crate::{
     constants::{DELIMITER, MAP_TO_SCALAR_AS_HASH_DST, NYM_IRI_PREFIX},
-    context::{CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, VERIFICATION_METHOD},
+    context::{
+        CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, SCO_DATE, SCO_DATETIME, VERIFICATION_METHOD,
+    },
     error::RDFProofsError,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples},
     VerifiableCredential,
@@ -203,13 +205,13 @@ pub fn hash_term_to_field(
             let num: i64 = v.value().parse()?;
             Ok(Fr::from(num))
         }
-        TermRef::Literal(v) if v.datatype() == DATE_TIME => {
+        TermRef::Literal(v) if v.datatype() == DATE_TIME || v.datatype() == SCO_DATETIME => {
             let datetime: DateTime<Utc> = v.value().parse()?;
             let timestamp = datetime.timestamp();
             Fr::try_from(timestamp)
                 .map_err(|_| RDFProofsError::InvalidDateTime(v.value().to_string()))
         }
-        TermRef::Literal(v) if v.datatype() == DATE => {
+        TermRef::Literal(v) if v.datatype() == DATE || v.datatype() == SCO_DATE => {
             let date: NaiveDate = v.value().parse()?;
             let datetime = date
                 .and_hms_opt(0, 0, 0)
