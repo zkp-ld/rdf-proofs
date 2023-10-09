@@ -2921,8 +2921,10 @@ _:b1 <http://schema.org/name> "ABC inc." .
         // define circuit
         let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
         let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
+        println!("\"r1cs\": \"{}\",", circuit_r1cs);
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
         let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
+        println!("\"wasm\": \"{}\",", circuit_wasm);
 
         // generate SNARK proving key (by Verifier)
         let circuit_id = "https://zkp-ld.org/circuit/lessThan";
@@ -2937,6 +2939,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             .generate_proving_key(commit_witness_count, &mut rng)
             .unwrap();
         let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+        println!("\"snark_proving_key\": \"{}\",", snark_proving_key);
 
         let predicates = vec![PredicateProofStatementString {
             circuit_id: format!("<{}>", circuit_id),
@@ -2968,6 +2971,128 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let snark_verifying_keys = HashMap::from([(
             "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            snark_proving_key.clone(),
+        )]);
+
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys.clone()),
+        );
+        assert!(verified.is_ok(), "{:?}", verified);
+
+        // negative test: equality must be rejected
+        let unsatisfied_predicates = vec![PredicateProofStatementString {
+            circuit_id: format!("<{}>", circuit_id),
+            circuit_r1cs,
+            circuit_wasm,
+            snark_proving_key,
+            private: vec![("lesser".to_string(), "_:e5".to_string())],
+            public: vec![(
+                "greater".to_string(),
+                "\"2022-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )],
+        }];
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&unsatisfied_predicates),
+        )
+        .unwrap();
+        println!("derive_proof: {}", derived_proof);
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            None,
+            Some(snark_verifying_keys),
+        );
+        assert!(matches!(
+            verified,
+            Err(RDFProofsError::ProofSystem(
+                proof_system::prelude::ProofSystemError::LegoGroth16Error(_)
+            ))
+        ));
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_less_than_eq_predicates() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let vc_pairs = vec![VcPairString::new(
+            VC_1,
+            VC_PROOF_1,
+            DISCLOSED_VC_1_WITH_HIDDEN_LITERALS,
+            DISCLOSED_VC_PROOF_1,
+        )];
+
+        let mut deanon_map = get_example_deanon_map_string();
+        deanon_map.extend(get_example_deanon_map_string_with_hidden_literal());
+
+        // define circuit
+        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_eq_public_64.r1cs").unwrap();
+        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
+        println!("\"r1cs\": \"{}\",", circuit_r1cs);
+        let circuit_wasm = std::fs::read("circom/bls12381/less_than_eq_public_64.wasm").unwrap();
+        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
+        println!("\"wasm\": \"{}\",", circuit_wasm);
+
+        // generate SNARK proving key (by Verifier)
+        let circuit_id = "https://zkp-ld.org/circuit/lessThanEq";
+        let circuit = Circuit::new(
+            NamedNode::new_unchecked(circuit_id),
+            &circuit_r1cs,
+            &circuit_wasm,
+        )
+        .unwrap();
+        let commit_witness_count = 1;
+        let snark_proving_key = circuit
+            .generate_proving_key(commit_witness_count, &mut rng)
+            .unwrap();
+        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+        println!("\"snark_proving_key\": \"{}\",", snark_proving_key);
+
+        let predicates = vec![PredicateProofStatementString {
+            circuit_id: format!("<{}>", circuit_id),
+            circuit_r1cs: circuit_r1cs.clone(),
+            circuit_wasm: circuit_wasm.clone(),
+            snark_proving_key: snark_proving_key.clone(),
+            private: vec![("lesser".to_string(), "_:e5".to_string())],
+            public: vec![(
+                "greater".to_string(),
+                "\"2022-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
+            )],
+        }];
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&predicates),
+        )
+        .unwrap();
+
+        println!("derive_proof: {}", derived_proof);
+
+        let snark_verifying_keys = HashMap::from([(
+            "<https://zkp-ld.org/circuit/lessThanEq>".to_string(),
             snark_proving_key.clone(),
         )]);
 
