@@ -2939,7 +2939,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             .generate_proving_key(commit_witness_count, &mut rng)
             .unwrap();
         let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
-        println!("\"snark_proving_key\": \"{}\",", snark_proving_key);
+        println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
 
         let predicates = vec![PredicateProofStatementString {
             circuit_id: format!("<{}>", circuit_id),
@@ -3061,7 +3061,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             .generate_proving_key(commit_witness_count, &mut rng)
             .unwrap();
         let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
-        println!("\"snark_proving_key\": \"{}\",", snark_proving_key);
+        println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
 
         let predicates = vec![PredicateProofStatementString {
             circuit_id: format!("<{}>", circuit_id),
