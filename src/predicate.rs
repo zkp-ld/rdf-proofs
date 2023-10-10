@@ -38,7 +38,10 @@ impl Circuit {
 
 #[derive(Serialize, Deserialize)]
 pub struct CircuitString {
+    #[serde(rename = "r1cs")]
     pub circuit_r1cs: String,
+    #[serde(rename = "wasm")]
     pub circuit_wasm: String,
+    #[serde(rename = "provingKey")]
     pub snark_proving_key: String,
 }
