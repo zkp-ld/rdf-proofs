@@ -1,41 +1,25 @@
 use crate::{
-    common::{CircomCircuit, ProvingKey, R1CS},
+    common::{ProvingKey, R1CS},
     error::RDFProofsError,
     multibase_to_ark,
 };
-use ark_std::rand::RngCore;
-use oxrdf::{BlankNode, NamedNode, NamedOrBlankNode, Term};
-use std::collections::HashMap;
 
 pub struct Circuit {
-    pub circuit_id: NamedNode,
     r1cs: R1CS,
     wasm: Vec<u8>,
-    circuit: CircomCircuit,
+    proving_key: ProvingKey,
 }
 
 impl Circuit {
-    pub fn new(circuit_id: NamedNode, r1cs: &str, wasm: &str) -> Result<Self, RDFProofsError> {
+    pub fn new(r1cs: &str, wasm: &str, proving_key: &str) -> Result<Self, RDFProofsError> {
         let r1cs: R1CS = multibase_to_ark(r1cs)?;
         let (_, wasm) = multibase::decode(wasm)?;
-        let circuit = CircomCircuit::setup(r1cs.clone());
+        let proving_key: ProvingKey = multibase_to_ark(proving_key)?;
         Ok(Self {
-            circuit_id,
             r1cs,
             wasm,
-            circuit,
+            proving_key,
         })
-    }
-
-    pub fn generate_proving_key<R: RngCore>(
-        &self,
-        commit_witness_count: u32,
-        rng: &mut R,
-    ) -> Result<ProvingKey, RDFProofsError> {
-        Ok(self
-            .circuit
-            .clone()
-            .generate_proving_key(commit_witness_count, rng)?)
     }
 
     pub fn get_r1cs(&self) -> R1CS {
@@ -45,59 +29,14 @@ impl Circuit {
     pub fn get_wasm(&self) -> Vec<u8> {
         self.wasm.clone()
     }
-}
 
-pub struct PredicateProofStatement {
-    pub circuit: Circuit,
-    pub snark_proving_key: ProvingKey,
-    pub private: Vec<(String, BlankNode)>,
-    pub public: Vec<(String, Term)>,
-}
-
-impl PredicateProofStatement {
-    pub fn deanon_privates(
-        &self,
-        deanon_map: &HashMap<NamedOrBlankNode, Term>,
-    ) -> Result<Vec<(String, Term)>, RDFProofsError> {
-        let resolved_private = self
-            .private
-            .iter()
-            .map(|(k, v)| {
-                Ok((
-                    k.clone(),
-                    deanon_map
-                        .get(&v.to_owned().into())
-                        .ok_or(RDFProofsError::InvalidPredicate)?
-                        .clone(),
-                ))
-            })
-            .collect::<Result<Vec<_>, RDFProofsError>>()?;
-        Ok(resolved_private)
-    }
-
-    pub fn canonicalize_privates(
-        &self,
-        issued_identifiers_map: &HashMap<String, String>,
-    ) -> Result<Vec<(String, BlankNode)>, RDFProofsError> {
-        let canonical_privates = self
-            .private
-            .iter()
-            .map(|(k, v)| {
-                let canonical_id = issued_identifiers_map
-                    .get(v.as_str())
-                    .ok_or(RDFProofsError::InvalidPredicate)?;
-                Ok((k.clone(), BlankNode::new_unchecked(canonical_id)))
-            })
-            .collect::<Result<Vec<_>, RDFProofsError>>()?;
-        Ok(canonical_privates)
+    pub fn get_proving_key(&self) -> ProvingKey {
+        self.proving_key.clone()
     }
 }
 
-pub struct PredicateProofStatementString {
-    pub circuit_id: String,
+pub struct CircuitString {
     pub circuit_r1cs: String,
     pub circuit_wasm: String,
     pub snark_proving_key: String,
-    pub private: Vec<(String, String)>,
-    pub public: Vec<(String, String)>,
 }

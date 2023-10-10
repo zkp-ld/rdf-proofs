@@ -1,7 +1,8 @@
 use crate::{
     constants::{DELIMITER, MAP_TO_SCALAR_AS_HASH_DST, NYM_IRI_PREFIX},
     context::{
-        CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, SCO_DATE, SCO_DATETIME, VERIFICATION_METHOD,
+        CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PREDICATE_VAL, PREDICATE_VAR, SCO_DATE,
+        SCO_DATETIME, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples},
@@ -20,13 +21,14 @@ use chrono::{DateTime, NaiveDate, Utc};
 use legogroth16::circom::{CircomCircuit as CircomCircuitOrig, R1CS as R1CSOrig};
 use multibase::Base;
 use oxrdf::{
+    dataset::GraphView,
     vocab::{
         self,
-        rdf::TYPE,
+        rdf::{FIRST, NIL, REST, TYPE},
         xsd::{self, DATE, DATE_TIME, INTEGER},
     },
-    BlankNode, Dataset, Graph, Literal, LiteralRef, NamedNode, NamedNodeRef, SubjectRef, Term,
-    TermRef, Triple, TripleRef,
+    BlankNode, BlankNodeRef, Dataset, Graph, Literal, LiteralRef, NamedNode, NamedNodeRef,
+    NamedOrBlankNode, SubjectRef, Term, TermRef, Triple, TripleRef,
 };
 use oxsdatatypes::DateTime as DateTimeOxsDataTypes;
 use oxttl::{NQuadsParser, NTriplesParser};
@@ -463,6 +465,59 @@ pub(crate) fn get_term_from_string(term_string: &str) -> Result<Term, RDFProofsE
         Ok(Literal::new_language_tagged_literal(&caps[1], &caps[2])?.into())
     } else {
         Err(RDFProofsError::TtlTermParse(term_string.to_string()))
+    }
+}
+
+pub(crate) fn read_private_var_list(
+    node: BlankNodeRef,
+    result: &mut Vec<(String, NamedOrBlankNode)>,
+    graph: &GraphView,
+) -> Result<(), RDFProofsError> {
+    let Some(TermRef::BlankNode(var_and_val)) = graph.object_for_subject_predicate(node, FIRST) else {
+        return Err(RDFProofsError::InvalidPredicate)
+    };
+    let Some(TermRef::Literal(var)) = graph.object_for_subject_predicate(var_and_val, PREDICATE_VAR) else {
+        return Err(RDFProofsError::InvalidPredicate)
+    };
+    let val: NamedOrBlankNode =
+        if let Some(val) = graph.object_for_subject_predicate(var_and_val, PREDICATE_VAL) {
+            match val {
+                TermRef::NamedNode(n) => Ok(n.into()),
+                TermRef::BlankNode(n) => Ok(n.into()),
+                TermRef::Literal(_) => Err(RDFProofsError::InvalidPredicate),
+            }
+        } else {
+            return Err(RDFProofsError::InvalidPredicate);
+        }?;
+    result.push((var.value().to_string(), val.into()));
+
+    match graph.object_for_subject_predicate(node, REST) {
+        Some(TermRef::BlankNode(rest)) => read_private_var_list(rest, result, graph),
+        Some(TermRef::NamedNode(rest)) if rest == NIL => Ok(()),
+        _ => Err(RDFProofsError::InvalidPredicate),
+    }
+}
+
+pub(crate) fn read_public_var_list(
+    node: BlankNodeRef,
+    result: &mut Vec<(String, Term)>,
+    graph: &GraphView,
+) -> Result<(), RDFProofsError> {
+    let Some(TermRef::BlankNode(var_and_val)) = graph.object_for_subject_predicate(node, FIRST) else {
+        return Err(RDFProofsError::InvalidPredicate)
+    };
+    let Some(TermRef::Literal(var)) = graph.object_for_subject_predicate(var_and_val, PREDICATE_VAR) else {
+        return Err(RDFProofsError::InvalidPredicate)
+    };
+    let Some(val) = graph.object_for_subject_predicate(var_and_val, PREDICATE_VAL) else {
+        return Err(RDFProofsError::InvalidPredicate)
+    };
+    result.push((var.value().to_string(), val.into()));
+
+    match graph.object_for_subject_predicate(node, REST) {
+        Some(TermRef::BlankNode(rest)) => read_public_var_list(rest, result, graph),
+        Some(TermRef::NamedNode(rest)) if rest == NIL => Ok(()),
+        _ => Err(RDFProofsError::InvalidPredicate),
     }
 }
 
