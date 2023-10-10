@@ -1,7 +1,7 @@
 use crate::{
     constants::{CRYPTOSUITE_BOUND_SIGN, CRYPTOSUITE_SIGN},
     context::{
-        CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, MULTIBASE, PROOF, PROOF_VALUE,
+        CRYPTOSUITE, DATA_INTEGRITY_PROOF, MULTIBASE, PREDICATE, PROOF, PROOF_VALUE,
         VERIFIABLE_CREDENTIAL,
     },
     error::RDFProofsError,
@@ -316,7 +316,7 @@ pub struct VerifiablePresentation<'a> {
     pub metadata: GraphView<'a>,
     pub proof: GraphView<'a>,
     pub proof_graph_name: GraphNameRef<'a>,
-    pub filters: OrderedGraphViews<'a>,
+    pub predicates: OrderedGraphViews<'a>,
     pub disclosed_vcs: OrderedVerifiableCredentialGraphViews<'a>,
 }
 
@@ -336,8 +336,8 @@ impl<'a> TryFrom<&'a Dataset> for VerifiablePresentation<'a> {
         // extract VP proof graph
         let (vp_proof_graph_name, vp_proof) = remove_graph(&mut vp_graphs, &metadata, PROOF)?;
 
-        // extract filter graphs if any
-        let filters = remove_graphs(&mut vp_graphs, &vp_proof, FILTER)?;
+        // extract predicate graphs if any
+        let predicates = remove_graphs(&mut vp_graphs, &metadata, PREDICATE)?;
 
         // extract VC graphs
         let vcs = remove_graphs(&mut vp_graphs, &metadata, VERIFIABLE_CREDENTIAL)?;
@@ -360,7 +360,7 @@ impl<'a> TryFrom<&'a Dataset> for VerifiablePresentation<'a> {
             metadata,
             proof: vp_proof,
             proof_graph_name: vp_proof_graph_name.into(),
-            filters,
+            predicates,
             disclosed_vcs,
         })
     }

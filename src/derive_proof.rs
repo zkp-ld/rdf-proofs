@@ -5,24 +5,25 @@ use crate::{
     common::{
         canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
         get_hasher, get_term_from_string, get_vc_from_ntriples, hash_byte_to_field,
-        hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes, reorder_vc_triples,
-        BBSPlusDefaultFieldHasher, BBSPlusHash, BBSPlusPublicKey, BBSPlusSignature, Fr,
-        PedersenCommitmentStmt, PoKBBSPlusStmt, PoKBBSPlusWit, Proof, ProofWithIndexMap,
-        R1CSCircomWitness, StatementIndexMap, Statements,
+        hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes, read_private_var_list,
+        read_public_var_list, reorder_vc_triples, BBSPlusDefaultFieldHasher, BBSPlusHash,
+        BBSPlusPublicKey, BBSPlusSignature, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt,
+        PoKBBSPlusWit, Proof, ProofWithIndexMap, R1CSCircomWitness, StatementIndexMap, Statements,
     },
     constants::PPID_PREFIX,
     context::{
         AUTHENTICATION, CHALLENGE, CIRCUIT, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN,
-        HOLDER, MULTIBASE, PREDICATE, PREDICATE_TYPE, PREDICATE_VAL, PREDICATE_VAR, PRIVATE,
-        PRIVATE_VARIABLE, PROOF, PROOF_PURPOSE, PROOF_VALUE, PUBLIC, PUBLIC_VARIABLE,
-        SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
+        HOLDER, MULTIBASE, PREDICATE, PREDICATE_TYPE, PRIVATE, PROOF, PROOF_PURPOSE, PROOF_VALUE,
+        PUBLIC, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
         VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
     key_gen::{generate_params, generate_ppid, PPID},
     key_graph::KeyGraph,
-    ordered_triple::{OrderedNamedOrBlankNode, OrderedVerifiableCredentialGraphViews},
-    predicate::{Circuit, PredicateProofStatement, PredicateProofStatementString},
+    ordered_triple::{
+        OrderedGraphViews, OrderedNamedOrBlankNode, OrderedVerifiableCredentialGraphViews,
+    },
+    predicate::{Circuit, CircuitString},
     signature::verify,
     vc::{
         DisclosedVerifiableCredential, VcPair, VcPairString, VerifiableCredential,
@@ -33,10 +34,7 @@ use ark_std::rand::RngCore;
 use chrono::offset::Utc;
 use multibase::Base;
 use oxrdf::{
-    vocab::{
-        rdf::{FIRST, NIL, REST, TYPE},
-        xsd,
-    },
+    vocab::{rdf::TYPE, xsd},
     BlankNode, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode, NamedOrBlankNode, Quad,
     QuadRef, Subject, Term, TermRef, Triple,
 };
@@ -59,7 +57,8 @@ pub fn derive_proof<R: RngCore>(
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequest>,
     with_ppid: Option<bool>,
-    predicates: Option<&Vec<PredicateProofStatement>>,
+    predicates: Vec<Graph>,
+    circuits: HashMap<&str, Circuit>,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
@@ -148,7 +147,7 @@ pub fn derive_proof<R: RngCore>(
         proof: vp_proof_graph,
         proof_graph_name: vp_proof_graph_name,
         disclosed_vcs: canonicalized_disclosed_vc_graphs,
-        filters: _filters_graph,
+        predicates: predicate_graphs,
     } = (&vp_draft).try_into()?;
 
     // extract `proofValue`s from original VCs
@@ -251,9 +250,9 @@ pub fn derive_proof<R: RngCore>(
         challenge,
         &blind_sign_request,
         &ppid,
-        predicates,
-        deanon_map,
-        &vp_draft_bnode_map,
+        predicate_graphs,
+        circuits,
+        &extended_deanon_map,
     )?;
 
     // add derived proof value to VP
@@ -282,7 +281,8 @@ pub fn derive_proof_string<R: RngCore>(
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequestString>,
     with_ppid: Option<bool>,
-    predicates: Option<&Vec<PredicateProofStatementString>>,
+    predicates: Option<&Vec<&str>>,
+    circuits: Option<&HashMap<&str, CircuitString>>,
 ) -> Result<String, RDFProofsError> {
     // construct inputs for `derive_proof` from string-based inputs
     let vc_pairs = vc_pairs
@@ -309,26 +309,27 @@ pub fn derive_proof_string<R: RngCore>(
     } else {
         None
     };
-    let predicates = if let Some(predicates) = predicates {
-        Some(
-            predicates
-                .into_iter()
-                .map(|predicate| {
-                    let Term::NamedNode(circuit_id) = get_term_from_string(&predicate.circuit_id)? else {
-                        return Err(RDFProofsError::MissingPredicateCircuit)
-                    };
-                    let circuit = Circuit::new(circuit_id, &predicate.circuit_r1cs, &predicate.circuit_wasm)?;
-                    Ok(PredicateProofStatement {
-                        circuit,
-                        snark_proving_key: multibase_to_ark(&predicate.snark_proving_key)?,
-                        private: get_predicate_private_map_from_string(&predicate.private)?,
-                        public: get_predicate_public_map_from_string(&predicate.public)?,
-                    })
-                })
-                .collect::<Result<Vec<_>, RDFProofsError>>()?,
-        )
-    } else {
-        None
+    let predicates = match predicates {
+        None => vec![],
+        Some(predicates) => predicates
+            .iter()
+            .map(|predicate| Ok(get_graph_from_ntriples(predicate)?))
+            .collect::<Result<Vec<_>, RDFProofsError>>()?,
+    };
+
+    let circuits = match circuits {
+        None => HashMap::new(),
+        Some(circuits) => circuits
+            .iter()
+            .map(|(circuit_id, circuit_str)| {
+                let circuit = Circuit::new(
+                    &circuit_str.circuit_r1cs,
+                    &circuit_str.circuit_wasm,
+                    &circuit_str.snark_proving_key,
+                )?;
+                Ok((*circuit_id, circuit))
+            })
+            .collect::<Result<HashMap<_, _>, RDFProofsError>>()?,
     };
 
     let derived_proof = derive_proof(
@@ -341,7 +342,8 @@ pub fn derive_proof_string<R: RngCore>(
         secret,
         blind_sign_request,
         with_ppid,
-        predicates.as_ref(),
+        predicates,
+        circuits,
     )?;
 
     Ok(rdf_canon::serialize(&derived_proof))
@@ -366,33 +368,6 @@ fn get_ppid(
     } else {
         Err(RDFProofsError::MissingSecretOrDomain)
     }
-}
-
-fn get_predicate_private_map_from_string(
-    private_map_string: &Vec<(String, String)>,
-) -> Result<Vec<(String, BlankNode)>, RDFProofsError> {
-    private_map_string
-        .iter()
-        .map(|(k, v)| {
-            let value = match get_term_from_string(v)? {
-                Term::BlankNode(n) => Ok(n),
-                _ => Err(RDFProofsError::InvalidPredicate),
-            }?;
-            Ok((k.clone(), value))
-        })
-        .collect()
-}
-
-fn get_predicate_public_map_from_string(
-    public_map_string: &Vec<(String, String)>,
-) -> Result<Vec<(String, Term)>, RDFProofsError> {
-    public_map_string
-        .iter()
-        .map(|(k, v)| {
-            let value = get_term_from_string(v)?;
-            Ok((k.clone(), value))
-        })
-        .collect()
 }
 
 fn get_deanon_map_from_string(
@@ -534,7 +509,7 @@ fn build_vp(
     domain: &Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
-    predicates: Option<&Vec<PredicateProofStatement>>,
+    predicates: Vec<Graph>,
 ) -> Result<(Dataset, HashMap<String, String>, Vec<BlankNode>), RDFProofsError> {
     let vp_id = BlankNode::default();
     let vp_proof_id = BlankNode::default();
@@ -638,173 +613,21 @@ fn build_vp(
     }
 
     // add predicates if exist
-    if let Some(predicates) = predicates {
-        for predicate in predicates {
-            let predicate_id = BlankNode::default();
+    for predicate in predicates {
+        let predicate_graph_id = BlankNode::default();
+        vp.insert(QuadRef::new(
+            &vp_id,
+            PREDICATE,
+            &predicate_graph_id,
+            GraphNameRef::DefaultGraph,
+        ));
+        for triple in predicate.iter() {
             vp.insert(QuadRef::new(
-                &vp_id,
-                PREDICATE,
-                &predicate_id,
-                GraphNameRef::DefaultGraph,
+                triple.subject,
+                triple.predicate,
+                triple.object,
+                &predicate_graph_id,
             ));
-            vp.insert(QuadRef::new(
-                &predicate_id,
-                TYPE,
-                PREDICATE_TYPE,
-                GraphNameRef::DefaultGraph,
-            ));
-            vp.insert(QuadRef::new(
-                &predicate_id,
-                CIRCUIT,
-                &predicate.circuit.circuit_id,
-                GraphNameRef::DefaultGraph,
-            ));
-
-            // add private variables
-            let mut private_iter = predicate.private.iter();
-            let mut node = BlankNode::default();
-            if let Some((var, val)) = private_iter.next() {
-                let private_id = BlankNode::default();
-                vp.insert(QuadRef::new(
-                    &predicate_id,
-                    PRIVATE,
-                    &node,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &node,
-                    FIRST,
-                    &private_id,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &private_id,
-                    TYPE,
-                    PRIVATE_VARIABLE,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &private_id,
-                    PREDICATE_VAR,
-                    LiteralRef::new_simple_literal(var),
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &private_id,
-                    PREDICATE_VAL,
-                    val,
-                    GraphNameRef::DefaultGraph,
-                ));
-            }
-            for (var, val) in private_iter {
-                let private_id = BlankNode::default();
-                let new_node = BlankNode::default();
-                vp.insert(QuadRef::new(
-                    &node,
-                    REST,
-                    &new_node,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &new_node,
-                    FIRST,
-                    &private_id,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &private_id,
-                    TYPE,
-                    PRIVATE_VARIABLE,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &private_id,
-                    PREDICATE_VAR,
-                    LiteralRef::new_simple_literal(var),
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &private_id,
-                    PREDICATE_VAL,
-                    val,
-                    GraphNameRef::DefaultGraph,
-                ));
-                node = new_node;
-            }
-            vp.insert(QuadRef::new(&node, REST, NIL, GraphNameRef::DefaultGraph));
-
-            // add public variables
-            let mut public_iter = predicate.public.iter();
-            let mut node = BlankNode::default();
-            if let Some((var, val)) = public_iter.next() {
-                let public_id = BlankNode::default();
-                vp.insert(QuadRef::new(
-                    &predicate_id,
-                    PUBLIC,
-                    &node,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &node,
-                    FIRST,
-                    &public_id,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &public_id,
-                    TYPE,
-                    PUBLIC_VARIABLE,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &public_id,
-                    PREDICATE_VAR,
-                    LiteralRef::new_simple_literal(var),
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &public_id,
-                    PREDICATE_VAL,
-                    val,
-                    GraphNameRef::DefaultGraph,
-                ));
-            }
-            for (var, val) in public_iter {
-                let public_id = BlankNode::default();
-                let new_node = BlankNode::default();
-                vp.insert(QuadRef::new(
-                    &node,
-                    REST,
-                    &new_node,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &new_node,
-                    FIRST,
-                    &public_id,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &public_id,
-                    TYPE,
-                    PUBLIC_VARIABLE,
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &public_id,
-                    PREDICATE_VAR,
-                    LiteralRef::new_simple_literal(var),
-                    GraphNameRef::DefaultGraph,
-                ));
-                vp.insert(QuadRef::new(
-                    &public_id,
-                    PREDICATE_VAL,
-                    val,
-                    GraphNameRef::DefaultGraph,
-                ));
-                node = new_node;
-            }
-            vp.insert(QuadRef::new(&node, REST, NIL, GraphNameRef::DefaultGraph));
         }
     }
 
@@ -1099,9 +922,9 @@ fn derive_proof_value<R: RngCore>(
     challenge: Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
-    predicates: Option<&Vec<PredicateProofStatement>>,
-    deanon_map: &HashMap<NamedOrBlankNode, Term>,
-    vp_draft_bnode_map: &HashMap<String, String>,
+    predicate_graphs: OrderedGraphViews,
+    circuits: HashMap<&str, Circuit>,
+    extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
 ) -> Result<String, RDFProofsError> {
     let hasher = get_hasher();
 
@@ -1202,15 +1025,34 @@ fn derive_proof_value<R: RngCore>(
     }
     // statements for predicates
     let mut predicate_indexes = vec![];
-    if let Some(predicates) = predicates {
-        for predicate in predicates {
-            statements.add(R1CSCircomProver::new_statement_from_params(
-                predicate.circuit.get_r1cs(),
-                predicate.circuit.get_wasm(),
-                predicate.snark_proving_key.clone(),
-            )?);
-            predicate_indexes.push(statements.len() - 1);
-        }
+    let mut predicate_privates = vec![];
+    let mut predicate_publics = vec![];
+    for (_, predicate_graph) in predicate_graphs {
+        let predicate_subject = predicate_graph
+            .subject_for_predicate_object(TYPE, PREDICATE_TYPE)
+            .ok_or(RDFProofsError::InvalidPredicate)?;
+        let TermRef::NamedNode(predicate_circuit) = predicate_graph
+            .object_for_subject_predicate(predicate_subject, CIRCUIT)
+            .ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        let circuit = circuits
+            .get(predicate_circuit.as_str())
+            .ok_or(RDFProofsError::InvalidPredicate)?;
+        statements.add(R1CSCircomProver::new_statement_from_params(
+            circuit.get_r1cs(),
+            circuit.get_wasm(),
+            circuit.get_proving_key(),
+        )?);
+        predicate_indexes.push(statements.len() - 1);
+
+        let mut privates = vec![];
+        let TermRef::BlankNode(predicate_private) = predicate_graph.object_for_subject_predicate(predicate_subject, PRIVATE).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        read_private_var_list(predicate_private, &mut privates, &predicate_graph)?;
+        predicate_privates.push(privates);
+
+        let mut publics = vec![];
+        let TermRef::BlankNode(predicate_public) = predicate_graph.object_for_subject_predicate(predicate_subject, PUBLIC).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        read_public_var_list(predicate_public, &mut publics, &predicate_graph)?;
+        predicate_publics.push(publics);
     }
 
     // build meta statements
@@ -1237,35 +1079,20 @@ fn derive_proof_value<R: RngCore>(
         meta_statements.add_witness_equality(EqualWitnesses(secret_equiv_set));
     }
 
-    let canonicalized_predicate_private_vars = if let Some(predicates) = predicates {
-        Some(
-            predicates
-                .iter()
-                .map(|predicate| predicate.canonicalize_privates(vp_draft_bnode_map))
-                .collect::<Result<Vec<_>, RDFProofsError>>()?,
-        )
-    } else {
-        None
-    };
-
     // proof of equality
     for (equiv_c14n_id, equiv_vec) in equivs {
         // add equality for attributes in credentials
         let mut equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
 
         // add equality for predicate private variables
-        if let Some(predicate_vars_list) = &canonicalized_predicate_private_vars {
-            for (predicate_vars, predicate_index) in
-                predicate_vars_list.iter().zip(&predicate_indexes)
+        for (predicate_private, predicate_index) in
+            predicate_privates.iter().zip(&predicate_indexes)
+        {
+            if let Some(idx_in_predicate) = predicate_private
+                .iter()
+                .position(|(_, bnode_in_private)| *bnode_in_private == equiv_c14n_id.0)
             {
-                if let NamedOrBlankNode::BlankNode(bnode_in_equiv) = &equiv_c14n_id.0 {
-                    if let Some(idx_in_predicate) = predicate_vars
-                        .iter()
-                        .position(|(_, bnode_in_private)| bnode_in_private == bnode_in_equiv)
-                    {
-                        equiv_set.insert((*predicate_index, idx_in_predicate));
-                    }
-                }
+                equiv_set.insert((*predicate_index, idx_in_predicate));
             }
         }
         println!("equiv_set: {:?}", equiv_set);
@@ -1314,25 +1141,28 @@ fn derive_proof_value<R: RngCore>(
         }
     }
     // witness for predicates
-    if let Some(predicates) = predicates {
-        for predicate in predicates {
-            let mut r1cs_wit = R1CSCircomWitness::new();
-            for (var, val) in &predicate.deanon_privates(deanon_map)? {
-                println!("{}", val);
-                r1cs_wit.set_private(
-                    var.to_string(),
-                    vec![hash_term_to_field(val.into(), &hasher)?],
-                )
-            }
-            for (var, val) in &predicate.public {
-                println!("{}", val);
-                r1cs_wit.set_public(
-                    var.to_string(),
-                    vec![hash_term_to_field(val.into(), &hasher)?],
-                )
-            }
-            witnesses.add(Witness::R1CSLegoGroth16(r1cs_wit));
+    for (private, public) in predicate_privates.iter().zip(&predicate_publics) {
+        let mut r1cs_wit = R1CSCircomWitness::new();
+        // private
+        for (var, val) in private {
+            println!("{}", val);
+            let val = extended_deanon_map
+                .get(val)
+                .ok_or(RDFProofsError::InvalidPredicate)?;
+            r1cs_wit.set_private(
+                var.to_string(),
+                vec![hash_term_to_field(val.into(), &hasher)?],
+            )
         }
+        // public
+        for (var, val) in public {
+            println!("{}", val);
+            r1cs_wit.set_public(
+                var.to_string(),
+                vec![hash_term_to_field(val.into(), &hasher)?],
+            )
+        }
+        witnesses.add(Witness::R1CSLegoGroth16(r1cs_wit));
     }
     println!("witnesses:\n{:#?}\n", witnesses);
 
@@ -1535,21 +1365,20 @@ fn build_disclosed_and_undisclosed_terms(
 
 #[cfg(test)]
 mod tests {
-    use super::PredicateProofStatementString;
+    use super::CircuitString;
     use crate::{
         ark_to_base64url, blind_sign_string, blind_verify_string,
-        common::{get_dataset_from_nquads, get_graph_from_ntriples, R1CS},
+        common::{get_dataset_from_nquads, get_graph_from_ntriples, CircomCircuit, R1CS},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
         error::RDFProofsError,
-        predicate::Circuit,
         request_blind_sign_string, unblind_string, verify_blind_sign_request_string, verify_proof,
         verify_proof_string, KeyGraph, VcPair, VcPairString, VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
     use multibase::Base;
-    use oxrdf::{NamedNode, NamedOrBlankNode, Term};
+    use oxrdf::{NamedOrBlankNode, Term};
     use std::collections::HashMap;
 
     const KEY_GRAPH: &str = r#"
@@ -1781,7 +1610,8 @@ mod tests {
             None,
             None,
             None,
-            None,
+            vec![],
+            HashMap::new(),
         )
         .unwrap();
         println!("derived_proof.vp: {}", rdf_canon::serialize(&derived_proof));
@@ -1792,7 +1622,7 @@ mod tests {
             &key_graph,
             Some(challenge),
             None,
-            None,
+            HashMap::new(),
         );
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -1821,6 +1651,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof);
@@ -1842,7 +1673,14 @@ mod tests {
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
         let vp = get_dataset_from_nquads(VP).unwrap();
         let challenge = "abcde";
-        let verified = verify_proof(&mut rng, &vp, &key_graph, Some(challenge), None, None);
+        let verified = verify_proof(
+            &mut rng,
+            &vp,
+            &key_graph,
+            Some(challenge),
+            None,
+            HashMap::new(),
+        );
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1894,7 +1732,8 @@ mod tests {
             None,
             None,
             None,
-            None,
+            vec![],
+            HashMap::new(),
         )
         .unwrap();
         assert!(verify_proof(
@@ -1903,19 +1742,40 @@ mod tests {
             &key_graph,
             challenge,
             domain,
-            None
+            HashMap::new()
         )
         .is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                None,
+                domain,
+                HashMap::new()
+            ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                None,
+                HashMap::new()
+            ),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                None,
+                None,
+                HashMap::new()
+            ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1929,7 +1789,8 @@ mod tests {
             None,
             None,
             None,
-            None,
+            vec![],
+            HashMap::new(),
         )
         .unwrap();
         assert!(matches!(
@@ -1939,17 +1800,39 @@ mod tests {
                 &key_graph,
                 challenge,
                 domain,
-                None
+                HashMap::new()
             ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None).is_ok());
+        assert!(verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            None,
+            domain,
+            HashMap::new()
+        )
+        .is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                None,
+                HashMap::new()
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                None,
+                None,
+                HashMap::new()
+            ),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
 
@@ -1963,7 +1846,8 @@ mod tests {
             None,
             None,
             None,
-            None,
+            vec![],
+            HashMap::new(),
         )
         .unwrap();
         assert!(matches!(
@@ -1973,17 +1857,39 @@ mod tests {
                 &key_graph,
                 challenge,
                 domain,
-                None
+                HashMap::new(),
             ),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                None,
+                domain,
+                HashMap::new()
+            ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None).is_ok());
+        assert!(verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            challenge,
+            None,
+            HashMap::new()
+        )
+        .is_ok());
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                None,
+                None,
+                HashMap::new()
+            ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -1997,7 +1903,8 @@ mod tests {
             None,
             None,
             None,
-            None,
+            vec![],
+            HashMap::new(),
         )
         .unwrap();
         assert!(matches!(
@@ -2007,19 +1914,41 @@ mod tests {
                 &key_graph,
                 challenge,
                 domain,
-                None
+                HashMap::new()
             ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, None, domain, None),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                None,
+                domain,
+                HashMap::new()
+            ),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof(&mut rng, &derived_proof, &key_graph, challenge, None, None),
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                None,
+                HashMap::new()
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof(&mut rng, &derived_proof, &key_graph, None, None, None).is_ok());
+        assert!(verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            None,
+            None,
+            HashMap::new()
+        )
+        .is_ok());
     }
 
     #[test]
@@ -2043,6 +1972,7 @@ mod tests {
             KEY_GRAPH,
             challenge,
             domain,
+            None,
             None,
             None,
             None,
@@ -2077,6 +2007,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -2106,6 +2037,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -2129,6 +2061,7 @@ mod tests {
             &vc_pairs,
             &deanon_map,
             KEY_GRAPH,
+            None,
             None,
             None,
             None,
@@ -2216,7 +2149,8 @@ mod tests {
             None,
             None,
             None,
-            None,
+            vec![],
+            HashMap::new(),
         )
         .unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
@@ -2227,7 +2161,7 @@ mod tests {
             &key_graph,
             Some(challenge),
             None,
-            None,
+            HashMap::new(),
         );
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -2254,6 +2188,7 @@ mod tests {
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -2323,7 +2258,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
-            None,
+            vec![],
+            HashMap::new(),
         );
         assert!(matches!(
             derived_proof,
@@ -2354,6 +2290,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -2416,6 +2353,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -2461,6 +2399,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         );
         assert!(matches!(
             derived_proof,
@@ -2494,6 +2433,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &deanon_map,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
             None,
@@ -2613,6 +2553,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof);
@@ -2703,6 +2644,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         );
         assert!(derived_proof.is_err(), "{:?}", derived_proof)
     }
@@ -2760,6 +2702,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(blind_sign_request),
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -2792,6 +2735,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(secret),
             Some(blind_sign_request),
+            None,
             None,
             None,
         )
@@ -2839,6 +2783,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(secret),
             None,
             Some(true),
+            None,
             None,
         )
         .unwrap();
@@ -2890,6 +2835,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(blind_sign_request),
             Some(true),
             None,
+            None,
         )
         .unwrap();
 
@@ -2918,40 +2864,51 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let mut deanon_map = get_example_deanon_map_string();
         deanon_map.extend(get_example_deanon_map_string_with_hidden_literal());
 
+        // define predicates
+        let predicates = vec![
+            r#"
+            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#private> _:b1 .
+            _:b0 <https://zkp-ld.org/security#public> _:b3 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+            _:b2 <https://zkp-ld.org/security#var> "lesser" .
+            _:b2 <https://zkp-ld.org/security#val> _:e5 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+            _:b4 <https://zkp-ld.org/security#var> "greater" .
+            _:b4 <https://zkp-ld.org/security#val> "2022-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+            "#,
+        ];
+
         // define circuit
         let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
-        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
-        println!("\"r1cs\": \"{}\",", circuit_r1cs);
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
-        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-        println!("\"wasm\": \"{}\",", circuit_wasm);
-
-        // generate SNARK proving key (by Verifier)
-        let circuit_id = "https://zkp-ld.org/circuit/lessThan";
-        let circuit = Circuit::new(
-            NamedNode::new_unchecked(circuit_id),
-            &circuit_r1cs,
-            &circuit_wasm,
-        )
-        .unwrap();
         let commit_witness_count = 1;
-        let snark_proving_key = circuit
+        let snark_proving_key = CircomCircuit::setup(circuit_r1cs.clone())
             .generate_proving_key(commit_witness_count, &mut rng)
             .unwrap();
+
+        // serialize to multibase
+        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
+        println!("\"r1cs\": \"{}\",", circuit_r1cs);
+        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
+        println!("\"wasm\": \"{}\",", circuit_wasm);
         let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
         println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
 
-        let predicates = vec![PredicateProofStatementString {
-            circuit_id: format!("<{}>", circuit_id),
-            circuit_r1cs: circuit_r1cs.clone(),
-            circuit_wasm: circuit_wasm.clone(),
-            snark_proving_key: snark_proving_key.clone(),
-            private: vec![("lesser".to_string(), "_:e5".to_string())],
-            public: vec![(
-                "greater".to_string(),
-                "\"2022-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
-            )],
-        }];
+        // generate SNARK proving key (by Verifier)
+        let circuit = HashMap::from([(
+            "https://zkp-ld.org/circuit/lessThan",
+            CircuitString {
+                circuit_r1cs: circuit_r1cs.clone(),
+                circuit_wasm: circuit_wasm.clone(),
+                snark_proving_key: snark_proving_key.clone(),
+            },
+        )]);
 
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -2964,9 +2921,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(&predicates),
+            Some(&circuit),
         )
         .unwrap();
-
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
@@ -2985,17 +2942,24 @@ _:b1 <http://schema.org/name> "ABC inc." .
         assert!(verified.is_ok(), "{:?}", verified);
 
         // negative test: equality must be rejected
-        let unsatisfied_predicates = vec![PredicateProofStatementString {
-            circuit_id: format!("<{}>", circuit_id),
-            circuit_r1cs,
-            circuit_wasm,
-            snark_proving_key,
-            private: vec![("lesser".to_string(), "_:e5".to_string())],
-            public: vec![(
-                "greater".to_string(),
-                "\"2022-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
-            )],
-        }];
+        let predicates_same_datetime = vec![
+            r#"
+            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#private> _:b1 .
+            _:b0 <https://zkp-ld.org/security#public> _:b3 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+            _:b2 <https://zkp-ld.org/security#var> "lesser" .
+            _:b2 <https://zkp-ld.org/security#val> _:e5 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+            _:b4 <https://zkp-ld.org/security#var> "greater" .
+            _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+            "#,
+        ];
         let derived_proof = derive_proof_string(
             &mut rng,
             &vc_pairs,
@@ -3006,7 +2970,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
-            Some(&unsatisfied_predicates),
+            Some(&predicates_same_datetime),
+            Some(&circuit),
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3040,40 +3005,51 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let mut deanon_map = get_example_deanon_map_string();
         deanon_map.extend(get_example_deanon_map_string_with_hidden_literal());
 
+        // define predicates: even the same value is accepted in less-than-eq relationship
+        let predicates = vec![
+            r#"
+            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEq> .
+            _:b0 <https://zkp-ld.org/security#private> _:b1 .
+            _:b0 <https://zkp-ld.org/security#public> _:b3 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+            _:b2 <https://zkp-ld.org/security#var> "lesser" .
+            _:b2 <https://zkp-ld.org/security#val> _:e5 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+            _:b4 <https://zkp-ld.org/security#var> "greater" .
+            _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+            "#,
+        ];
+
         // define circuit
         let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_eq_public_64.r1cs").unwrap();
-        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
-        println!("\"r1cs\": \"{}\",", circuit_r1cs);
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_eq_public_64.wasm").unwrap();
-        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-        println!("\"wasm\": \"{}\",", circuit_wasm);
-
-        // generate SNARK proving key (by Verifier)
-        let circuit_id = "https://zkp-ld.org/circuit/lessThanEq";
-        let circuit = Circuit::new(
-            NamedNode::new_unchecked(circuit_id),
-            &circuit_r1cs,
-            &circuit_wasm,
-        )
-        .unwrap();
         let commit_witness_count = 1;
-        let snark_proving_key = circuit
+        let snark_proving_key = CircomCircuit::setup(circuit_r1cs.clone())
             .generate_proving_key(commit_witness_count, &mut rng)
             .unwrap();
+
+        // serialize to multibase
+        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
+        println!("\"r1cs\": \"{}\",", circuit_r1cs);
+        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
+        println!("\"wasm\": \"{}\",", circuit_wasm);
         let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
         println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
 
-        let predicates = vec![PredicateProofStatementString {
-            circuit_id: format!("<{}>", circuit_id),
-            circuit_r1cs: circuit_r1cs.clone(),
-            circuit_wasm: circuit_wasm.clone(),
-            snark_proving_key: snark_proving_key.clone(),
-            private: vec![("lesser".to_string(), "_:e5".to_string())],
-            public: vec![(
-                "greater".to_string(),
-                "\"2022-01-01T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
-            )],
-        }];
+        // generate SNARK proving key (by Verifier)
+        let circuit = HashMap::from([(
+            "https://zkp-ld.org/circuit/lessThanEq",
+            CircuitString {
+                circuit_r1cs: circuit_r1cs.clone(),
+                circuit_wasm: circuit_wasm.clone(),
+                snark_proving_key: snark_proving_key.clone(),
+            },
+        )]);
 
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -3086,9 +3062,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(&predicates),
+            Some(&circuit),
         )
         .unwrap();
-
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
@@ -3107,17 +3083,24 @@ _:b1 <http://schema.org/name> "ABC inc." .
         assert!(verified.is_ok(), "{:?}", verified);
 
         // negative test
-        let unsatisfied_predicates = vec![PredicateProofStatementString {
-            circuit_id: format!("<{}>", circuit_id),
-            circuit_r1cs,
-            circuit_wasm,
-            snark_proving_key,
-            private: vec![("lesser".to_string(), "_:e5".to_string())],
-            public: vec![(
-                "greater".to_string(),
-                "\"2019-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
-            )],
-        }];
+        let predicates_lesser_datetime = vec![
+            r#"
+            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEq> .
+            _:b0 <https://zkp-ld.org/security#private> _:b1 .
+            _:b0 <https://zkp-ld.org/security#public> _:b3 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+            _:b2 <https://zkp-ld.org/security#var> "lesser" .
+            _:b2 <https://zkp-ld.org/security#val> _:e5 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+            _:b4 <https://zkp-ld.org/security#var> "greater" .
+            _:b4 <https://zkp-ld.org/security#val> "1800-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+            "#,
+        ];
         let derived_proof = derive_proof_string(
             &mut rng,
             &vc_pairs,
@@ -3128,7 +3111,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
-            Some(&unsatisfied_predicates),
+            Some(&predicates_lesser_datetime),
+            Some(&circuit),
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3214,37 +3198,51 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let deanon_map = get_example_deanon_map_4();
 
+        // define predicates
+        let predicates = vec![
+            r#"
+            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#private> _:b1 .
+            _:b0 <https://zkp-ld.org/security#public> _:b3 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+            _:b2 <https://zkp-ld.org/security#var> "lesser" .
+            _:b2 <https://zkp-ld.org/security#val> _:e1 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+            _:b4 <https://zkp-ld.org/security#var> "greater" .
+            _:b4 <https://zkp-ld.org/security#val> "2022-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+            "#,
+        ];
+
         // define circuit
         let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
-        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
-        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-
-        // generate SNARK proving key (by Verifier)
-        let circuit_id = "https://zkp-ld.org/circuit/lessThan";
-        let circuit = Circuit::new(
-            NamedNode::new_unchecked(circuit_id),
-            &circuit_r1cs,
-            &circuit_wasm,
-        )
-        .unwrap();
         let commit_witness_count = 1;
-        let snark_proving_key = circuit
+        let snark_proving_key = CircomCircuit::setup(circuit_r1cs.clone())
             .generate_proving_key(commit_witness_count, &mut rng)
             .unwrap();
-        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
 
-        let predicates = vec![PredicateProofStatementString {
-            circuit_id: format!("<{}>", circuit_id),
-            circuit_r1cs: circuit_r1cs.clone(),
-            circuit_wasm: circuit_wasm.clone(),
-            snark_proving_key: snark_proving_key.clone(),
-            private: vec![("lesser".to_string(), "_:e1".to_string())],
-            public: vec![(
-                "greater".to_string(),
-                "\"2022-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
-            )],
-        }];
+        // serialize to multibase
+        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
+        println!("\"r1cs\": \"{}\",", circuit_r1cs);
+        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
+        println!("\"wasm\": \"{}\",", circuit_wasm);
+        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+        println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
+
+        // generate SNARK proving key (by Verifier)
+        let circuit = HashMap::from([(
+            "https://zkp-ld.org/circuit/lessThan",
+            CircuitString {
+                circuit_r1cs: circuit_r1cs.clone(),
+                circuit_wasm: circuit_wasm.clone(),
+                snark_proving_key: snark_proving_key.clone(),
+            },
+        )]);
 
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -3257,9 +3255,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(&predicates),
+            Some(&circuit),
         )
         .unwrap();
-
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
@@ -3278,17 +3276,24 @@ _:b1 <http://schema.org/name> "ABC inc." .
         assert!(verified.is_ok(), "{:?}", verified);
 
         // negative test
-        let unsatisfied_predicates = vec![PredicateProofStatementString {
-            circuit_id: format!("<{}>", circuit_id),
-            circuit_r1cs,
-            circuit_wasm,
-            snark_proving_key,
-            private: vec![("lesser".to_string(), "_:e1".to_string())],
-            public: vec![(
-                "greater".to_string(),
-                "\"2019-12-31T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime>".to_string(),
-            )],
-        }];
+        let predicates_lesser_datetime = vec![
+            r#"
+            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#private> _:b1 .
+            _:b0 <https://zkp-ld.org/security#public> _:b3 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+            _:b2 <https://zkp-ld.org/security#var> "lesser" .
+            _:b2 <https://zkp-ld.org/security#val> _:e1 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+            _:b4 <https://zkp-ld.org/security#var> "greater" .
+            _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+            "#,
+        ];
         let derived_proof = derive_proof_string(
             &mut rng,
             &vc_pairs,
@@ -3299,7 +3304,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
-            Some(&unsatisfied_predicates),
+            Some(&predicates_lesser_datetime),
+            Some(&circuit),
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3381,38 +3387,51 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let deanon_map = get_example_deanon_map_5();
 
+        // define predicates
+        let predicates = vec![
+            r#"
+            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#private> _:b1 .
+            _:b0 <https://zkp-ld.org/security#public> _:b3 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+            _:b2 <https://zkp-ld.org/security#var> "lesser" .
+            _:b2 <https://zkp-ld.org/security#val> _:e1 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+            _:b4 <https://zkp-ld.org/security#var> "greater" .
+            _:b4 <https://zkp-ld.org/security#val> "4300000000"^^<http://www.w3.org/2001/XMLSchema#integer> .
+            "#,
+        ];
+
         // define circuit
         let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
-        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
         let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
-        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-
-        // generate SNARK proving key (by Verifier)
-        let circuit_id = "https://zkp-ld.org/circuit/lessThan";
-        let circuit = Circuit::new(
-            NamedNode::new_unchecked(circuit_id),
-            &circuit_r1cs,
-            &circuit_wasm,
-        )
-        .unwrap();
         let commit_witness_count = 1;
-        let snark_proving_key = circuit
+        let snark_proving_key = CircomCircuit::setup(circuit_r1cs.clone())
             .generate_proving_key(commit_witness_count, &mut rng)
             .unwrap();
-        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
-        println!("snark_pk: {}", snark_proving_key);
 
-        let predicates = vec![PredicateProofStatementString {
-            circuit_id: format!("<{}>", circuit_id),
-            circuit_r1cs: circuit_r1cs.clone(),
-            circuit_wasm: circuit_wasm.clone(),
-            snark_proving_key: snark_proving_key.clone(),
-            private: vec![("lesser".to_string(), "_:e1".to_string())],
-            public: vec![(
-                "greater".to_string(),
-                "\"4300000000\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string(),
-            )],
-        }];
+        // serialize to multibase
+        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
+        println!("\"r1cs\": \"{}\",", circuit_r1cs);
+        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
+        println!("\"wasm\": \"{}\",", circuit_wasm);
+        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+        println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
+
+        // generate SNARK proving key (by Verifier)
+        let circuit = HashMap::from([(
+            "https://zkp-ld.org/circuit/lessThan",
+            CircuitString {
+                circuit_r1cs: circuit_r1cs.clone(),
+                circuit_wasm: circuit_wasm.clone(),
+                snark_proving_key: snark_proving_key.clone(),
+            },
+        )]);
 
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -3425,9 +3444,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(&predicates),
+            Some(&circuit),
         )
         .unwrap();
-
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
@@ -3445,18 +3464,26 @@ _:b1 <http://schema.org/name> "ABC inc." .
         );
         assert!(verified.is_ok(), "{:?}", verified);
 
-        // negative test
-        let unsatisfied_predicates = vec![PredicateProofStatementString {
-            circuit_id: "<https://zkp-ld.org/circuit/lessThan>".to_string(),
-            circuit_r1cs,
-            circuit_wasm,
-            snark_proving_key,
-            private: vec![("lesser".to_string(), "_:e1".to_string())],
-            public: vec![(
-                "greater".to_string(),
-                "\"100\"^^<http://www.w3.org/2001/XMLSchema#integer>".to_string(), // "a < b" is not satisfied
-            )],
-        }];
+        // negative test: equality must be rejected
+        let predicates_same_integer = vec![
+            r#"
+            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#private> _:b1 .
+            _:b0 <https://zkp-ld.org/security#public> _:b3 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+            _:b2 <https://zkp-ld.org/security#var> "lesser" .
+            _:b2 <https://zkp-ld.org/security#val> _:e1 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+            _:b4 <https://zkp-ld.org/security#var> "greater" .
+            _:b4 <https://zkp-ld.org/security#val> "300"^^<http://www.w3.org/2001/XMLSchema#integer> .
+            "#,
+        ];
+
         let derived_proof = derive_proof_string(
             &mut rng,
             &vc_pairs,
@@ -3467,7 +3494,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
-            Some(&unsatisfied_predicates),
+            Some(&predicates_same_integer),
+            Some(&circuit),
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);

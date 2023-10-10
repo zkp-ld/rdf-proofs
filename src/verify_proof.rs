@@ -2,13 +2,14 @@ use crate::{
     common::{
         generate_proof_spec_context, get_dataset_from_nquads, get_delimiter,
         get_graph_from_ntriples, get_hasher, get_term_from_string, hash_term_to_field, is_nym,
-        reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, Fr, PedersenCommitmentStmt,
-        PoKBBSPlusStmt, ProofWithIndexMap, Statements, VerifyingKey,
+        read_private_var_list, read_public_var_list, reorder_vc_triples, BBSPlusHash,
+        BBSPlusPublicKey, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt, ProofWithIndexMap,
+        Statements, VerifyingKey,
     },
     constants::PPID_PREFIX,
     context::{
-        CHALLENGE, CIRCUIT, DOMAIN, HOLDER, PREDICATE, PREDICATE_VAL, PREDICATE_VAR, PRIVATE,
-        PROOF_VALUE, PUBLIC, SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
+        CHALLENGE, CIRCUIT, DOMAIN, HOLDER, PREDICATE_TYPE, PRIVATE, PROOF_VALUE, PUBLIC,
+        SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
     key_gen::{generate_params, generate_ppid_base},
@@ -20,10 +21,8 @@ use crate::{
 use ark_bls12_381::G1Affine;
 use ark_std::{rand::RngCore, One};
 use oxrdf::{
-    dataset::GraphView,
-    vocab::rdf::{FIRST, NIL, REST, TYPE},
-    BlankNode, BlankNodeRef, Dataset, NamedNode, NamedOrBlankNode, NamedOrBlankNodeRef, Subject,
-    Term, TermRef, Triple,
+    dataset::GraphView, vocab::rdf::TYPE, Dataset, NamedNode, NamedOrBlankNode,
+    NamedOrBlankNodeRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
     prelude::{EqualWitnesses, MetaStatements},
@@ -32,13 +31,6 @@ use proof_system::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-#[derive(Debug)]
-struct VerifierPredicateProofStatement {
-    pub snark_verifying_key: VerifyingKey,
-    pub private: Vec<(String, BlankNode)>,
-    pub public: Vec<(String, Term)>,
-}
-
 /// verify VP
 pub fn verify_proof<R: RngCore>(
     rng: &mut R,
@@ -46,7 +38,7 @@ pub fn verify_proof<R: RngCore>(
     key_graph: &KeyGraph,
     challenge: Option<&str>,
     domain: Option<&str>,
-    snark_verifying_keys: Option<HashMap<NamedNode, VerifyingKey>>,
+    snark_verifying_keys: HashMap<NamedNode, VerifyingKey>,
 ) -> Result<(), RDFProofsError> {
     let hasher = get_hasher();
 
@@ -107,7 +99,7 @@ pub fn verify_proof<R: RngCore>(
         metadata: vp_metadata, // TODO: validate VP metadata
         proof: _,
         proof_graph_name: _,
-        filters: _filters_graph,
+        predicates: predicate_graphs,
         disclosed_vcs: c14n_disclosed_vc_graphs,
     } = (&canonicalized_vp).try_into()?;
 
@@ -118,10 +110,6 @@ pub fn verify_proof<R: RngCore>(
     // get secret commitment
     let secret_commitment = get_secret_commitment(&vp_metadata)?;
     println!("secret_commitment: {:#?}", secret_commitment);
-
-    // get predicates
-    let predicates = get_predicates(&vp_metadata, &snark_verifying_keys)?;
-    println!("predicates: {:#?}", predicates);
 
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
@@ -230,18 +218,39 @@ pub fn verify_proof<R: RngCore>(
     }
     // statements for predicates
     let mut predicate_indexes = vec![];
-    for predicate in &predicates {
+    let mut predicate_privates = vec![];
+    let mut predicate_publics = vec![];
+    for (_, predicate_graph) in predicate_graphs {
+        let predicate_subject = predicate_graph
+            .subject_for_predicate_object(TYPE, PREDICATE_TYPE)
+            .ok_or(RDFProofsError::InvalidPredicate)?;
+        let TermRef::NamedNode(predicate_circuit) = predicate_graph
+            .object_for_subject_predicate(predicate_subject, CIRCUIT)
+            .ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+
+        let mut privates = vec![];
+        let TermRef::BlankNode(predicate_private) = predicate_graph.object_for_subject_predicate(predicate_subject, PRIVATE).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        read_private_var_list(predicate_private, &mut privates, &predicate_graph)?;
+        predicate_privates.push(privates);
+
+        let mut publics = vec![];
+        let TermRef::BlankNode(predicate_public) = predicate_graph.object_for_subject_predicate(predicate_subject, PUBLIC).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        read_public_var_list(predicate_public, &mut publics, &predicate_graph)?;
+        predicate_publics.push(publics.clone());
+
         let mut public_inputs = vec![Fr::one()]; // predicate must return 1
-        let mut public_vals = predicate
-            .public
-            .iter()
-            .map(|(_, val)| hash_term_to_field(val.into(), &hasher))
-            .collect::<Result<Vec<_>, _>>()?;
-        public_inputs.append(&mut public_vals);
+        for (_, public_value) in publics {
+            public_inputs.push(hash_term_to_field((&public_value).into(), &hasher)?);
+        }
 
         statements.add(R1CSCircomVerifier::new_statement_from_params(
             public_inputs,
-            predicate.snark_verifying_key.clone(),
+            snark_verifying_keys
+                .get(&predicate_circuit.into_owned())
+                .ok_or(RDFProofsError::MissingSnarkVK(
+                    predicate_circuit.to_string(),
+                ))?
+                .clone(),
         )?);
         predicate_indexes.push(statements.len() - 1);
     }
@@ -277,15 +286,14 @@ pub fn verify_proof<R: RngCore>(
         let mut equiv_set: BTreeSet<(usize, usize)> = equiv_vec.into_iter().collect();
 
         // add equality for predicate private variables
-        for (predicate, predicate_index) in predicates.iter().zip(&predicate_indexes) {
-            if let NamedOrBlankNode::BlankNode(bnode_in_equiv) = &equiv_c14n_id.0 {
-                if let Some(idx_in_predicate) = predicate
-                    .private
-                    .iter()
-                    .position(|(_, bnode_in_private)| bnode_in_private == bnode_in_equiv)
-                {
-                    equiv_set.insert((*predicate_index, idx_in_predicate));
-                }
+        for (predicate_private, predicate_index) in
+            predicate_privates.iter().zip(&predicate_indexes)
+        {
+            if let Some(idx_in_predicate) = predicate_private
+                .iter()
+                .position(|(_, bnode_in_private)| *bnode_in_private == equiv_c14n_id.0)
+            {
+                equiv_set.insert((*predicate_index, idx_in_predicate));
             }
         }
         println!("equiv_set: {:?}", equiv_set);
@@ -320,19 +328,16 @@ pub fn verify_proof_string<R: RngCore>(
     let vp = get_dataset_from_nquads(vp)?;
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
     let snark_verifying_key = match snark_verifying_keys {
-        Some(predicate_id_and_vks) => {
-            let m = predicate_id_and_vks
-                .iter()
-                .map(|(predicate_id, vk)| {
-                    let Term::NamedNode(predicate_id) = get_term_from_string(predicate_id)? else {
+        None => HashMap::new(),
+        Some(predicate_id_and_vks) => predicate_id_and_vks
+            .iter()
+            .map(|(predicate_id, vk)| {
+                let Term::NamedNode(predicate_id) = get_term_from_string(predicate_id)? else {
                         return Err(RDFProofsError::InvalidPredicate)
                     };
-                    Ok((predicate_id, multibase_to_ark(vk)?))
-                })
-                .collect::<Result<HashMap<_, VerifyingKey>, _>>()?;
-            Some(m)
-        }
-        None => None,
+                Ok((predicate_id, multibase_to_ark(vk)?))
+            })
+            .collect::<Result<HashMap<_, VerifyingKey>, _>>()?,
     };
 
     verify_proof(rng, &vp, &key_graph, challenge, domain, snark_verifying_key)
@@ -369,92 +374,6 @@ fn get_secret_commitment(metadata: &GraphView) -> Result<Option<G1Affine>, RDFPr
         None
     };
     Ok(commitment)
-}
-
-fn read_var_list(
-    node: BlankNodeRef,
-    result: &mut Vec<(String, Term)>,
-    metadata: &GraphView,
-) -> Result<(), RDFProofsError> {
-    let Some(TermRef::BlankNode(var_and_val)) = metadata.object_for_subject_predicate(node, FIRST) else {
-        return Err(RDFProofsError::InvalidPredicate)
-    };
-    let Some(TermRef::Literal(var)) = metadata.object_for_subject_predicate(var_and_val, PREDICATE_VAR) else {
-        return Err(RDFProofsError::InvalidPredicate)
-    };
-    let Some(val) = metadata.object_for_subject_predicate(var_and_val, PREDICATE_VAL) else {
-        return Err(RDFProofsError::InvalidPredicate)
-    };
-    result.push((var.value().to_string(), val.into()));
-
-    match metadata.object_for_subject_predicate(node, REST) {
-        Some(TermRef::BlankNode(rest)) => read_var_list(rest, result, metadata),
-        Some(TermRef::NamedNode(rest)) if rest == NIL => Ok(()),
-        _ => Err(RDFProofsError::InvalidPredicate),
-    }
-}
-
-fn get_predicates(
-    metadata: &GraphView,
-    snark_verifying_keys: &Option<HashMap<NamedNode, VerifyingKey>>,
-) -> Result<Vec<VerifierPredicateProofStatement>, RDFProofsError> {
-    let mut result = vec![];
-
-    let Some(snark_verifying_keys) = snark_verifying_keys else { return Ok(result) };
-
-    let vp_subject = metadata
-        .subject_for_predicate_object(TYPE, VERIFIABLE_PRESENTATION_TYPE)
-        .ok_or(RDFProofsError::InvalidVP)?;
-
-    for predicate in metadata.objects_for_subject_predicate(vp_subject, PREDICATE) {
-        let predicate_subject = match predicate {
-            TermRef::NamedNode(n) => Ok(NamedOrBlankNodeRef::NamedNode(n)),
-            TermRef::BlankNode(n) => Ok(NamedOrBlankNodeRef::BlankNode(n)),
-            TermRef::Literal(_) => Err(RDFProofsError::InvalidPredicate),
-        }?;
-
-        let TermRef::NamedNode(predicate_circuit) = metadata
-            .object_for_subject_predicate(predicate_subject, CIRCUIT)
-            .ok_or(RDFProofsError::MissingPredicateCircuit)? else {
-                return Err(RDFProofsError::MissingPredicateCircuit)
-            };
-
-        let snark_verifying_key = snark_verifying_keys
-            .get(&predicate_circuit.into_owned())
-            .ok_or(RDFProofsError::MissingSnarkVK(
-                predicate_circuit.to_string(),
-            ))?;
-
-        let mut privates = vec![];
-        let Some(TermRef::BlankNode(private)) = metadata.object_for_subject_predicate(predicate_subject, PRIVATE) else {
-            return Err(RDFProofsError::InvalidPredicate)
-        };
-        read_var_list(private, &mut privates, metadata)?;
-        let privates = privates
-            .iter()
-            .map(|(s, t)| {
-                if let Term::BlankNode(b) = t {
-                    Ok((s.clone(), b.clone()))
-                } else {
-                    Err(RDFProofsError::InvalidPredicate)
-                }
-            })
-            .collect::<Result<Vec<_>, RDFProofsError>>()?;
-
-        let mut publics = vec![];
-        let Some(TermRef::BlankNode(public)) = metadata.object_for_subject_predicate(predicate_subject, PUBLIC) else {
-            return Err(RDFProofsError::InvalidPredicate)
-        };
-        read_var_list(public, &mut publics, metadata)?;
-
-        result.push(VerifierPredicateProofStatement {
-            snark_verifying_key: snark_verifying_key.clone(),
-            private: privates,
-            public: publics,
-        });
-    }
-
-    Ok(result)
 }
 
 #[derive(Debug)]
