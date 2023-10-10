@@ -3,6 +3,7 @@ use crate::{
     error::RDFProofsError,
     multibase_to_ark,
 };
+use serde::{Deserialize, Serialize};
 
 pub struct Circuit {
     r1cs: R1CS,
@@ -35,6 +36,7 @@ impl Circuit {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct CircuitString {
     pub circuit_r1cs: String,
     pub circuit_wasm: String,
