@@ -58,7 +58,7 @@ pub fn derive_proof<R: RngCore>(
     blind_sign_request: Option<BlindSignRequest>,
     with_ppid: Option<bool>,
     predicates: Vec<Graph>,
-    circuits: HashMap<&str, Circuit>,
+    circuits: HashMap<String, Circuit>,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
@@ -281,8 +281,8 @@ pub fn derive_proof_string<R: RngCore>(
     secret: Option<&[u8]>,
     blind_sign_request: Option<BlindSignRequestString>,
     with_ppid: Option<bool>,
-    predicates: Option<&Vec<&str>>,
-    circuits: Option<&HashMap<&str, CircuitString>>,
+    predicates: Option<&Vec<String>>,
+    circuits: Option<&HashMap<String, CircuitString>>,
 ) -> Result<String, RDFProofsError> {
     // construct inputs for `derive_proof` from string-based inputs
     let vc_pairs = vc_pairs
@@ -327,7 +327,7 @@ pub fn derive_proof_string<R: RngCore>(
                     &circuit_str.circuit_wasm,
                     &circuit_str.snark_proving_key,
                 )?;
-                Ok((*circuit_id, circuit))
+                Ok((circuit_id.clone(), circuit))
             })
             .collect::<Result<HashMap<_, _>, RDFProofsError>>()?,
     };
@@ -923,7 +923,7 @@ fn derive_proof_value<R: RngCore>(
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
     predicate_graphs: OrderedGraphViews,
-    circuits: HashMap<&str, Circuit>,
+    circuits: HashMap<String, Circuit>,
     extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
 ) -> Result<String, RDFProofsError> {
     let hasher = get_hasher();
@@ -2881,7 +2881,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
             _:b4 <https://zkp-ld.org/security#var> "greater" .
             _:b4 <https://zkp-ld.org/security#val> "2022-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#,
+            "#.to_string(),
         ];
 
         // define circuit
@@ -2902,7 +2902,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
-            "https://zkp-ld.org/circuit/lessThan",
+            "https://zkp-ld.org/circuit/lessThan".to_string(),
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
@@ -2958,7 +2958,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
             _:b4 <https://zkp-ld.org/security#var> "greater" .
             _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#,
+            "#.to_string(),
         ];
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -3022,7 +3022,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
             _:b4 <https://zkp-ld.org/security#var> "greater" .
             _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#,
+            "#.to_string(),
         ];
 
         // define circuit
@@ -3043,7 +3043,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
-            "https://zkp-ld.org/circuit/lessThanEq",
+            "https://zkp-ld.org/circuit/lessThanEq".to_string(),
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
@@ -3099,7 +3099,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
             _:b4 <https://zkp-ld.org/security#var> "greater" .
             _:b4 <https://zkp-ld.org/security#val> "1800-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#,
+            "#.to_string(),
         ];
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -3215,7 +3215,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
             _:b4 <https://zkp-ld.org/security#var> "greater" .
             _:b4 <https://zkp-ld.org/security#val> "2022-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#,
+            "#.to_string(),
         ];
 
         // define circuit
@@ -3236,7 +3236,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
-            "https://zkp-ld.org/circuit/lessThan",
+            "https://zkp-ld.org/circuit/lessThan".to_string(),
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
@@ -3292,7 +3292,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
             _:b4 <https://zkp-ld.org/security#var> "greater" .
             _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#,
+            "#.to_string(),
         ];
         let derived_proof = derive_proof_string(
             &mut rng,
@@ -3404,7 +3404,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
             _:b4 <https://zkp-ld.org/security#var> "greater" .
             _:b4 <https://zkp-ld.org/security#val> "4300000000"^^<http://www.w3.org/2001/XMLSchema#integer> .
-            "#,
+            "#.to_string(),
         ];
 
         // define circuit
@@ -3425,7 +3425,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
-            "https://zkp-ld.org/circuit/lessThan",
+            "https://zkp-ld.org/circuit/lessThan".to_string(),
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
@@ -3481,7 +3481,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
             _:b4 <https://zkp-ld.org/security#var> "greater" .
             _:b4 <https://zkp-ld.org/security#val> "300"^^<http://www.w3.org/2001/XMLSchema#integer> .
-            "#,
+            "#.to_string(),
         ];
 
         let derived_proof = derive_proof_string(
