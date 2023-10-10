@@ -42,7 +42,6 @@ pub const MULTIBASE: NamedNodeRef =
 // https://zkp-ld.org/security#
 pub const SECRET_COMMITMENT: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://zkp-ld.org/security#secretCommitment");
-pub const FILTER: NamedNodeRef = NamedNodeRef::new_unchecked("https://zkp-ld.org/security#filter");
 pub const PREDICATE: NamedNodeRef =
     NamedNodeRef::new_unchecked("https://zkp-ld.org/security#predicate");
 pub const PREDICATE_TYPE: NamedNodeRef =
