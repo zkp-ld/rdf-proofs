@@ -58,7 +58,7 @@ pub fn derive_proof<R: RngCore>(
     blind_sign_request: Option<BlindSignRequest>,
     with_ppid: Option<bool>,
     predicates: Vec<Graph>,
-    circuits: HashMap<String, Circuit>,
+    circuits: HashMap<NamedNode, Circuit>,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
@@ -327,7 +327,7 @@ pub fn derive_proof_string<R: RngCore>(
                     &circuit_str.circuit_wasm,
                     &circuit_str.snark_proving_key,
                 )?;
-                Ok((circuit_id.clone(), circuit))
+                Ok((NamedNode::new(circuit_id)?, circuit))
             })
             .collect::<Result<HashMap<_, _>, RDFProofsError>>()?,
     };
@@ -923,7 +923,7 @@ fn derive_proof_value<R: RngCore>(
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
     predicate_graphs: OrderedGraphViews,
-    circuits: HashMap<String, Circuit>,
+    circuits: HashMap<NamedNode, Circuit>,
     extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
 ) -> Result<String, RDFProofsError> {
     let hasher = get_hasher();
@@ -1035,8 +1035,8 @@ fn derive_proof_value<R: RngCore>(
             .object_for_subject_predicate(predicate_subject, CIRCUIT)
             .ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
         let circuit = circuits
-            .get(predicate_circuit.as_str())
-            .ok_or(RDFProofsError::InvalidPredicate)?;
+            .get(&predicate_circuit.into_owned())
+            .ok_or(RDFProofsError::MissingPredicateCircuit)?;
         statements.add(R1CSCircomProver::new_statement_from_params(
             circuit.get_r1cs(),
             circuit.get_wasm(),
@@ -2851,7 +2851,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     #[test]
-    fn derive_and_verify_proof_with_less_than_predicates() {
+    fn derive_and_verify_proof_with_less_than_predicates_datetime() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
         let vc_pairs = vec![VcPairString::new(
@@ -2992,7 +2992,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     #[test]
-    fn derive_and_verify_proof_with_less_than_eq_predicates() {
+    fn derive_and_verify_proof_with_less_than_eq_predicates_datetime() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
         let vc_pairs = vec![VcPairString::new(
@@ -3375,7 +3375,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     #[test]
-    fn derive_and_verify_proof_with_less_than_predicates_2() {
+    fn derive_and_verify_proof_with_less_than_predicates_integer() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
         let vc_pairs = vec![VcPairString::new(
