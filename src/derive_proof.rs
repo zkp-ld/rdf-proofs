@@ -5,10 +5,11 @@ use crate::{
     common::{
         canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
         get_hasher, get_term_from_string, get_vc_from_ntriples, hash_byte_to_field,
-        hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes, read_private_var_list,
-        read_public_var_list, reorder_vc_triples, BBSPlusDefaultFieldHasher, BBSPlusHash,
-        BBSPlusPublicKey, BBSPlusSignature, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt,
-        PoKBBSPlusWit, Proof, ProofWithIndexMap, R1CSCircomWitness, StatementIndexMap, Statements,
+        hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes,
+        randomize_bnodes_in_vc_pairs, read_private_var_list, read_public_var_list,
+        reorder_vc_triples, BBSPlusDefaultFieldHasher, BBSPlusHash, BBSPlusPublicKey,
+        BBSPlusSignature, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt, PoKBBSPlusWit, Proof,
+        ProofWithIndexMap, R1CSCircomWitness, StatementIndexMap, Statements,
     },
     constants::PPID_PREFIX,
     context::{
@@ -44,7 +45,7 @@ use proof_system::{
     statement::r1cs_legogroth16::R1CSCircomProver,
     witness::{Witness, Witnesses},
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// derive VP from VCs, disclosed VCs, and deanonymization map
 pub fn derive_proof<R: RngCore>(
@@ -103,9 +104,9 @@ pub fn derive_proof<R: RngCore>(
                  disclosed,
              }| {
                 let (r_original_document, r_disclosed_document) =
-                    randomize_bnodes(&original.document, &disclosed.document);
+                    randomize_bnodes_in_vc_pairs(&original.document, &disclosed.document);
                 let (r_original_proof, r_disclosed_proof) =
-                    randomize_bnodes(&original.proof, &disclosed.proof);
+                    randomize_bnodes_in_vc_pairs(&original.proof, &disclosed.proof);
                 VcPair::new(
                     VerifiableCredential::new(r_original_document, r_original_proof),
                     VerifiableCredential::new(r_disclosed_document, r_disclosed_proof),
@@ -116,6 +117,14 @@ pub fn derive_proof<R: RngCore>(
     for vc in &randomized_vc_pairs {
         println!("randomized vc: {}", vc.to_string());
     }
+
+    // randomize blank node identifiers in predicate graphs
+    // except for user-defined blank node identifiers in `deanon_map`
+    let anon_bnodes: HashSet<_> = deanon_map.keys().cloned().collect();
+    let randomized_predicates = predicates
+        .iter()
+        .map(|predicate| randomize_bnodes(predicate, &anon_bnodes))
+        .collect::<Vec<_>>();
 
     // split VC pairs into original VCs and disclosed VCs
     let (original_vcs, disclosed_vcs): (Vec<_>, Vec<_>) = randomized_vc_pairs
@@ -138,7 +147,7 @@ pub fn derive_proof<R: RngCore>(
         &domain,
         &blind_sign_request,
         &ppid,
-        predicates,
+        randomized_predicates,
     )?;
 
     // decompose VP draft into graphs

@@ -47,7 +47,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     str::FromStr,
 };
 
@@ -262,7 +262,36 @@ pub fn get_verification_method_identifier(
     }
 }
 
-pub fn randomize_bnodes(original_graph: &Graph, disclosed_graph: &Graph) -> (Graph, Graph) {
+pub fn randomize_bnodes(graph: &Graph, except: &HashSet<NamedOrBlankNode>) -> Graph {
+    let mut random_map = HashMap::new();
+
+    let original_iter = graph.iter().map(|triple| {
+        let s = match triple.subject {
+            SubjectRef::BlankNode(b) if !except.contains(&b.into()) => random_map
+                .entry(b)
+                .or_insert_with(|| BlankNode::default())
+                .to_owned()
+                .into(),
+            _ => triple.subject.into_owned(),
+        };
+        let p = triple.predicate.into_owned();
+        let o = match triple.object {
+            TermRef::BlankNode(b) if !except.contains(&b.into()) => random_map
+                .entry(b)
+                .or_insert_with(|| BlankNode::default())
+                .to_owned()
+                .into(),
+            _ => triple.object.into_owned(),
+        };
+        Triple::new(s, p, o)
+    });
+    Graph::from_iter(original_iter)
+}
+
+pub fn randomize_bnodes_in_vc_pairs(
+    original_graph: &Graph,
+    disclosed_graph: &Graph,
+) -> (Graph, Graph) {
     let mut random_map = HashMap::new();
 
     // randomize each blank nodes in the original graph
