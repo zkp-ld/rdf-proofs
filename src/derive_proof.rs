@@ -2851,6 +2851,36 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     #[test]
+    fn generate_circuits() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let circuit_id = "https://zkp-ld.org/circuit/lessThanPrvPrv".to_string();
+        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_prv_prv_64.r1cs").unwrap();
+        let circuit_wasm = std::fs::read("circom/bls12381/less_than_prv_prv_64.wasm").unwrap();
+        let commit_witness_count = 2;
+
+        let snark_proving_key = CircomCircuit::setup(circuit_r1cs.clone())
+            .generate_proving_key(commit_witness_count, &mut rng)
+            .unwrap();
+
+        // serialize
+        let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
+        let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
+        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+
+        // TODO: serde_json
+        let circuit_json = format!(
+            r#"{{
+  "id": "{circuit_id}",
+  "r1cs": "{circuit_r1cs}",
+  "wasm": "{circuit_wasm}",
+  "provingKey": "{snark_proving_key}"
+}}"#
+        );
+        println!("{}", circuit_json);
+    }
+
+    #[test]
     fn derive_and_verify_proof_with_less_than_predicates_datetime() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
