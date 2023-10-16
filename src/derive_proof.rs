@@ -2898,7 +2898,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let predicates = vec![
             r#"
             _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
             _:b0 <https://zkp-ld.org/security#private> _:b1 .
             _:b0 <https://zkp-ld.org/security#public> _:b3 .
             _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
@@ -2915,8 +2915,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         ];
 
         // define circuit
-        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
-        let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
+        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_prv_pub_64.r1cs").unwrap();
+        let circuit_wasm = std::fs::read("circom/bls12381/less_than_prv_pub_64.wasm").unwrap();
         let commit_witness_count = 1;
         let snark_proving_key = CircomCircuit::setup(circuit_r1cs.clone())
             .generate_proving_key(commit_witness_count, &mut rng)
@@ -2924,15 +2924,12 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // serialize to multibase
         let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
-        println!("\"r1cs\": \"{}\",", circuit_r1cs);
         let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-        println!("\"wasm\": \"{}\",", circuit_wasm);
         let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
-        println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
-            "https://zkp-ld.org/circuit/lessThan".to_string(),
+            "https://zkp-ld.org/circuit/lessThanPrvPub".to_string(),
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
@@ -2957,7 +2954,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
-            "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            "<https://zkp-ld.org/circuit/lessThanPrvPub>".to_string(),
             snark_proving_key.clone(),
         )]);
 
@@ -2975,7 +2972,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let predicates_same_datetime = vec![
             r#"
             _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
             _:b0 <https://zkp-ld.org/security#private> _:b1 .
             _:b0 <https://zkp-ld.org/security#public> _:b3 .
             _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
@@ -3039,7 +3036,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let predicates = vec![
             r#"
             _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEq> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEqPrvPub> .
             _:b0 <https://zkp-ld.org/security#private> _:b1 .
             _:b0 <https://zkp-ld.org/security#public> _:b3 .
             _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
@@ -3056,8 +3053,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         ];
 
         // define circuit
-        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_eq_public_64.r1cs").unwrap();
-        let circuit_wasm = std::fs::read("circom/bls12381/less_than_eq_public_64.wasm").unwrap();
+        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_eq_prv_pub_64.r1cs").unwrap();
+        let circuit_wasm = std::fs::read("circom/bls12381/less_than_eq_prv_pub_64.wasm").unwrap();
         let commit_witness_count = 1;
         let snark_proving_key = CircomCircuit::setup(circuit_r1cs.clone())
             .generate_proving_key(commit_witness_count, &mut rng)
@@ -3073,7 +3070,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
-            "https://zkp-ld.org/circuit/lessThanEq".to_string(),
+            "https://zkp-ld.org/circuit/lessThanEqPrvPub".to_string(),
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
@@ -3098,7 +3095,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
-            "<https://zkp-ld.org/circuit/lessThanEq>".to_string(),
+            "<https://zkp-ld.org/circuit/lessThanEqPrvPub>".to_string(),
             snark_proving_key.clone(),
         )]);
 
@@ -3116,7 +3113,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let predicates_lesser_datetime = vec![
             r#"
             _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEq> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEqPrvPub> .
             _:b0 <https://zkp-ld.org/security#private> _:b1 .
             _:b0 <https://zkp-ld.org/security#public> _:b3 .
             _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
@@ -3232,7 +3229,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let predicates = vec![
             r#"
             _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
             _:b0 <https://zkp-ld.org/security#private> _:b1 .
             _:b0 <https://zkp-ld.org/security#public> _:b3 .
             _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
@@ -3249,8 +3246,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         ];
 
         // define circuit
-        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
-        let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
+        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_prv_pub_64.r1cs").unwrap();
+        let circuit_wasm = std::fs::read("circom/bls12381/less_than_prv_pub_64.wasm").unwrap();
         let commit_witness_count = 1;
         let snark_proving_key = CircomCircuit::setup(circuit_r1cs.clone())
             .generate_proving_key(commit_witness_count, &mut rng)
@@ -3266,7 +3263,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
-            "https://zkp-ld.org/circuit/lessThan".to_string(),
+            "https://zkp-ld.org/circuit/lessThanPrvPub".to_string(),
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
@@ -3291,7 +3288,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
-            "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            "<https://zkp-ld.org/circuit/lessThanPrvPub>".to_string(),
             snark_proving_key.clone(),
         )]);
 
@@ -3309,7 +3306,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let predicates_lesser_datetime = vec![
             r#"
             _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
             _:b0 <https://zkp-ld.org/security#private> _:b1 .
             _:b0 <https://zkp-ld.org/security#public> _:b3 .
             _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
@@ -3421,7 +3418,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let predicates = vec![
             r#"
             _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
             _:b0 <https://zkp-ld.org/security#private> _:b1 .
             _:b0 <https://zkp-ld.org/security#public> _:b3 .
             _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
@@ -3438,8 +3435,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         ];
 
         // define circuit
-        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_public_64.r1cs").unwrap();
-        let circuit_wasm = std::fs::read("circom/bls12381/less_than_public_64.wasm").unwrap();
+        let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_prv_pub_64.r1cs").unwrap();
+        let circuit_wasm = std::fs::read("circom/bls12381/less_than_prv_pub_64.wasm").unwrap();
         let commit_witness_count = 1;
         let snark_proving_key = CircomCircuit::setup(circuit_r1cs.clone())
             .generate_proving_key(commit_witness_count, &mut rng)
@@ -3455,7 +3452,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
-            "https://zkp-ld.org/circuit/lessThan".to_string(),
+            "https://zkp-ld.org/circuit/lessThanPrvPub".to_string(),
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
@@ -3480,7 +3477,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
-            "<https://zkp-ld.org/circuit/lessThan>".to_string(),
+            "<https://zkp-ld.org/circuit/lessThanPrvPub>".to_string(),
             snark_proving_key.clone(),
         )]);
 
@@ -3498,7 +3495,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         let predicates_same_integer = vec![
             r#"
             _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThan> .
+            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
             _:b0 <https://zkp-ld.org/security#private> _:b1 .
             _:b0 <https://zkp-ld.org/security#public> _:b3 .
             _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
