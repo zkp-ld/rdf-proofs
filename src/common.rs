@@ -18,7 +18,7 @@ use bbs_plus::{
 };
 use blake2::Blake2b512;
 use chrono::{DateTime, NaiveDate, Utc};
-use legogroth16::circom::{CircomCircuit as CircomCircuitOrig, R1CS as R1CSOrig};
+use legogroth16::circom::R1CS as R1CSOrig;
 use multibase::Base;
 use oxrdf::{
     dataset::GraphView,
@@ -66,7 +66,6 @@ pub type PoKBBSPlusWit<E> = PoKBBSSignatureG1Wit<E>;
 pub type PedersenCommitmentStmt = PedersenCommitment<G1Affine>;
 pub type ProvingKey = ProvingKeyOrig<Bls12_381>;
 pub type VerifyingKey = VerifyingKeyOrig<Bls12_381>;
-pub type CircomCircuit = CircomCircuitOrig<Bls12_381>;
 pub type R1CS = R1CSOrig<Bls12_381>;
 pub type R1CSCircomWitness = R1CSCircomWitnessOrig<Bls12_381>;
 
