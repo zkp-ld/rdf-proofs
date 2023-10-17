@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0] - 2023-10-18
+
+### Added
+
+- Predicate proofs generation and verification
+
+### Changed
+
+- The way of hashing terms with datatype of `xsd:date`, `xsd:dateTime`, `schema:Date`, `schema:DateTime`, and `xsd:integer` to allow range proofs
+- Upgrade dependencies
+
 ## [0.8.1] - 2023-10-02
 
 ### Changed
