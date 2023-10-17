@@ -1377,7 +1377,7 @@ mod tests {
     use super::CircuitString;
     use crate::{
         ark_to_base64url, blind_sign_string, blind_verify_string,
-        common::{get_dataset_from_nquads, get_graph_from_ntriples, CircomCircuit, R1CS},
+        common::{get_dataset_from_nquads, get_graph_from_ntriples, R1CS},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
@@ -1386,6 +1386,7 @@ mod tests {
         verify_proof_string, KeyGraph, VcPair, VcPairString, VerifiableCredential,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
+    use legogroth16::circom::CircomCircuit;
     use multibase::Base;
     use oxrdf::{NamedOrBlankNode, Term};
     use std::collections::HashMap;
