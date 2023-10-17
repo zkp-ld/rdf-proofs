@@ -1,10 +1,9 @@
 use crate::{
     common::{
         generate_proof_spec_context, get_dataset_from_nquads, get_delimiter,
-        get_graph_from_ntriples, get_hasher, get_term_from_string, hash_term_to_field, is_nym,
-        read_private_var_list, read_public_var_list, reorder_vc_triples, BBSPlusHash,
-        BBSPlusPublicKey, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt, ProofWithIndexMap,
-        Statements, VerifyingKey,
+        get_graph_from_ntriples, get_hasher, hash_term_to_field, is_nym, read_private_var_list,
+        read_public_var_list, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, Fr,
+        PedersenCommitmentStmt, PoKBBSPlusStmt, ProofWithIndexMap, Statements, VerifyingKey,
     },
     constants::PPID_PREFIX,
     context::{
@@ -331,13 +330,8 @@ pub fn verify_proof_string<R: RngCore>(
         None => HashMap::new(),
         Some(predicate_id_and_vks) => predicate_id_and_vks
             .iter()
-            .map(|(predicate_id, vk)| {
-                let Term::NamedNode(predicate_id) = get_term_from_string(predicate_id)? else {
-                        return Err(RDFProofsError::InvalidPredicate)
-                    };
-                Ok((predicate_id, multibase_to_ark(vk)?))
-            })
-            .collect::<Result<HashMap<_, VerifyingKey>, _>>()?,
+            .map(|(predicate_id, vk)| Ok((NamedNode::new(predicate_id)?, multibase_to_ark(vk)?)))
+            .collect::<Result<HashMap<_, VerifyingKey>, RDFProofsError>>()?,
     };
 
     verify_proof(rng, &vp, &key_graph, challenge, domain, snark_verifying_key)

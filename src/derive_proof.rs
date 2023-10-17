@@ -2963,7 +2963,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
-            "<https://zkp-ld.org/circuit/lessThanPrvPub>".to_string(),
+            "https://zkp-ld.org/circuit/lessThanPrvPub".to_string(),
             snark_proving_key.clone(),
         )]);
 
@@ -3104,7 +3104,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
-            "<https://zkp-ld.org/circuit/lessThanEqPrvPub>".to_string(),
+            "https://zkp-ld.org/circuit/lessThanEqPrvPub".to_string(),
             snark_proving_key.clone(),
         )]);
 
@@ -3297,7 +3297,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
-            "<https://zkp-ld.org/circuit/lessThanPrvPub>".to_string(),
+            "https://zkp-ld.org/circuit/lessThanPrvPub".to_string(),
             snark_proving_key.clone(),
         )]);
 
@@ -3486,7 +3486,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
         println!("derive_proof: {}", derived_proof);
 
         let snark_verifying_keys = HashMap::from([(
-            "<https://zkp-ld.org/circuit/lessThanPrvPub>".to_string(),
+            "https://zkp-ld.org/circuit/lessThanPrvPub".to_string(),
             snark_proving_key.clone(),
         )]);
 
