@@ -33,10 +33,10 @@ oxiri = "0.2"
 
 rdf-canon = { git = "https://github.com/zkp-ld/rdf-canon.git", version = "0.14.0" }
 
-proof_system = { version = "0.22", default-features = false }
-bbs_plus = { version = "0.16", default-features = false }
-dock_crypto_utils = { version = "0.15", default-features = false }
-legogroth16 = { version = "0.10", default-features = false, features = [
+proof_system = { version = "0.24", default-features = false }
+bbs_plus = { version = "0.18", default-features = false }
+dock_crypto_utils = { version = "0.16", default-features = false }
+legogroth16 = { version = "0.11", default-features = false, features = [
     "circom",
 ] }
 ark-ff = { version = "0.4", default-features = false }
