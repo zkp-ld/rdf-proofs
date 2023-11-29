@@ -22,14 +22,12 @@ pub use blind_signature::{
 };
 pub use common::{ark_to_base64url, ark_to_multibase, multibase_to_ark};
 pub use derive_proof::{derive_proof, derive_proof_string};
-pub use elgamal::{
-    elgamal_decrypt, elgamal_encrypt, elgamal_keygen, ElGamalCiphertext, ElGamalPublicKey,
-    ElGamalSecretKey,
-};
+pub use elgamal::{elgamal_decrypt, elgamal_encrypt, elgamal_keygen};
 pub use elliptic_elgamal::{
     elliptic_elgamal_decrypt, elliptic_elgamal_encrypt, elliptic_elgamal_keygen,
     elliptic_elgamal_verifiable_encryption_with_bbs_plus,
-    verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus,
+    verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus, ElGamalCiphertext,
+    ElGamalPublicKey, ElGamalSecretKey, ElGamalVerifiableEncryption,
 };
 pub use key_graph::KeyGraph;
 pub use predicate::CircuitString;

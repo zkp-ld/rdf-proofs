@@ -22,8 +22,8 @@ pub type ElGamalSecretKey = SecretKey<G1Projective>;
 pub type ElGamalCiphertext = Ciphertext<G1Projective>;
 pub type ElGamalParams = Parameters<G1Projective>;
 pub struct ElGamalVerifiableEncryption {
-    cipher_text: ElGamalCiphertext,
-    pok: Proof,
+    pub cipher_text: ElGamalCiphertext,
+    pub pok_for_commitment: Proof,
 }
 
 pub fn elliptic_elgamal_keygen<R: RngCore>(
@@ -103,11 +103,9 @@ pub fn elliptic_elgamal_verifiable_encryption_with_bbs_plus<R: RngCore>(
     let pok_for_commitment =
         Proof::new::<R, BBSPlusHash>(rng, proof_spec, witnesses, challenge, Default::default())?.0;
 
-    println!("pok_for_commitment: {:?}", pok_for_commitment);
-
     Ok(ElGamalVerifiableEncryption {
         cipher_text: (e1.into(), e2.into()),
-        pok: pok_for_commitment,
+        pok_for_commitment,
     })
 }
 
@@ -207,12 +205,13 @@ mod tests {
             &mut rng,
         )
         .unwrap();
+        println!("pok_for_commitment: {:?}", res.pok_for_commitment);
 
         verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus(
             &pk,
             &hd_hat,
             &res.cipher_text,
-            res.pok,
+            res.pok_for_commitment,
             "CHALLENGE",
             &mut rng,
         )
@@ -243,7 +242,7 @@ mod tests {
             &pk,
             &hd_hat,
             &res.cipher_text,
-            res.pok,
+            res.pok_for_commitment,
             "WRONG_CHALLENGE",
             &mut rng,
         );
