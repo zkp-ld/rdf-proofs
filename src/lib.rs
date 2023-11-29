@@ -29,6 +29,7 @@ pub use elgamal::{
 pub use elliptic_elgamal::{
     elliptic_elgamal_decrypt, elliptic_elgamal_encrypt, elliptic_elgamal_keygen,
     elliptic_elgamal_verifiable_encryption_with_bbs_plus,
+    verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus,
 };
 pub use key_graph::KeyGraph;
 pub use predicate::CircuitString;
