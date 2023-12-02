@@ -1,4 +1,3 @@
-mod assign_uid_signature;
 mod blind_signature;
 mod common;
 mod constants;
