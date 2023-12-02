@@ -1,19 +1,19 @@
-use crate::common::{BBSPlusHash, Fr, PedersenCommitmentStmt, Proof, Statements};
-use crate::constants::BLIND_SIG_REQUEST_CONTEXT;
+use std::io::Cursor;
+
+use crate::common::{Fr, PedersenCommitmentStmt, Statements};
 use crate::error::RDFProofsError;
-use ark_bls12_381::{G1Affine, G1Projective};
+use ark_bls12_381::{Bls12_381, G1Affine, G1Projective};
 use ark_crypto_primitives::encryption::elgamal::{
     Ciphertext, ElGamal, Parameters, PublicKey, Randomness, SecretKey,
 };
 use ark_crypto_primitives::encryption::AsymmetricEncryptionScheme;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use ark_std::rand::RngCore;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 use ark_std::UniformRand;
 
 use ark_ec::AffineRepr;
 use ark_ff::PrimeField;
-use proof_system::meta_statement::MetaStatements;
-use proof_system::proof_spec::ProofSpec;
 use proof_system::witness::{Witness, Witnesses};
 
 pub type Bls12381ElGamal = ElGamal<G1Projective>;
@@ -23,7 +23,37 @@ pub type ElGamalCiphertext = Ciphertext<G1Projective>;
 pub type ElGamalParams = Parameters<G1Projective>;
 pub struct ElGamalVerifiableEncryption {
     pub cipher_text: ElGamalCiphertext,
-    pub pok_for_commitment: Proof,
+    pub statements: Statements,
+    pub witnesses: Witnesses<Bls12_381>,
+}
+pub trait ElGamalCiphertextExt {
+    fn to_string_ext(&self) -> String;
+}
+impl ElGamalCiphertextExt for ElGamalCiphertext {
+    fn to_string_ext(&self) -> String {
+        format!("{}", cipher_text_to_str(self).unwrap())
+    }
+}
+
+pub fn cipher_text_to_str(c: &ElGamalCiphertext) -> Result<String, RDFProofsError> {
+    let (c1, c2) = c;
+
+    let mut buffer = Vec::new();
+
+    c1.serialize_with_mode(&mut buffer, Compress::Yes).unwrap();
+    c2.serialize_with_mode(&mut buffer, Compress::Yes).unwrap();
+
+    Ok(hex::encode(buffer))
+}
+
+pub fn str_to_cipher_text(s: &str) -> Result<ElGamalCiphertext, RDFProofsError> {
+    let buffer = hex::decode(s).unwrap();
+    let mut cursor = Cursor::new(&buffer);
+
+    let c1 = G1Affine::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::Yes).unwrap();
+    let c2 = G1Affine::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::Yes).unwrap();
+
+    Ok((c1, c2))
 }
 
 pub fn elliptic_elgamal_keygen<R: RngCore>(
@@ -66,7 +96,6 @@ pub fn elliptic_elgamal_verifiable_encryption_with_bbs_plus<R: RngCore>(
     pk: &ElGamalPublicKey,
     hd_hat: &G1Affine,
     uid: &Fr,
-    challenge: &str,
     rng: &mut R,
 ) -> Result<ElGamalVerifiableEncryption, RDFProofsError> {
     let mut param_rnd = StdRng::seed_from_u64(0u64);
@@ -90,33 +119,22 @@ pub fn elliptic_elgamal_verifiable_encryption_with_bbs_plus<R: RngCore>(
         vec![*hd_hat, *pk],
         e2.into(),
     ));
-    // TODO: fix context
-    let context = Some(BLIND_SIG_REQUEST_CONTEXT.to_vec());
-    let proof_spec = ProofSpec::new(statements, MetaStatements::new(), vec![], context);
-    proof_spec.validate()?;
     let mut witnesses = Witnesses::new();
     witnesses.add(Witness::PedersenCommitment([r].to_vec()));
     witnesses.add(Witness::PedersenCommitment([*uid, r].to_vec()));
 
-    let challenge = Option::from(challenge.as_bytes().to_vec());
-
-    let pok_for_commitment =
-        Proof::new::<R, BBSPlusHash>(rng, proof_spec, witnesses, challenge, Default::default())?.0;
-
     Ok(ElGamalVerifiableEncryption {
         cipher_text: (e1.into(), e2.into()),
-        pok_for_commitment,
+        statements,
+        witnesses,
     })
 }
 
-pub fn verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus<R: RngCore>(
+pub fn verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus(
     pk: &ElGamalPublicKey,
     hd_hat: &G1Affine,
     cipher_text: &ElGamalCiphertext,
-    pok_for_commitment: Proof,
-    challenge: &str,
-    rng: &mut R,
-) -> Result<(), RDFProofsError> {
+) -> Result<Statements, RDFProofsError> {
     let mut param_rnd = StdRng::seed_from_u64(0u64);
     let params: ElGamalParams = Bls12381ElGamal::setup(&mut param_rnd).unwrap();
 
@@ -132,20 +150,14 @@ pub fn verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus<R: RngCore>(
         vec![*hd_hat, *pk],
         *e2,
     ));
-    // TODO: fix context
-    let context = Some(BLIND_SIG_REQUEST_CONTEXT.to_vec());
-    let proof_spec = ProofSpec::new(statements, MetaStatements::new(), vec![], context);
-    let challenge = Option::from(challenge.as_bytes().to_vec());
-    Ok(pok_for_commitment.verify::<R, BBSPlusHash>(
-        rng,
-        proof_spec,
-        challenge,
-        Default::default(),
-    )?)
+    Ok(statements)
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::common::Proof;
+    use crate::constants::BLIND_SIG_REQUEST_CONTEXT;
+    use crate::elliptic_elgamal::{cipher_text_to_str, str_to_cipher_text};
     use crate::error::RDFProofsError;
     use crate::{
         common::{BBSPlusHash, Fr},
@@ -162,6 +174,8 @@ mod tests {
 
     use ark_ec::AffineRepr;
     use ark_ff::PrimeField;
+    use proof_system::meta_statement::MetaStatements;
+    use proof_system::proof_spec::ProofSpec;
 
     pub fn hash_str_to_affine(payload: &str) -> Result<G1Affine, RDFProofsError> {
         let message =
@@ -190,6 +204,24 @@ mod tests {
     }
 
     #[test]
+    fn test_str_to_cipher_text() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let (pk, _) = elliptic_elgamal_keygen(&mut rng).unwrap();
+        println!("pk: {:?}", pk);
+
+        let message = "PlainMessage";
+        let m_affine = hash_str_to_affine(message).unwrap();
+
+        let c = elliptic_elgamal_encrypt(&pk, &m_affine, &mut rng).unwrap();
+
+        let serialized = cipher_text_to_str(&c).unwrap();
+        let deserialized_ciphertext = str_to_cipher_text(&serialized).unwrap();
+
+        println!("serialized: {:?}", serialized);
+        assert_eq!(c, deserialized_ciphertext);
+    }
+
+    #[test]
     fn test_elliptic_elgamal_verifiable_encryption_with_bbs_plus() {
         let mut rng = StdRng::seed_from_u64(0u64);
         let (pk, sk) = elliptic_elgamal_keygen(&mut rng).unwrap();
@@ -197,25 +229,42 @@ mod tests {
         let uid: Fr = Fr::rand(&mut rng);
         let hd_hat = G1Affine::rand(&mut rng);
 
-        let res = elliptic_elgamal_verifiable_encryption_with_bbs_plus(
-            &pk,
-            &hd_hat,
-            &uid,
-            "CHALLENGE",
-            &mut rng,
-        )
-        .unwrap();
-        println!("pok_for_commitment: {:?}", res.pok_for_commitment);
+        let res =
+            elliptic_elgamal_verifiable_encryption_with_bbs_plus(&pk, &hd_hat, &uid, &mut rng)
+                .unwrap();
+        let context = Some(BLIND_SIG_REQUEST_CONTEXT.to_vec());
 
-        verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus(
+        let proof_spec = ProofSpec::new(res.statements, MetaStatements::new(), vec![], context);
+        proof_spec.validate().unwrap();
+
+        let pok_for_commitment = Proof::new::<StdRng, BBSPlusHash>(
+            &mut rng,
+            proof_spec,
+            res.witnesses,
+            Option::from("CHALLENGE".as_bytes().to_vec()),
+            Default::default(),
+        )
+        .unwrap()
+        .0;
+
+        println!("pok_for_commitment: {:?}", pok_for_commitment);
+
+        let res2 = verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus(
             &pk,
             &hd_hat,
             &res.cipher_text,
-            res.pok_for_commitment,
-            "CHALLENGE",
-            &mut rng,
         )
         .unwrap();
+        let context = Some(BLIND_SIG_REQUEST_CONTEXT.to_vec());
+        let proof_spec = ProofSpec::new(res2, MetaStatements::new(), vec![], context);
+        assert!(pok_for_commitment
+            .verify::<StdRng, BBSPlusHash>(
+                &mut rng,
+                proof_spec,
+                Option::from("CHALLENGE".as_bytes().to_vec()),
+                Default::default(),
+            )
+            .is_ok());
 
         let decrypted_value = elliptic_elgamal_decrypt(&sk, &res.cipher_text).unwrap();
         assert_eq!(decrypted_value, hd_hat.mul_bigint(uid.into_bigint()));
@@ -229,23 +278,41 @@ mod tests {
         let uid: Fr = Fr::rand(&mut rng);
         let hd_hat = G1Affine::rand(&mut rng);
 
-        let res = elliptic_elgamal_verifiable_encryption_with_bbs_plus(
-            &pk,
-            &hd_hat,
-            &uid,
-            "CHALLENGE",
-            &mut rng,
-        )
-        .unwrap();
+        let res =
+            elliptic_elgamal_verifiable_encryption_with_bbs_plus(&pk, &hd_hat, &uid, &mut rng)
+                .unwrap();
+        let context = Some(BLIND_SIG_REQUEST_CONTEXT.to_vec());
 
-        let res = verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus(
+        let proof_spec = ProofSpec::new(res.statements, MetaStatements::new(), vec![], context);
+        proof_spec.validate().unwrap();
+
+        let pok_for_commitment = Proof::new::<StdRng, BBSPlusHash>(
+            &mut rng,
+            proof_spec,
+            res.witnesses,
+            Option::from("CHALLENGE".as_bytes().to_vec()),
+            Default::default(),
+        )
+        .unwrap()
+        .0;
+
+        println!("pok_for_commitment: {:?}", pok_for_commitment);
+
+        let res2 = verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus(
             &pk,
             &hd_hat,
             &res.cipher_text,
-            res.pok_for_commitment,
-            "WRONG_CHALLENGE",
-            &mut rng,
-        );
-        assert!(res.is_err());
+        )
+        .unwrap();
+        let context = Some(BLIND_SIG_REQUEST_CONTEXT.to_vec());
+        let proof_spec = ProofSpec::new(res2, MetaStatements::new(), vec![], context);
+        assert!(pok_for_commitment
+            .verify::<StdRng, BBSPlusHash>(
+                &mut rng,
+                proof_spec,
+                Option::from("WRONG CHALLENGE".as_bytes().to_vec()),
+                Default::default(),
+            )
+            .is_err());
     }
 }

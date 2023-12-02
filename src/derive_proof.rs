@@ -14,10 +14,11 @@ use crate::{
     constants::PPID_PREFIX,
     context::{
         AUTHENTICATION, CHALLENGE, CIRCUIT, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN,
-        HOLDER, MULTIBASE, PREDICATE, PREDICATE_TYPE, PRIVATE, PROOF, PROOF_PURPOSE, PROOF_VALUE,
-        PUBLIC, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
+        ENCRYPTED_UID, HOLDER, MULTIBASE, PREDICATE, PREDICATE_TYPE, PRIVATE, PROOF, PROOF_PURPOSE,
+        PROOF_VALUE, PUBLIC, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
         VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
+    elliptic_elgamal_verifiable_encryption_with_bbs_plus,
     error::RDFProofsError,
     key_gen::{generate_params, generate_ppid, PPID},
     key_graph::KeyGraph,
@@ -30,6 +31,7 @@ use crate::{
         DisclosedVerifiableCredential, VcPair, VcPairString, VerifiableCredential,
         VerifiableCredentialTriples, VerifiablePresentation,
     },
+    ElGamalCiphertext, ElGamalCiphertextExt, ElGamalPublicKey, ElGamalVerifiableEncryption,
 };
 use ark_std::rand::RngCore;
 use chrono::offset::Utc;
@@ -60,6 +62,7 @@ pub fn derive_proof<R: RngCore>(
     with_ppid: Option<bool>,
     predicates: Vec<Graph>,
     circuits: HashMap<NamedNode, Circuit>,
+    opener_pub_key: Option<ElGamalPublicKey>,
 ) -> Result<Dataset, RDFProofsError> {
     for vc in vc_pairs {
         println!("{}", vc.to_string());
@@ -140,6 +143,20 @@ pub fn derive_proof<R: RngCore>(
     // get PPID
     let ppid = get_ppid(&domain, &secret, with_ppid)?;
 
+    // encrypt secret as usk
+    let verifiable_encryption_for_uid = match (secret, opener_pub_key) {
+        (Some(secret), Some(opener_pub_key)) => {
+            get_encrypted_secret_and_pok(&opener_pub_key, secret, rng).map(Some)
+        }
+        (Some(_), None) | (None, None) => Ok(None),
+        _ => Err(RDFProofsError::MissingSecretOrOpenerPubKey), // This already returns Err
+    }
+    .unwrap();
+    let cipher_text = verifiable_encryption_for_uid
+        .as_ref()
+        .map(|e| e.cipher_text)
+        .or(None);
+
     // build VP draft (= canonicalized VP without proofValue) based on disclosed VCs
     let (vp_draft, vp_draft_bnode_map, vc_document_graph_names) = build_vp(
         disclosed_vcs,
@@ -147,6 +164,7 @@ pub fn derive_proof<R: RngCore>(
         &domain,
         &blind_sign_request,
         &ppid,
+        &cipher_text,
         randomized_predicates,
     )?;
 
@@ -262,6 +280,7 @@ pub fn derive_proof<R: RngCore>(
         predicate_graphs,
         circuits,
         &extended_deanon_map,
+        &verifiable_encryption_for_uid,
     )?;
 
     // add derived proof value to VP
@@ -292,6 +311,7 @@ pub fn derive_proof_string<R: RngCore>(
     with_ppid: Option<bool>,
     predicates: Option<&Vec<String>>,
     circuits: Option<&HashMap<String, CircuitString>>,
+    opener_pub_key: Option<ElGamalPublicKey>,
 ) -> Result<String, RDFProofsError> {
     // construct inputs for `derive_proof` from string-based inputs
     let vc_pairs = vc_pairs
@@ -353,6 +373,7 @@ pub fn derive_proof_string<R: RngCore>(
         with_ppid,
         predicates,
         circuits,
+        opener_pub_key,
     )?;
 
     Ok(rdf_canon::serialize(&derived_proof))
@@ -377,6 +398,22 @@ fn get_ppid(
     } else {
         Err(RDFProofsError::MissingSecretOrDomain)
     }
+}
+
+fn get_encrypted_secret_and_pok<R: RngCore>(
+    opener_pub_key: &ElGamalPublicKey,
+    secret: &[u8],
+    rng: &mut R,
+) -> Result<ElGamalVerifiableEncryption, RDFProofsError> {
+    let params = generate_params(1);
+    let hasher = get_hasher();
+    let secret = hash_byte_to_field(secret, &hasher).unwrap();
+    Ok(elliptic_elgamal_verifiable_encryption_with_bbs_plus(
+        &opener_pub_key,
+        &params.h[0],
+        &secret,
+        rng,
+    )?)
 }
 
 fn get_deanon_map_from_string(
@@ -518,6 +555,7 @@ fn build_vp(
     domain: &Option<&str>,
     blind_sign_request: &Option<BlindSignRequest>,
     ppid: &Option<PPID>,
+    encrypted_uid: &Option<ElGamalCiphertext>,
     predicates: Vec<Graph>,
 ) -> Result<(Dataset, HashMap<String, String>, Vec<BlankNode>), RDFProofsError> {
     let vp_id = BlankNode::default();
@@ -619,6 +657,17 @@ fn build_vp(
                 ));
             }
         }
+    }
+
+    // add encrypted uid if exists
+    if let Some(encrypted_uid) = encrypted_uid {
+        vp.insert(QuadRef::new(
+            &vp_proof_id,
+            ENCRYPTED_UID,
+            // LiteralRef::new_simple_literal("123123123123"),
+            LiteralRef::new_simple_literal(&encrypted_uid.to_string_ext()),
+            &vp_proof_graph_id,
+        ));
     }
 
     // add predicates if exist
@@ -934,6 +983,7 @@ fn derive_proof_value<R: RngCore>(
     predicate_graphs: OrderedGraphViews,
     circuits: HashMap<NamedNode, Circuit>,
     extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
+    verifiable_encryption_for_uid: &Option<ElGamalVerifiableEncryption>,
 ) -> Result<String, RDFProofsError> {
     let hasher = get_hasher();
 
@@ -1023,6 +1073,12 @@ fn derive_proof_value<R: RngCore>(
         ));
         ppid_index = Some(statements.len() - 1);
     }
+    // statements for verifiable encryption of uid
+    if let Some(verifiable_encryption_for_uid) = verifiable_encryption_for_uid {
+        for statement in verifiable_encryption_for_uid.statements.0.iter() {
+            statements.add(statement.clone());
+        }
+    }
     // statement for secret commitment
     let mut secret_commitment_index = None;
     if let Some(req) = blind_sign_request {
@@ -1042,7 +1098,10 @@ fn derive_proof_value<R: RngCore>(
             .ok_or(RDFProofsError::InvalidPredicate)?;
         let TermRef::NamedNode(predicate_circuit) = predicate_graph
             .object_for_subject_predicate(predicate_subject, CIRCUIT)
-            .ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+            .ok_or(RDFProofsError::InvalidPredicate)?
+        else {
+            return Err(RDFProofsError::InvalidPredicate);
+        };
         let circuit = circuits
             .get(&predicate_circuit.into_owned())
             .ok_or(RDFProofsError::MissingPredicateCircuit)?;
@@ -1054,12 +1113,22 @@ fn derive_proof_value<R: RngCore>(
         predicate_indexes.push(statements.len() - 1);
 
         let mut privates = vec![];
-        let TermRef::BlankNode(predicate_private) = predicate_graph.object_for_subject_predicate(predicate_subject, PRIVATE).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        let TermRef::BlankNode(predicate_private) = predicate_graph
+            .object_for_subject_predicate(predicate_subject, PRIVATE)
+            .ok_or(RDFProofsError::InvalidPredicate)?
+        else {
+            return Err(RDFProofsError::InvalidPredicate);
+        };
         read_private_var_list(predicate_private, &mut privates, &predicate_graph)?;
         predicate_privates.push(privates);
 
         let mut publics = vec![];
-        let TermRef::BlankNode(predicate_public) = predicate_graph.object_for_subject_predicate(predicate_subject, PUBLIC).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        let TermRef::BlankNode(predicate_public) = predicate_graph
+            .object_for_subject_predicate(predicate_subject, PUBLIC)
+            .ok_or(RDFProofsError::InvalidPredicate)?
+        else {
+            return Err(RDFProofsError::InvalidPredicate);
+        };
         read_public_var_list(predicate_public, &mut publics, &predicate_graph)?;
         predicate_publics.push(publics);
     }
@@ -1136,6 +1205,12 @@ fn derive_proof_value<R: RngCore>(
             )?]));
         } else {
             return Err(RDFProofsError::MissingSecret);
+        }
+    }
+    // witness for verifiable encryption of uid
+    if let Some(verifiable_encryption_for_uid) = verifiable_encryption_for_uid {
+        for witness in verifiable_encryption_for_uid.witnesses.0.iter() {
+            witnesses.add(witness.clone());
         }
     }
     // witness for secret commitment
@@ -1380,7 +1455,7 @@ mod tests {
         common::{get_dataset_from_nquads, get_graph_from_ntriples, R1CS},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
-        derive_proof_string,
+        derive_proof_string, elliptic_elgamal_keygen,
         error::RDFProofsError,
         request_blind_sign_string, unblind_string, verify_blind_sign_request_string, verify_proof,
         verify_proof_string, KeyGraph, VcPair, VcPairString, VerifiableCredential,
@@ -1392,137 +1467,137 @@ mod tests {
     use std::collections::HashMap;
 
     const KEY_GRAPH: &str = r#"
-    # issuer0
-    <did:example:issuer0> <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-    <did:example:issuer0#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
-    <did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer0> .
-    <did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uekl-7abY7R84yTJEJ6JRqYohXxPZPDoTinJ7XCcBkmk" .
-    <did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "ukiiQxfsSfV0E2QyBlnHTK2MThnd7_-Fyf6u76BUd24uxoDF4UjnXtxUo8b82iuPZBOa8BXd1NpE20x3Rfde9udcd8P8nPVLr80Xh6WLgI9SYR6piNzbHhEVIfgd_Vo9P" .
-    # issuer1
-    <did:example:issuer1> <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .
-    <did:example:issuer1#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
-    <did:example:issuer1#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer1> .
-    <did:example:issuer1#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uQkpZn0SW42c2tlYa0IIFXyabAYHbwc0z3l_GvXQbWSg" .
-    <did:example:issuer1#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "usFM3CcvBMl_Dg5ixhQkHKGdqzY3GU9Uck6lj2i8vpbzLFOiZnjDNOpsItrkbNf2iCku-SZu5kO3nbLis-fuRhz_QwFcKw9IBpbPRPwXNQTX3zzcFsoNzs_wo8tkLQlcS" .
-    # issuer2
-    <did:example:issuer2> <https://w3id.org/security#verificationMethod> <did:example:issuer2#bls12_381-g2-pub001> .
-    <did:example:issuer2#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
-    <did:example:issuer2#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer2> .
-    <did:example:issuer2#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "u4nmBsiSwvHj7i_gBu1L6Cug0OXXhVPF6NWLfkQbCZiU" .
-    <did:example:issuer2#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "uo_yMZWlZwQzLqEe6hEsORbsV5cSHQEQHNI0EOe_eUJdHsgCRxtpWMcxxcdshH5pAAUxt_ni6_cQCud3CdMcjAUN8yOvzhuzeIW_H-Dyncdrc3w0f2WxdH3oRcnvPTwrb" .
-    # issuer3
-    <did:example:issuer3> <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
-    <did:example:issuer3#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
-    <did:example:issuer3#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer3> .
-    <did:example:issuer3#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uH1yGFG6C1pJd_N45wkOPrSNdvILdLm0c_0AXXRDGZy8" .
-    <did:example:issuer3#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "uidSE_Urr5MFE4SoqV3TZTBHPHM-tkpdRhBPrYeIbsudglVV_cddyEstHJOmSkfPOFsvEuA9qtWjFNpBebVSS4DPxBfNNWESSCz_vrnH62hbfpWdJSFR8YbqjborvpgM6" .
-    "#;
+        # issuer0
+        <did:example:issuer0> <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        <did:example:issuer0#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
+        <did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer0> .
+        <did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uekl-7abY7R84yTJEJ6JRqYohXxPZPDoTinJ7XCcBkmk" .
+        <did:example:issuer0#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "ukiiQxfsSfV0E2QyBlnHTK2MThnd7_-Fyf6u76BUd24uxoDF4UjnXtxUo8b82iuPZBOa8BXd1NpE20x3Rfde9udcd8P8nPVLr80Xh6WLgI9SYR6piNzbHhEVIfgd_Vo9P" .
+        # issuer1
+        <did:example:issuer1> <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .
+        <did:example:issuer1#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
+        <did:example:issuer1#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer1> .
+        <did:example:issuer1#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uQkpZn0SW42c2tlYa0IIFXyabAYHbwc0z3l_GvXQbWSg" .
+        <did:example:issuer1#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "usFM3CcvBMl_Dg5ixhQkHKGdqzY3GU9Uck6lj2i8vpbzLFOiZnjDNOpsItrkbNf2iCku-SZu5kO3nbLis-fuRhz_QwFcKw9IBpbPRPwXNQTX3zzcFsoNzs_wo8tkLQlcS" .
+        # issuer2
+        <did:example:issuer2> <https://w3id.org/security#verificationMethod> <did:example:issuer2#bls12_381-g2-pub001> .
+        <did:example:issuer2#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
+        <did:example:issuer2#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer2> .
+        <did:example:issuer2#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "u4nmBsiSwvHj7i_gBu1L6Cug0OXXhVPF6NWLfkQbCZiU" .
+        <did:example:issuer2#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "uo_yMZWlZwQzLqEe6hEsORbsV5cSHQEQHNI0EOe_eUJdHsgCRxtpWMcxxcdshH5pAAUxt_ni6_cQCud3CdMcjAUN8yOvzhuzeIW_H-Dyncdrc3w0f2WxdH3oRcnvPTwrb" .
+        # issuer3
+        <did:example:issuer3> <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
+        <did:example:issuer3#bls12_381-g2-pub001> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#Multikey> .
+        <did:example:issuer3#bls12_381-g2-pub001> <https://w3id.org/security#controller> <did:example:issuer3> .
+        <did:example:issuer3#bls12_381-g2-pub001> <https://w3id.org/security#secretKeyMultibase> "uH1yGFG6C1pJd_N45wkOPrSNdvILdLm0c_0AXXRDGZy8" .
+        <did:example:issuer3#bls12_381-g2-pub001> <https://w3id.org/security#publicKeyMultibase> "uidSE_Urr5MFE4SoqV3TZTBHPHM-tkpdRhBPrYeIbsudglVV_cddyEstHJOmSkfPOFsvEuA9qtWjFNpBebVSS4DPxBfNNWESSCz_vrnH62hbfpWdJSFR8YbqjborvpgM6" .
+        "#;
 
     const VC_1: &str = r#"
-    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-    <did:example:john> <http://schema.org/name> "John Smith" .
-    <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
-    <did:example:john> <http://schema.org/worksFor> _:b1 .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-    _:b0 <http://example.org/vocab/lotNumber> "0000001" .
-    _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
-    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
-    _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
-    _:b1 <http://schema.org/name> "ABC inc." .
-    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        <did:example:john> <http://schema.org/name> "John Smith" .
+        <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
+        <did:example:john> <http://schema.org/worksFor> _:b1 .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+        _:b0 <http://example.org/vocab/lotNumber> "0000001" .
+        _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
+        _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
+        _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
+        _:b1 <http://schema.org/name> "ABC inc." .
+        <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const VC_PROOF_1: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "ui_TYLyZXnF1LRhdzEDrKiAWA0Tbrm1GmCHXBVnX39BTBnIbdFLc9p2jRAw0H4jzznHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <https://w3id.org/security#proofValue> "ui_TYLyZXnF1LRhdzEDrKiAWA0Tbrm1GmCHXBVnX39BTBnIbdFLc9p2jRAw0H4jzznHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        "#;
     const VC_1_MODIFIED: &str = r#"
-    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-    <did:example:john> <http://schema.org/name> "**********************************" .  # modified
-    <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
-    <did:example:john> <http://schema.org/worksFor> _:b1 .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-    _:b0 <http://example.org/vocab/lotNumber> "0000001" .
-    _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
-    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
-    _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
-    _:b1 <http://schema.org/name> "ABC inc." .
-    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        <did:example:john> <http://schema.org/name> "**********************************" .  # modified
+        <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
+        <did:example:john> <http://schema.org/worksFor> _:b1 .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+        _:b0 <http://example.org/vocab/lotNumber> "0000001" .
+        _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
+        _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
+        _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
+        _:b1 <http://schema.org/name> "ABC inc." .
+        <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const VC_2: &str = r#"
-    <http://example.org/vaccine/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
-    <http://example.org/vaccine/a> <http://schema.org/name> "AwesomeVaccine" .
-    <http://example.org/vaccine/a> <http://schema.org/manufacturer> <http://example.org/awesomeCompany> .
-    <http://example.org/vaccine/a> <http://schema.org/status> "active" .
-    <http://example.org/vicred/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/a> .
-    <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> .
-    <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        <http://example.org/vaccine/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
+        <http://example.org/vaccine/a> <http://schema.org/name> "AwesomeVaccine" .
+        <http://example.org/vaccine/a> <http://schema.org/manufacturer> <http://example.org/awesomeCompany> .
+        <http://example.org/vaccine/a> <http://schema.org/status> "active" .
+        <http://example.org/vicred/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/a> .
+        <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> .
+        <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const _VC_PROOF_WITHOUT_PROOFVALUE_2: &str = r#"
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
+        "#;
     const VC_PROOF_2: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "uoB9zdaILAqel15HTh6MtIkDZjoeQn2g-fqACEgZvKNMRbgGqTOmNDclM2Pv-WF7BnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <https://w3id.org/security#proofValue> "uoB9zdaILAqel15HTh6MtIkDZjoeQn2g-fqACEgZvKNMRbgGqTOmNDclM2Pv-WF7BnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
+        "#;
     const DISCLOSED_VC_1: &str = r#"
-    _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-    _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
-    _:e0 <http://schema.org/worksFor> _:b1 .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-    _:b0 <http://example.org/vocab/vaccine> _:e1 .
-    _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
-    _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    _:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
-    _:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-    _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
+        _:e0 <http://schema.org/worksFor> _:b1 .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+        _:b0 <http://example.org/vocab/vaccine> _:e1 .
+        _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
+        _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        _:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
+        _:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+        _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const DISCLOSED_VC_PROOF_1: &str = r#"
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        "#;
     const DISCLOSED_VC_2: &str = r#"
-    _:e1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
-    _:e1 <http://schema.org/status> "active" .
-    _:e3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    _:e3 <https://www.w3.org/2018/credentials#credentialSubject> _:e1 .
-    _:e3 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> .
-    _:e3 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:e3 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        _:e1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> .
+        _:e1 <http://schema.org/status> "active" .
+        _:e3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        _:e3 <https://www.w3.org/2018/credentials#credentialSubject> _:e1 .
+        _:e3 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> .
+        _:e3 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:e3 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const DISCLOSED_VC_PROOF_2: &str = r#"
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
+        "#;
     const DEANON_MAP: [(&str, &str); 4] = [
         ("_:e0", "<did:example:john>"),
         ("_:e1", "<http://example.org/vaccine/a>"),
@@ -1539,47 +1614,47 @@ mod tests {
         get_deanon_map_from_string(&get_example_deanon_map_string()).unwrap()
     }
     const VP: &str = r#"
-    _:c14n1 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n10 .
-    _:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n10 .
-    _:c14n1 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n10 .
-    _:c14n1 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n10 .
-    _:c14n1 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n10 .
-    _:c14n11 <http://purl.org/dc/terms/created> "2023-10-06T05:40:05.941640167Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n13 .
-    _:c14n11 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n13 .
-    _:c14n11 <https://w3id.org/security#challenge> "abcde" _:c14n13 .
-    _:c14n11 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n13 .
-    _:c14n11 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#authenticationMethod> _:c14n13 .
-    _:c14n11 <https://w3id.org/security#proofValue> "uomFhWQnaAgAAAAAAAAAAlWj7ySOnU5mw_rG271EltSGHfh0Sabj6_FBXzZ7GBT7TTXM-OJk2y-UjU8hAYyS9p5SkDSPYysuFjUy9RUNu4ypsNdZrRJX2E3TmTg-186q3jvPKExzchRPg7LrE6pWeqzMXck8jrsaUR1_zIsH6KKuTO5gnDEOV4Ufg8zCm7nDLetSoflGoX0d-AUrr9-C_j1WOnJ0-lOnlLr3Mg5hOjxDktjaDvUdwDJ36rFx7agxBvtUKa7deW1Ta-Vq1vFiiAgAAAAAAAACTBwTiEdk00-BvIIfqz8oDk2xDYnTLtUDSu6P0xdL0RjQuKBHV6xaVhb5qoBYP-IdGKx2-2Sk21iHIjrVlQFBup830cauPb0nhTDonFpZRwL7ncq9hXu62basWvqFM3ThJWXiTXss4OpuJW5D0E5h6JQAAAAAAAAB-w7b_iVOFQAQGHgFpp06QV6gwCTxWfLJyxKxKSK-kHpm0wTrncrlMfDmqvHqaHWlcXvv6p7dTHnX0tJLWYC9XUt2I6oyQBKKHQlBI7ZDXkk0Xq9P7QGXrH48bcAW7dTbHdgGgIIBxJ3n8mg1zvsidRWNMNUJx7nHIWxKWIRe5BGqk0y5xBZvij7h_8R64Vw4RfbjtajslQPUN0fiu3s0qP0Iq0VyjWycJ6uAn8i4kZWNWbafJLH8ki8rz_H_o3zC0n0S_-meUXC7Ok2cVmKmcZrZuC-sjgMLdJbVjhqWUD1LdiOqMkASih0JQSO2Q15JNF6vT-0Bl6x-PG3AFu3U2R3eQBscDGEj2SejHCKIW5AQ3vI2u81WOkaojzcsfMR5S3YjqjJAEoodCUEjtkNeSTRer0_tAZesfjxtwBbt1NlltLFFHMcT568va2232ixBc7DF1IviaZJdNvtrU1nxqWW0sUUcxxPnry9rbbfaLEFzsMXUi-Jpkl02-2tTWfGpS3YjqjJAEoodCUEjtkNeSTRer0_tAZesfjxtwBbt1NlltLFFHMcT568va2232ixBc7DF1IviaZJdNvtrU1nxqWW0sUUcxxPnry9rbbfaLEFzsMXUi-Jpkl02-2tTWfGpZbSxRRzHE-evL2ttt9osQXOwxdSL4mmSXTb7a1NZ8anaD_nngpqe5xaQdji-u3evtHCq1bi56QEEZ6eyhzJhQhV79oieifauuxhKLxl3re4PJGFwyCXpXH6Bgi7eedVhKPDD2T3YTIj22AH4inhAyV368j4d3voLJAa4inSwSXUd3kAbHAxhI9knoxwiiFuQEN7yNrvNVjpGqI83LHzEe17WRQdZOAXg-5RYkYZm1ubixq0p0HoNmrqa-L4hCSjEg-SkiGOJYUfBxFAgkYTauH2E2FLz5_NHR4g0mxD2_NcVmZ1okq1eLeIdzUV9RPd4cUbr5uiGObyTu2miM3SsUboOemDnsRSTr7yilMe1x8WK00oIqAJ3tLt71sr2fjSjdAXrIJwtaz3pK0--RrrgOzC2OWjzZWOna0i5WVnhcZZ_SUYwus1fQv3H5VCsXgIA0Sztj5kM0msSkvOQ9sc4bx3YBoCCAcSd5_JoNc77InUVjTDVCce5xyFsSliEXuQRUD-bXOni6wTd1ZJKGXVsu3cDKGrwRcMLtUcLCmo-bCLW73RuCJOGzemtQ-WQtWEtPjfuwiuVWJkV5o152B1BpBgNslfYVji5qEQYcG9iz0suNjVlTC8mcKN4vDspNBW71xFFH-CBvYGoSHgKZ3l0tIJylcX5FMV_FjZO03bLqO8d2AaAggHEnefyaDXO-yJ1FY0w1QnHucchbEpYhF7kELS0TeuolCiEnceAsJagqrgL7AE3FaIpDybD_b6xVaFstLRN66iUKISdx4CwlqCquAvsATcVoikPJsP9vrFVoWy0tE3rqJQohJ3HgLCWoKq4C-wBNxWiKQ8mw_2-sVWhbLS0TeuolCiEnceAsJagqrgL7AE3FaIpDybD_b6xVaFstLRN66iUKISdx4CwlqCquAvsATcVoikPJsP9vrFVoWwCMUROvw7h9P0TgM_oleY-MmLKq9MTn6Y29NKPvmCbprfIx7f4jMu8SRN84CZ0fIv6vvzRo0BC2b_XFb218o1weMHOr8tTs_YfpnJa2qoB0WmgC5Z86ol9FQqGUYi8WVCixy-FMlRZ6nwjJm_4gCSPEKeFVbmUwkqR79KdKDvuMkmrzSX20mYUp1fD6TgghZk2PRSnarn64FqMNRlkwc2K0P30L2iySXPeJEqAUf8TUekHwtVLTyDz_a9Obmz9lYuwCAAAAAAAAAOlK1niDJgDT9pxIwsMeCg3yNSt7nzQ_Ja30N2HYcts0K3EQ_3v04hCcZNINbmYwTZ98XSwMgURCHZaIV-7RvQeiuAl3770_97VvG7-bLPJj35GhJmUwK8Tbw_xBFoMz9yWTIew6ivMP3F-9W2hCyzQVAAAAAAAAAGNy0ZdMnEafcDVeEYYXTavNQsN_5yO8taRWovPJyGUU0quwoJjxTyu_wstf4jKhU32wUodzmFoPOL_qMVLX-hXbLtdBit55MNFE2mgjaOWUWAbk0RVpQrdGXSAzxXnvJ8t3NM6QHw22JEN1L_fCE1C369SkBPsAlRffB8eW8IJrw05KiuEou1_vvDGtEJnbLwX1Orps8mkJQVQ-ZM6BVw7RSvcFFAs3syJC3iO8smoCzr3qK9ACRjA7azFlBNONcbKyqbOczr0k86QWPPuYY7CjAXg73OszTc4SVhs4_oxaKnoln7pNO2VB0NjFbn2mrcrRFc_hJlLnilmo4Uf0kiZUD-bXOni6wTd1ZJKGXVsu3cDKGrwRcMLtUcLCmo-bCFQP5tc6eLrBN3VkkoZdWy7dwMoavBFwwu1RwsKaj5sICvra712P-6jgiuZixbofwrWQdF_3NrtGO6QFRbq7YB4K-trvXY_7qOCK5mLFuh_CtZB0X_c2u0Y7pAVFurtgHlQP5tc6eLrBN3VkkoZdWy7dwMoavBFwwu1RwsKaj5sICvra712P-6jgiuZixbofwrWQdF_3NrtGO6QFRbq7YB4K-trvXY_7qOCK5mLFuh_CtZB0X_c2u0Y7pAVFurtgHgr62u9dj_uo4IrmYsW6H8K1kHRf9za7RjukBUW6u2AeYUx4jiPSsMEUawCLAAqtsBaRY7_AujfoOeDybUPZNA5hTHiOI9KwwRRrAIsACq2wFpFjv8C6N-g54PJtQ9k0DmFMeI4j0rDBFGsAiwAKrbAWkWO_wLo36Dng8m1D2TQOYUx4jiPSsMEUawCLAAqtsBaRY7_AujfoOeDybUPZNA5hTHiOI9KwwRRrAIsACq2wFpFjv8C6N-g54PJtQ9k0DgEFAAAAAAAAAGFiY2RlAABhYoKkYWGLAAIDBAUGBwgKDQ9hYhBhY4UAAQIDBGFkBaRhYYcCAwQFBgcIYWIJYWOFAAECAwRhZAU"^^<https://w3id.org/security#multibase> _:c14n13 .
-    _:c14n12 <http://example.org/vocab/isPatientOf> _:c14n9 _:c14n5 .
-    _:c14n12 <http://schema.org/worksFor> _:c14n7 _:c14n5 .
-    _:c14n12 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n5 .
-    _:c14n14 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n5 .
-    _:c14n14 <https://w3id.org/security#proof> _:c14n10 _:c14n5 .
-    _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n12 _:c14n5 .
-    _:c14n14 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
-    _:c14n14 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
-    _:c14n14 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n5 .
-    _:c14n2 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
-    _:c14n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
-    _:c14n2 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n0 .
-    _:c14n2 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
-    _:c14n2 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n0 .
-    _:c14n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
-    _:c14n3 <https://w3id.org/security#proof> _:c14n13 .
-    _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n5 .
-    _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n6 .
-    _:c14n4 <http://schema.org/status> "active" _:c14n6 .
-    _:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n6 .
-    _:c14n7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n5 .
-    _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n6 .
-    _:c14n8 <https://w3id.org/security#proof> _:c14n0 _:c14n6 .
-    _:c14n8 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n4 _:c14n6 .
-    _:c14n8 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
-    _:c14n8 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
-    _:c14n8 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n6 .
-    _:c14n9 <http://example.org/vocab/vaccine> _:c14n4 _:c14n5 .
-    _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n5 .
-    "#;
+        _:c14n1 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n10 .
+        _:c14n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n10 .
+        _:c14n1 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n10 .
+        _:c14n1 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n10 .
+        _:c14n1 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:c14n10 .
+        _:c14n11 <http://purl.org/dc/terms/created> "2023-10-06T05:40:05.941640167Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n13 .
+        _:c14n11 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n13 .
+        _:c14n11 <https://w3id.org/security#challenge> "abcde" _:c14n13 .
+        _:c14n11 <https://w3id.org/security#cryptosuite> "bbs-termwise-proof-2023" _:c14n13 .
+        _:c14n11 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#authenticationMethod> _:c14n13 .
+        _:c14n11 <https://w3id.org/security#proofValue> "uomFhWQnaAgAAAAAAAAAAlWj7ySOnU5mw_rG271EltSGHfh0Sabj6_FBXzZ7GBT7TTXM-OJk2y-UjU8hAYyS9p5SkDSPYysuFjUy9RUNu4ypsNdZrRJX2E3TmTg-186q3jvPKExzchRPg7LrE6pWeqzMXck8jrsaUR1_zIsH6KKuTO5gnDEOV4Ufg8zCm7nDLetSoflGoX0d-AUrr9-C_j1WOnJ0-lOnlLr3Mg5hOjxDktjaDvUdwDJ36rFx7agxBvtUKa7deW1Ta-Vq1vFiiAgAAAAAAAACTBwTiEdk00-BvIIfqz8oDk2xDYnTLtUDSu6P0xdL0RjQuKBHV6xaVhb5qoBYP-IdGKx2-2Sk21iHIjrVlQFBup830cauPb0nhTDonFpZRwL7ncq9hXu62basWvqFM3ThJWXiTXss4OpuJW5D0E5h6JQAAAAAAAAB-w7b_iVOFQAQGHgFpp06QV6gwCTxWfLJyxKxKSK-kHpm0wTrncrlMfDmqvHqaHWlcXvv6p7dTHnX0tJLWYC9XUt2I6oyQBKKHQlBI7ZDXkk0Xq9P7QGXrH48bcAW7dTbHdgGgIIBxJ3n8mg1zvsidRWNMNUJx7nHIWxKWIRe5BGqk0y5xBZvij7h_8R64Vw4RfbjtajslQPUN0fiu3s0qP0Iq0VyjWycJ6uAn8i4kZWNWbafJLH8ki8rz_H_o3zC0n0S_-meUXC7Ok2cVmKmcZrZuC-sjgMLdJbVjhqWUD1LdiOqMkASih0JQSO2Q15JNF6vT-0Bl6x-PG3AFu3U2R3eQBscDGEj2SejHCKIW5AQ3vI2u81WOkaojzcsfMR5S3YjqjJAEoodCUEjtkNeSTRer0_tAZesfjxtwBbt1NlltLFFHMcT568va2232ixBc7DF1IviaZJdNvtrU1nxqWW0sUUcxxPnry9rbbfaLEFzsMXUi-Jpkl02-2tTWfGpS3YjqjJAEoodCUEjtkNeSTRer0_tAZesfjxtwBbt1NlltLFFHMcT568va2232ixBc7DF1IviaZJdNvtrU1nxqWW0sUUcxxPnry9rbbfaLEFzsMXUi-Jpkl02-2tTWfGpZbSxRRzHE-evL2ttt9osQXOwxdSL4mmSXTb7a1NZ8anaD_nngpqe5xaQdji-u3evtHCq1bi56QEEZ6eyhzJhQhV79oieifauuxhKLxl3re4PJGFwyCXpXH6Bgi7eedVhKPDD2T3YTIj22AH4inhAyV368j4d3voLJAa4inSwSXUd3kAbHAxhI9knoxwiiFuQEN7yNrvNVjpGqI83LHzEe17WRQdZOAXg-5RYkYZm1ubixq0p0HoNmrqa-L4hCSjEg-SkiGOJYUfBxFAgkYTauH2E2FLz5_NHR4g0mxD2_NcVmZ1okq1eLeIdzUV9RPd4cUbr5uiGObyTu2miM3SsUboOemDnsRSTr7yilMe1x8WK00oIqAJ3tLt71sr2fjSjdAXrIJwtaz3pK0--RrrgOzC2OWjzZWOna0i5WVnhcZZ_SUYwus1fQv3H5VCsXgIA0Sztj5kM0msSkvOQ9sc4bx3YBoCCAcSd5_JoNc77InUVjTDVCce5xyFsSliEXuQRUD-bXOni6wTd1ZJKGXVsu3cDKGrwRcMLtUcLCmo-bCLW73RuCJOGzemtQ-WQtWEtPjfuwiuVWJkV5o152B1BpBgNslfYVji5qEQYcG9iz0suNjVlTC8mcKN4vDspNBW71xFFH-CBvYGoSHgKZ3l0tIJylcX5FMV_FjZO03bLqO8d2AaAggHEnefyaDXO-yJ1FY0w1QnHucchbEpYhF7kELS0TeuolCiEnceAsJagqrgL7AE3FaIpDybD_b6xVaFstLRN66iUKISdx4CwlqCquAvsATcVoikPJsP9vrFVoWy0tE3rqJQohJ3HgLCWoKq4C-wBNxWiKQ8mw_2-sVWhbLS0TeuolCiEnceAsJagqrgL7AE3FaIpDybD_b6xVaFstLRN66iUKISdx4CwlqCquAvsATcVoikPJsP9vrFVoWwCMUROvw7h9P0TgM_oleY-MmLKq9MTn6Y29NKPvmCbprfIx7f4jMu8SRN84CZ0fIv6vvzRo0BC2b_XFb218o1weMHOr8tTs_YfpnJa2qoB0WmgC5Z86ol9FQqGUYi8WVCixy-FMlRZ6nwjJm_4gCSPEKeFVbmUwkqR79KdKDvuMkmrzSX20mYUp1fD6TgghZk2PRSnarn64FqMNRlkwc2K0P30L2iySXPeJEqAUf8TUekHwtVLTyDz_a9Obmz9lYuwCAAAAAAAAAOlK1niDJgDT9pxIwsMeCg3yNSt7nzQ_Ja30N2HYcts0K3EQ_3v04hCcZNINbmYwTZ98XSwMgURCHZaIV-7RvQeiuAl3770_97VvG7-bLPJj35GhJmUwK8Tbw_xBFoMz9yWTIew6ivMP3F-9W2hCyzQVAAAAAAAAAGNy0ZdMnEafcDVeEYYXTavNQsN_5yO8taRWovPJyGUU0quwoJjxTyu_wstf4jKhU32wUodzmFoPOL_qMVLX-hXbLtdBit55MNFE2mgjaOWUWAbk0RVpQrdGXSAzxXnvJ8t3NM6QHw22JEN1L_fCE1C369SkBPsAlRffB8eW8IJrw05KiuEou1_vvDGtEJnbLwX1Orps8mkJQVQ-ZM6BVw7RSvcFFAs3syJC3iO8smoCzr3qK9ACRjA7azFlBNONcbKyqbOczr0k86QWPPuYY7CjAXg73OszTc4SVhs4_oxaKnoln7pNO2VB0NjFbn2mrcrRFc_hJlLnilmo4Uf0kiZUD-bXOni6wTd1ZJKGXVsu3cDKGrwRcMLtUcLCmo-bCFQP5tc6eLrBN3VkkoZdWy7dwMoavBFwwu1RwsKaj5sICvra712P-6jgiuZixbofwrWQdF_3NrtGO6QFRbq7YB4K-trvXY_7qOCK5mLFuh_CtZB0X_c2u0Y7pAVFurtgHlQP5tc6eLrBN3VkkoZdWy7dwMoavBFwwu1RwsKaj5sICvra712P-6jgiuZixbofwrWQdF_3NrtGO6QFRbq7YB4K-trvXY_7qOCK5mLFuh_CtZB0X_c2u0Y7pAVFurtgHgr62u9dj_uo4IrmYsW6H8K1kHRf9za7RjukBUW6u2AeYUx4jiPSsMEUawCLAAqtsBaRY7_AujfoOeDybUPZNA5hTHiOI9KwwRRrAIsACq2wFpFjv8C6N-g54PJtQ9k0DmFMeI4j0rDBFGsAiwAKrbAWkWO_wLo36Dng8m1D2TQOYUx4jiPSsMEUawCLAAqtsBaRY7_AujfoOeDybUPZNA5hTHiOI9KwwRRrAIsACq2wFpFjv8C6N-g54PJtQ9k0DgEFAAAAAAAAAGFiY2RlAABhYoKkYWGLAAIDBAUGBwgKDQ9hYhBhY4UAAQIDBGFkBaRhYYcCAwQFBgcIYWIJYWOFAAECAwRhZAU"^^<https://w3id.org/security#multibase> _:c14n13 .
+        _:c14n12 <http://example.org/vocab/isPatientOf> _:c14n9 _:c14n5 .
+        _:c14n12 <http://schema.org/worksFor> _:c14n7 _:c14n5 .
+        _:c14n12 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> _:c14n5 .
+        _:c14n14 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n5 .
+        _:c14n14 <https://w3id.org/security#proof> _:c14n10 _:c14n5 .
+        _:c14n14 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n12 _:c14n5 .
+        _:c14n14 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
+        _:c14n14 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n5 .
+        _:c14n14 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> _:c14n5 .
+        _:c14n2 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n0 .
+        _:c14n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:c14n0 .
+        _:c14n2 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:c14n0 .
+        _:c14n2 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:c14n0 .
+        _:c14n2 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> _:c14n0 .
+        _:c14n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiablePresentation> .
+        _:c14n3 <https://w3id.org/security#proof> _:c14n13 .
+        _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n5 .
+        _:c14n3 <https://www.w3.org/2018/credentials#verifiableCredential> _:c14n6 .
+        _:c14n4 <http://schema.org/status> "active" _:c14n6 .
+        _:c14n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> _:c14n6 .
+        _:c14n7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> _:c14n5 .
+        _:c14n8 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> _:c14n6 .
+        _:c14n8 <https://w3id.org/security#proof> _:c14n0 _:c14n6 .
+        _:c14n8 <https://www.w3.org/2018/credentials#credentialSubject> _:c14n4 _:c14n6 .
+        _:c14n8 <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
+        _:c14n8 <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:c14n6 .
+        _:c14n8 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> _:c14n6 .
+        _:c14n9 <http://example.org/vocab/vaccine> _:c14n4 _:c14n5 .
+        _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> _:c14n5 .
+        "#;
 
     #[test]
     fn derive_and_verify_proof_success() {
@@ -1622,6 +1697,7 @@ mod tests {
             None,
             vec![],
             HashMap::new(),
+            None,
         )
         .unwrap();
         println!("derived_proof.vp: {}", rdf_canon::serialize(&derived_proof));
@@ -1633,6 +1709,7 @@ mod tests {
             Some(challenge),
             None,
             HashMap::new(),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -1662,6 +1739,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof);
@@ -1671,6 +1749,7 @@ mod tests {
             &derived_proof,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
         );
@@ -1690,6 +1769,7 @@ mod tests {
             Some(challenge),
             None,
             HashMap::new(),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -1698,7 +1778,8 @@ mod tests {
     fn verify_proof_string_success() {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
         let challenge = "abcde";
-        let verified = verify_proof_string(&mut rng, VP, KEY_GRAPH, Some(challenge), None, None);
+        let verified =
+            verify_proof_string(&mut rng, VP, KEY_GRAPH, Some(challenge), None, None, None);
         assert!(verified.is_ok(), "{:?}", verified)
     }
 
@@ -1744,6 +1825,7 @@ mod tests {
             None,
             vec![],
             HashMap::new(),
+            None,
         )
         .unwrap();
         assert!(verify_proof(
@@ -1752,7 +1834,8 @@ mod tests {
             &key_graph,
             challenge,
             domain,
-            HashMap::new()
+            HashMap::new(),
+            None
         )
         .is_ok());
         assert!(matches!(
@@ -1762,7 +1845,8 @@ mod tests {
                 &key_graph,
                 None,
                 domain,
-                HashMap::new()
+                HashMap::new(),
+                None,
             ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
@@ -1773,7 +1857,8 @@ mod tests {
                 &key_graph,
                 challenge,
                 None,
-                HashMap::new()
+                HashMap::new(),
+                None,
             ),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
@@ -1784,7 +1869,8 @@ mod tests {
                 &key_graph,
                 None,
                 None,
-                HashMap::new()
+                HashMap::new(),
+                None
             ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
@@ -1801,63 +1887,7 @@ mod tests {
             None,
             vec![],
             HashMap::new(),
-        )
-        .unwrap();
-        assert!(matches!(
-            verify_proof(
-                &mut rng,
-                &derived_proof,
-                &key_graph,
-                challenge,
-                domain,
-                HashMap::new()
-            ),
-            Err(RDFProofsError::MissingChallengeInVP)
-        ));
-        assert!(verify_proof(
-            &mut rng,
-            &derived_proof,
-            &key_graph,
             None,
-            domain,
-            HashMap::new()
-        )
-        .is_ok());
-        assert!(matches!(
-            verify_proof(
-                &mut rng,
-                &derived_proof,
-                &key_graph,
-                challenge,
-                None,
-                HashMap::new()
-            ),
-            Err(RDFProofsError::MissingChallengeInVP)
-        ));
-        assert!(matches!(
-            verify_proof(
-                &mut rng,
-                &derived_proof,
-                &key_graph,
-                None,
-                None,
-                HashMap::new()
-            ),
-            Err(RDFProofsError::MissingDomainInRequest)
-        ));
-
-        let derived_proof = derive_proof(
-            &mut rng,
-            &vcs,
-            &deanon_map,
-            &key_graph,
-            challenge,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            HashMap::new(),
         )
         .unwrap();
         assert!(matches!(
@@ -1868,6 +1898,69 @@ mod tests {
                 challenge,
                 domain,
                 HashMap::new(),
+                None,
+            ),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(verify_proof(
+            &mut rng,
+            &derived_proof,
+            &key_graph,
+            None,
+            domain,
+            HashMap::new(),
+            None,
+        )
+        .is_ok());
+        assert!(matches!(
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                None,
+                HashMap::new(),
+                None,
+            ),
+            Err(RDFProofsError::MissingChallengeInVP)
+        ));
+        assert!(matches!(
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                None,
+                None,
+                HashMap::new(),
+                None,
+            ),
+            Err(RDFProofsError::MissingDomainInRequest)
+        ));
+
+        let derived_proof = derive_proof(
+            &mut rng,
+            &vcs,
+            &deanon_map,
+            &key_graph,
+            challenge,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            HashMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_proof(
+                &mut rng,
+                &derived_proof,
+                &key_graph,
+                challenge,
+                domain,
+                HashMap::new(),
+                None,
             ),
             Err(RDFProofsError::MissingDomainInVP)
         ));
@@ -1878,7 +1971,8 @@ mod tests {
                 &key_graph,
                 None,
                 domain,
-                HashMap::new()
+                HashMap::new(),
+                None,
             ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
@@ -1888,7 +1982,8 @@ mod tests {
             &key_graph,
             challenge,
             None,
-            HashMap::new()
+            HashMap::new(),
+            None,
         )
         .is_ok());
         assert!(matches!(
@@ -1898,7 +1993,8 @@ mod tests {
                 &key_graph,
                 None,
                 None,
-                HashMap::new()
+                HashMap::new(),
+                None,
             ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
@@ -1915,6 +2011,7 @@ mod tests {
             None,
             vec![],
             HashMap::new(),
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1924,7 +2021,8 @@ mod tests {
                 &key_graph,
                 challenge,
                 domain,
-                HashMap::new()
+                HashMap::new(),
+                None,
             ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
@@ -1935,7 +2033,8 @@ mod tests {
                 &key_graph,
                 None,
                 domain,
-                HashMap::new()
+                HashMap::new(),
+                None,
             ),
             Err(RDFProofsError::MissingDomainInVP)
         ));
@@ -1946,7 +2045,8 @@ mod tests {
                 &key_graph,
                 challenge,
                 None,
-                HashMap::new()
+                HashMap::new(),
+                None,
             ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
@@ -1956,7 +2056,8 @@ mod tests {
             &key_graph,
             None,
             None,
-            HashMap::new()
+            HashMap::new(),
+            None,
         )
         .is_ok());
     }
@@ -1987,22 +2088,45 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
-        assert!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None)
-                .is_ok()
-        );
+        assert!(verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            challenge,
+            domain,
+            None,
+            None,
+        )
+        .is_ok());
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None),
+            verify_proof_string(
+                &mut rng,
+                &derived_proof,
+                KEY_GRAPH,
+                None,
+                domain,
+                None,
+                None,
+            ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None),
+            verify_proof_string(
+                &mut rng,
+                &derived_proof,
+                KEY_GRAPH,
+                challenge,
+                None,
+                None,
+                None,
+            ),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None, None,),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -2018,21 +2142,45 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None),
+            verify_proof_string(
+                &mut rng,
+                &derived_proof,
+                KEY_GRAPH,
+                challenge,
+                domain,
+                None,
+                None,
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None).is_ok()
-        );
+        assert!(verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            None,
+            domain,
+            None,
+            None,
+        )
+        .is_ok());
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None),
+            verify_proof_string(
+                &mut rng,
+                &derived_proof,
+                KEY_GRAPH,
+                challenge,
+                None,
+                None,
+                None,
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None, None,),
             Err(RDFProofsError::MissingDomainInRequest)
         ));
 
@@ -2048,21 +2196,45 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None),
+            verify_proof_string(
+                &mut rng,
+                &derived_proof,
+                KEY_GRAPH,
+                challenge,
+                domain,
+                None,
+                None
+            ),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None),
+            verify_proof_string(
+                &mut rng,
+                &derived_proof,
+                KEY_GRAPH,
+                None,
+                domain,
+                None,
+                None,
+            ),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
-        assert!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None).is_ok()
-        );
+        assert!(verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            challenge,
+            None,
+            None,
+            None,
+        )
+        .is_ok());
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None),
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None, None,),
             Err(RDFProofsError::MissingChallengeInRequest)
         ));
 
@@ -2078,38 +2250,66 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, domain, None),
+            verify_proof_string(
+                &mut rng,
+                &derived_proof,
+                KEY_GRAPH,
+                challenge,
+                domain,
+                None,
+                None,
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, domain, None),
+            verify_proof_string(
+                &mut rng,
+                &derived_proof,
+                KEY_GRAPH,
+                None,
+                domain,
+                None,
+                None,
+            ),
             Err(RDFProofsError::MissingDomainInVP)
         ));
         assert!(matches!(
-            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, challenge, None, None),
+            verify_proof_string(
+                &mut rng,
+                &derived_proof,
+                KEY_GRAPH,
+                challenge,
+                None,
+                None,
+                None,
+            ),
             Err(RDFProofsError::MissingChallengeInVP)
         ));
-        assert!(verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None).is_ok());
+        assert!(
+            verify_proof_string(&mut rng, &derived_proof, KEY_GRAPH, None, None, None, None,)
+                .is_ok()
+        );
     }
 
     const DISCLOSED_VC_1_WITH_HIDDEN_LITERALS: &str = r#"
-    _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-    _:e0 <http://schema.org/name> _:e4 .
-    _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
-    _:e0 <http://schema.org/worksFor> _:b1 .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-    _:b0 <http://example.org/vocab/vaccine> _:e1 .
-    _:b0 <http://example.org/vocab/vaccinationDate> _:e5 .
-    _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
-    _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    _:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
-    _:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-    _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        _:e0 <http://schema.org/name> _:e4 .
+        _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
+        _:e0 <http://schema.org/worksFor> _:b1 .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+        _:b0 <http://example.org/vocab/vaccine> _:e1 .
+        _:b0 <http://example.org/vocab/vaccinationDate> _:e5 .
+        _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
+        _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        _:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
+        _:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+        _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const DEANON_MAP_WITH_HIDDEN_LITERAL: [(&str, &str); 2] = [
         ("_:e4", "\"John Smith\""),
         (
@@ -2161,6 +2361,7 @@ mod tests {
             None,
             vec![],
             HashMap::new(),
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", rdf_canon::serialize(&derived_proof));
@@ -2172,6 +2373,7 @@ mod tests {
             Some(challenge),
             None,
             HashMap::new(),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -2204,6 +2406,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -2212,6 +2415,7 @@ mod tests {
             &derived_proof,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
         );
@@ -2225,23 +2429,23 @@ mod tests {
         let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
 
         let vc_ntriples = r#"
-<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-<did:example:john> <http://schema.org/name> "**********************************" .  # modified
-<did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
-<did:example:john> <http://schema.org/worksFor> _:b1 .
-_:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-_:b0 <http://example.org/vocab/lotNumber> "0000001" .
-_:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
-_:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
-_:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
-_:b1 <http://schema.org/name> "ABC inc." .
-<http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-"#;
+    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+    <did:example:john> <http://schema.org/name> "**********************************" .  # modified
+    <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
+    <did:example:john> <http://schema.org/worksFor> _:b1 .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+    _:b0 <http://example.org/vocab/lotNumber> "0000001" .
+    _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> .
+    _:b0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> .
+    _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Organization> .
+    _:b1 <http://schema.org/name> "ABC inc." .
+    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
 
         let vc_doc = get_graph_from_ntriples(vc_ntriples).unwrap();
         let vc_proof = get_graph_from_ntriples(VC_PROOF_1).unwrap();
@@ -2270,6 +2474,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             vec![],
             HashMap::new(),
+            None,
         );
         assert!(matches!(
             derived_proof,
@@ -2306,6 +2511,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         );
 
         assert!(matches!(
@@ -2317,20 +2523,20 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     const VC_PROOF_BOUND_1: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "utXwiR3cqE_vytaKRk1jO5bijPewZ8Vx67WqHBjJ1TAN8BoEnhdu7zXyZ1WTYuLHqAWQCF5cBR1F0h3FXGsm2xh7Fafg49VG-Slte0XnTgDzpRqn0nqhO4I57s-b3TPVbA_t5uyJnGllyB6QcwVtRQA"^^<https://w3id.org/security#multibase> .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <https://w3id.org/security#proofValue> "utXwiR3cqE_vytaKRk1jO5bijPewZ8Vx67WqHBjJ1TAN8BoEnhdu7zXyZ1WTYuLHqAWQCF5cBR1F0h3FXGsm2xh7Fafg49VG-Slte0XnTgDzpRqn0nqhO4I57s-b3TPVbA_t5uyJnGllyB6QcwVtRQA"^^<https://w3id.org/security#multibase> .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        "#;
     const DISCLOSED_VC_PROOF_BOUND_1: &str = r#"
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        "#;
 
     #[test]
     fn derive_and_verify_proof_string_with_secret_success() {
@@ -2364,6 +2570,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -2372,6 +2579,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &derived_proof,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
         );
@@ -2406,6 +2614,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             None,
             Some(secret),
+            None,
             None,
             None,
             None,
@@ -2449,47 +2658,48 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         );
         assert!(matches!(derived_proof, Err(RDFProofsError::MissingSecret)))
     }
 
     const VC_PROOF_WITHOUT_PROOFVALUE_1: &str = r#"
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        "#;
     const VC_3: &str = r#"
-    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-    <did:example:john> <http://schema.org/address> "Somewhere" .
-    <http://example.org/vcred/10> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-    <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> .
-    <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#issuanceDate> "2022-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#expirationDate> "2025-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        <did:example:john> <http://schema.org/address> "Somewhere" .
+        <http://example.org/vcred/10> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+        <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> .
+        <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#issuanceDate> "2022-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        <http://example.org/vcred/10> <https://www.w3.org/2018/credentials#expirationDate> "2025-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const VC_PROOF_WITHOUT_PROOFVALUE_3: &str = r#"
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <http://purl.org/dc/terms/created> "2023-07-08T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <http://purl.org/dc/terms/created> "2023-07-08T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .
+        "#;
     const DISCLOSED_VC_3: &str = r#"
-    _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-    _:e0 <http://schema.org/address> "Somewhere" .
-    _:e9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    _:e9 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
-    _:e9 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> .
-    _:e9 <https://www.w3.org/2018/credentials#issuanceDate> "2022-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:e9 <https://www.w3.org/2018/credentials#expirationDate> "2025-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        _:e0 <http://schema.org/address> "Somewhere" .
+        _:e9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        _:e9 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
+        _:e9 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> .
+        _:e9 <https://www.w3.org/2018/credentials#issuanceDate> "2022-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:e9 <https://www.w3.org/2018/credentials#expirationDate> "2025-07-08T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const DISCLOSED_VC_PROOF_BOUND_3: &str = r#"
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-07-08T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-bound-signature-2023" .
+        _:b0 <http://purl.org/dc/terms/created> "2023-07-08T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bls12_381-g2-pub001> .
+        "#;
 
     #[test]
     fn derive_and_verify_two_bound_credentials_success() {
@@ -2564,6 +2774,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof: {}", derived_proof);
@@ -2573,6 +2784,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &derived_proof,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
         );
@@ -2655,6 +2867,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         );
         assert!(derived_proof.is_err(), "{:?}", derived_proof)
     }
@@ -2713,6 +2926,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -2721,6 +2935,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &derived_proof,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
         );
@@ -2748,6 +2963,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -2756,6 +2972,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &derived_proof,
             KEY_GRAPH,
             Some(challenge),
+            None,
             None,
             None,
         );
@@ -2795,6 +3012,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(true),
             None,
             None,
+            None,
         )
         .unwrap();
         println!("derived_proof:\n{}", derived_proof);
@@ -2805,6 +3023,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             KEY_GRAPH,
             Some(challenge),
             Some(domain),
+            None,
             None,
         );
         assert!(verified.is_ok(), "{:?}", verified)
@@ -2846,6 +3065,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(true),
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -2856,6 +3076,58 @@ _:b1 <http://schema.org/name> "ABC inc." .
             Some(challenge),
             Some(domain),
             None,
+            None,
+        );
+        assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_and_verify_revocable_secret() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let secret = b"SECRET";
+
+        let vc_pairs = vec![
+            VcPairString::new(
+                VC_1,
+                VC_PROOF_BOUND_1,
+                DISCLOSED_VC_1,
+                DISCLOSED_VC_PROOF_BOUND_1,
+            ),
+            VcPairString::new(VC_2, VC_PROOF_2, DISCLOSED_VC_2, DISCLOSED_VC_PROOF_2),
+        ];
+
+        let deanon_map = get_example_deanon_map_string();
+
+        let challenge = "abcde";
+
+        let (opener_pub_key, _) = elliptic_elgamal_keygen(&mut rng).unwrap();
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vc_pairs,
+            &deanon_map,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            Some(secret),
+            None,
+            None,
+            None,
+            None,
+            Some(opener_pub_key),
+        )
+        .unwrap();
+        print!("derived_proof: {}", derived_proof);
+
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            None,
+            None,
+            Some(opener_pub_key),
         );
         assert!(verified.is_ok(), "{:?}", verified)
     }
@@ -2881,11 +3153,11 @@ _:b1 <http://schema.org/name> "ABC inc." .
         // TODO: serde_json
         let circuit_json = format!(
             r#"{{
-  "id": "{circuit_id}",
-  "r1cs": "{circuit_r1cs}",
-  "wasm": "{circuit_wasm}",
-  "provingKey": "{snark_proving_key}"
-}}"#
+      "id": "{circuit_id}",
+      "r1cs": "{circuit_r1cs}",
+      "wasm": "{circuit_wasm}",
+      "provingKey": "{snark_proving_key}"
+    }}"#
         );
         println!("{}", circuit_json);
     }
@@ -2906,23 +3178,23 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // define predicates
         let predicates = vec![
-            r#"
-            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
-            _:b0 <https://zkp-ld.org/security#private> _:b1 .
-            _:b0 <https://zkp-ld.org/security#public> _:b3 .
-            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
-            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
-            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
-            _:b2 <https://zkp-ld.org/security#var> "lesser" .
-            _:b2 <https://zkp-ld.org/security#val> _:e5 .
-            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
-            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
-            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
-            _:b4 <https://zkp-ld.org/security#var> "greater" .
-            _:b4 <https://zkp-ld.org/security#val> "2022-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#.to_string(),
-        ];
+                r#"
+                _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+                _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
+                _:b0 <https://zkp-ld.org/security#private> _:b1 .
+                _:b0 <https://zkp-ld.org/security#public> _:b3 .
+                _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+                _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+                _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+                _:b2 <https://zkp-ld.org/security#var> "lesser" .
+                _:b2 <https://zkp-ld.org/security#val> _:e5 .
+                _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+                _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+                _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+                _:b4 <https://zkp-ld.org/security#var> "greater" .
+                _:b4 <https://zkp-ld.org/security#val> "2022-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+                "#.to_string(),
+            ];
 
         // define circuit
         let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_prv_pub_64.r1cs").unwrap();
@@ -2959,6 +3231,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(&predicates),
             Some(&circuit),
+            None,
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -2975,28 +3248,29 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(snark_verifying_keys.clone()),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified);
 
         // negative test: equality must be rejected
         let predicates_same_datetime = vec![
-            r#"
-            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
-            _:b0 <https://zkp-ld.org/security#private> _:b1 .
-            _:b0 <https://zkp-ld.org/security#public> _:b3 .
-            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
-            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
-            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
-            _:b2 <https://zkp-ld.org/security#var> "lesser" .
-            _:b2 <https://zkp-ld.org/security#val> _:e5 .
-            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
-            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
-            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
-            _:b4 <https://zkp-ld.org/security#var> "greater" .
-            _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#.to_string(),
-        ];
+                r#"
+                _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+                _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanPrvPub> .
+                _:b0 <https://zkp-ld.org/security#private> _:b1 .
+                _:b0 <https://zkp-ld.org/security#public> _:b3 .
+                _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+                _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+                _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+                _:b2 <https://zkp-ld.org/security#var> "lesser" .
+                _:b2 <https://zkp-ld.org/security#val> _:e5 .
+                _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+                _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+                _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+                _:b4 <https://zkp-ld.org/security#var> "greater" .
+                _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+                "#.to_string(),
+            ];
         let derived_proof = derive_proof_string(
             &mut rng,
             &vc_pairs,
@@ -3009,6 +3283,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(&predicates_same_datetime),
             Some(&circuit),
+            None,
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3019,6 +3294,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(snark_verifying_keys),
+            None,
         );
         assert!(matches!(
             verified,
@@ -3044,23 +3320,23 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // define predicates: even the same value is accepted in less-than-eq relationship
         let predicates = vec![
-            r#"
-            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEqPrvPub> .
-            _:b0 <https://zkp-ld.org/security#private> _:b1 .
-            _:b0 <https://zkp-ld.org/security#public> _:b3 .
-            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
-            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
-            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
-            _:b2 <https://zkp-ld.org/security#var> "lesser" .
-            _:b2 <https://zkp-ld.org/security#val> _:e5 .
-            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
-            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
-            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
-            _:b4 <https://zkp-ld.org/security#var> "greater" .
-            _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#.to_string(),
-        ];
+                r#"
+                _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+                _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEqPrvPub> .
+                _:b0 <https://zkp-ld.org/security#private> _:b1 .
+                _:b0 <https://zkp-ld.org/security#public> _:b3 .
+                _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+                _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+                _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+                _:b2 <https://zkp-ld.org/security#var> "lesser" .
+                _:b2 <https://zkp-ld.org/security#val> _:e5 .
+                _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+                _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+                _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+                _:b4 <https://zkp-ld.org/security#var> "greater" .
+                _:b4 <https://zkp-ld.org/security#val> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+                "#.to_string(),
+            ];
 
         // define circuit
         let circuit_r1cs = R1CS::from_file("circom/bls12381/less_than_eq_prv_pub_64.r1cs").unwrap();
@@ -3100,6 +3376,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(&predicates),
             Some(&circuit),
+            None,
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3116,28 +3393,29 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(snark_verifying_keys.clone()),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified);
 
         // negative test
         let predicates_lesser_datetime = vec![
-            r#"
-            _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
-            _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEqPrvPub> .
-            _:b0 <https://zkp-ld.org/security#private> _:b1 .
-            _:b0 <https://zkp-ld.org/security#public> _:b3 .
-            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
-            _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
-            _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
-            _:b2 <https://zkp-ld.org/security#var> "lesser" .
-            _:b2 <https://zkp-ld.org/security#val> _:e5 .
-            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
-            _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
-            _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
-            _:b4 <https://zkp-ld.org/security#var> "greater" .
-            _:b4 <https://zkp-ld.org/security#val> "1800-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-            "#.to_string(),
-        ];
+                r#"
+                _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#Predicate> .
+                _:b0 <https://zkp-ld.org/security#circuit> <https://zkp-ld.org/circuit/lessThanEqPrvPub> .
+                _:b0 <https://zkp-ld.org/security#private> _:b1 .
+                _:b0 <https://zkp-ld.org/security#public> _:b3 .
+                _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b2 .
+                _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+                _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PrivateVariable> .
+                _:b2 <https://zkp-ld.org/security#var> "lesser" .
+                _:b2 <https://zkp-ld.org/security#val> _:e5 .
+                _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:b4 .
+                _:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+                _:b4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#PublicVariable> .
+                _:b4 <https://zkp-ld.org/security#var> "greater" .
+                _:b4 <https://zkp-ld.org/security#val> "1800-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+                "#.to_string(),
+            ];
         let derived_proof = derive_proof_string(
             &mut rng,
             &vc_pairs,
@@ -3150,6 +3428,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(&predicates_lesser_datetime),
             Some(&circuit),
+            None,
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3160,6 +3439,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(snark_verifying_keys),
+            None,
         );
         assert!(matches!(
             verified,
@@ -3170,43 +3450,43 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     const VC_4: &str = r#"
-    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-    <did:example:john> <http://schema.org/name> "John Smith" .
-    <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-    _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://schema.org/DateTime> . # use schema.org instead of xsd
-    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        <did:example:john> <http://schema.org/name> "John Smith" .
+        <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+        _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://schema.org/DateTime> . # use schema.org instead of xsd
+        <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const VC_PROOF_4: &str = r#"
-    _:b0 <https://w3id.org/security#proofValue> "ugsvHVX5633ZzPuy5fKYFyth5Ws6M2mZ8FECcQuDViq_uMM9--yYBtnPdLase-jb_nHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <https://w3id.org/security#proofValue> "ugsvHVX5633ZzPuy5fKYFyth5Ws6M2mZ8FECcQuDViq_uMM9--yYBtnPdLase-jb_nHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ"^^<https://w3id.org/security#multibase> .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        "#;
     const DISCLOSED_VC_4: &str = r#"
-    _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
-    _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
-    _:b0 <http://example.org/vocab/vaccinationDate> _:e1 .
-    _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
-    _:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
-    _:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
-    _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    "#;
+        _:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        _:e0 <http://example.org/vocab/isPatientOf> _:b0 .
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+        _:b0 <http://example.org/vocab/vaccinationDate> _:e1 .
+        _:e2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        _:e2 <https://www.w3.org/2018/credentials#credentialSubject> _:e0 .
+        _:e2 <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+        _:e2 <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:e2 <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        "#;
     const DISCLOSED_VC_PROOF_4: &str = r#"
-    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
-    _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
-    _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
-    _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
-    _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
-    "#;
+        _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b0 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+        _:b0 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        "#;
     const DEANON_MAP_4: [(&str, &str); 3] = [
         ("_:e0", "<did:example:john>"),
         (
@@ -3293,6 +3573,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(&predicates),
             Some(&circuit),
+            None,
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3309,6 +3590,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(snark_verifying_keys.clone()),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified);
 
@@ -3343,6 +3625,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(&predicates_lesser_datetime),
             Some(&circuit),
+            None,
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3353,6 +3636,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(snark_verifying_keys),
+            None,
         );
         assert!(matches!(
             verified,
@@ -3482,6 +3766,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(&predicates),
             Some(&circuit),
+            None,
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3498,6 +3783,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(snark_verifying_keys.clone()),
+            None,
         );
         assert!(verified.is_ok(), "{:?}", verified);
 
@@ -3533,6 +3819,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             Some(&predicates_same_integer),
             Some(&circuit),
+            None,
         )
         .unwrap();
         println!("derive_proof: {}", derived_proof);
@@ -3543,6 +3830,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
             None,
             Some(snark_verifying_keys),
+            None,
         );
         assert!(matches!(
             verified,

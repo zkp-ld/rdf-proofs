@@ -7,15 +7,17 @@ use crate::{
     },
     constants::PPID_PREFIX,
     context::{
-        CHALLENGE, CIRCUIT, DOMAIN, HOLDER, PREDICATE_TYPE, PRIVATE, PROOF_VALUE, PUBLIC,
-        SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
+        CHALLENGE, CIRCUIT, DOMAIN, ENCRYPTED_UID, HOLDER, PREDICATE_TYPE, PRIVATE, PROOF_VALUE,
+        PUBLIC, SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
     key_gen::{generate_params, generate_ppid_base},
     key_graph::KeyGraph,
     multibase_to_ark,
     ordered_triple::OrderedNamedOrBlankNode,
+    str_to_cipher_text,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples, VerifiablePresentation},
+    verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus, ElGamalPublicKey,
 };
 use ark_bls12_381::G1Affine;
 use ark_std::{rand::RngCore, One};
@@ -38,6 +40,7 @@ pub fn verify_proof<R: RngCore>(
     challenge: Option<&str>,
     domain: Option<&str>,
     snark_verifying_keys: HashMap<NamedNode, VerifyingKey>,
+    opener_pub_key: Option<ElGamalPublicKey>,
 ) -> Result<(), RDFProofsError> {
     let hasher = get_hasher();
 
@@ -206,6 +209,26 @@ pub fn verify_proof<R: RngCore>(
             ppid_index = Some(statements.len() - 1);
         }
     }
+    // statement for verifiable encryption of uid
+    if let Some(opener_pub_key) = opener_pub_key {
+        let params = generate_params(1);
+        let cipher_text = vp.get_proof_config_literal(ENCRYPTED_UID).unwrap();
+        let cipher_text = match (&cipher_text).as_ref() {
+            Some(cipher_text) => str_to_cipher_text(cipher_text),
+            _ => return Err(RDFProofsError::MissingEncryptedSecret),
+        }
+        .unwrap();
+        let verifiable_encryption_statements =
+            verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus(
+                &opener_pub_key,
+                &params.h[0],
+                &cipher_text,
+            )
+            .unwrap();
+        for statement in verifiable_encryption_statements.0.iter() {
+            statements.add(statement.clone());
+        }
+    }
     // statement for secret commitment
     let mut secret_commitment_index = None;
     if let Some(s) = secret_commitment {
@@ -225,15 +248,28 @@ pub fn verify_proof<R: RngCore>(
             .ok_or(RDFProofsError::InvalidPredicate)?;
         let TermRef::NamedNode(predicate_circuit) = predicate_graph
             .object_for_subject_predicate(predicate_subject, CIRCUIT)
-            .ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+            .ok_or(RDFProofsError::InvalidPredicate)?
+        else {
+            return Err(RDFProofsError::InvalidPredicate);
+        };
 
         let mut privates = vec![];
-        let TermRef::BlankNode(predicate_private) = predicate_graph.object_for_subject_predicate(predicate_subject, PRIVATE).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        let TermRef::BlankNode(predicate_private) = predicate_graph
+            .object_for_subject_predicate(predicate_subject, PRIVATE)
+            .ok_or(RDFProofsError::InvalidPredicate)?
+        else {
+            return Err(RDFProofsError::InvalidPredicate);
+        };
         read_private_var_list(predicate_private, &mut privates, &predicate_graph)?;
         predicate_privates.push(privates);
 
         let mut publics = vec![];
-        let TermRef::BlankNode(predicate_public) = predicate_graph.object_for_subject_predicate(predicate_subject, PUBLIC).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        let TermRef::BlankNode(predicate_public) = predicate_graph
+            .object_for_subject_predicate(predicate_subject, PUBLIC)
+            .ok_or(RDFProofsError::InvalidPredicate)?
+        else {
+            return Err(RDFProofsError::InvalidPredicate);
+        };
         read_public_var_list(predicate_public, &mut publics, &predicate_graph)?;
         predicate_publics.push(publics.clone());
 
@@ -322,6 +358,7 @@ pub fn verify_proof_string<R: RngCore>(
     challenge: Option<&str>,
     domain: Option<&str>,
     snark_verifying_keys: Option<HashMap<String, String>>,
+    opener_pub_key: Option<ElGamalPublicKey>,
 ) -> Result<(), RDFProofsError> {
     // construct input for `verify_proof` from string-based input
     let vp = get_dataset_from_nquads(vp)?;
@@ -334,7 +371,15 @@ pub fn verify_proof_string<R: RngCore>(
             .collect::<Result<HashMap<_, VerifyingKey>, RDFProofsError>>()?,
     };
 
-    verify_proof(rng, &vp, &key_graph, challenge, domain, snark_verifying_key)
+    verify_proof(
+        rng,
+        &vp,
+        &key_graph,
+        challenge,
+        domain,
+        snark_verifying_key,
+        opener_pub_key,
+    )
 }
 
 fn get_ppid(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {
