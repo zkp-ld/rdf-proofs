@@ -1,13 +1,11 @@
-use std::io::Cursor;
-
 use crate::common::{Fr, PedersenCommitmentStmt, Statements};
 use crate::error::RDFProofsError;
+use crate::multibase_to_ark;
 use ark_bls12_381::{Bls12_381, G1Affine, G1Projective};
 use ark_crypto_primitives::encryption::elgamal::{
     Ciphertext, ElGamal, Parameters, PublicKey, Randomness, SecretKey,
 };
 use ark_crypto_primitives::encryption::AsymmetricEncryptionScheme;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use ark_std::rand::RngCore;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 use ark_std::UniformRand;
@@ -26,34 +24,10 @@ pub struct ElGamalVerifiableEncryption {
     pub statements: Statements,
     pub witnesses: Witnesses<Bls12_381>,
 }
-pub trait ElGamalCiphertextExt {
-    fn to_string_ext(&self) -> String;
-}
-impl ElGamalCiphertextExt for ElGamalCiphertext {
-    fn to_string_ext(&self) -> String {
-        format!("{}", cipher_text_to_str(self).unwrap())
-    }
-}
 
-pub fn cipher_text_to_str(c: &ElGamalCiphertext) -> Result<String, RDFProofsError> {
-    let (c1, c2) = c;
-
-    let mut buffer = Vec::new();
-
-    c1.serialize_with_mode(&mut buffer, Compress::Yes).unwrap();
-    c2.serialize_with_mode(&mut buffer, Compress::Yes).unwrap();
-
-    Ok(hex::encode(buffer))
-}
-
-pub fn str_to_cipher_text(s: &str) -> Result<ElGamalCiphertext, RDFProofsError> {
-    let buffer = hex::decode(s).unwrap();
-    let mut cursor = Cursor::new(&buffer);
-
-    let c1 = G1Affine::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::Yes).unwrap();
-    let c2 = G1Affine::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::Yes).unwrap();
-
-    Ok((c1, c2))
+pub fn str_to_secret_key(s: &str) -> Result<ElGamalSecretKey, RDFProofsError> {
+    let secret = multibase_to_ark(s).unwrap();
+    Ok(SecretKey::<G1Projective>(secret))
 }
 
 pub fn elliptic_elgamal_keygen<R: RngCore>(
@@ -157,8 +131,9 @@ pub fn verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus(
 mod tests {
     use crate::common::Proof;
     use crate::constants::BLIND_SIG_REQUEST_CONTEXT;
-    use crate::elliptic_elgamal::{cipher_text_to_str, str_to_cipher_text};
+
     use crate::error::RDFProofsError;
+    use crate::{ark_to_base64url, multibase_to_ark, str_to_secret_key, ElGamalPublicKey};
     use crate::{
         common::{BBSPlusHash, Fr},
         elliptic_elgamal::{
@@ -181,6 +156,23 @@ mod tests {
         let message =
             projective_group_elem_from_try_and_incr::<G1Affine, BBSPlusHash>(payload.as_bytes());
         Ok(message.into())
+    }
+
+    #[test]
+    fn encoding_secret_key_and_pub_key() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let (pk, x) = elliptic_elgamal_keygen(&mut rng).unwrap();
+
+        let serialized = ark_to_base64url(&x.0).unwrap();
+        let deserialized_secret_key = str_to_secret_key(&serialized).unwrap();
+        println!("secret key: {:?}", serialized);
+        assert_eq!(x.0, deserialized_secret_key.0);
+
+        let serialized = ark_to_base64url(&pk).unwrap();
+        let deserialized_pub_key: ElGamalPublicKey = multibase_to_ark(&serialized).unwrap();
+
+        println!("serialized pub_key: {:?}", serialized);
+        assert_eq!(pk, deserialized_pub_key);
     }
 
     #[test]
@@ -214,8 +206,8 @@ mod tests {
 
         let c = elliptic_elgamal_encrypt(&pk, &m_affine, &mut rng).unwrap();
 
-        let serialized = cipher_text_to_str(&c).unwrap();
-        let deserialized_ciphertext = str_to_cipher_text(&serialized).unwrap();
+        let serialized = ark_to_base64url(&c).unwrap();
+        let deserialized_ciphertext = multibase_to_ark(&serialized).unwrap();
 
         println!("serialized: {:?}", serialized);
         assert_eq!(c, deserialized_ciphertext);

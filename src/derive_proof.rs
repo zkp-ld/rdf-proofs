@@ -31,7 +31,7 @@ use crate::{
         DisclosedVerifiableCredential, VcPair, VcPairString, VerifiableCredential,
         VerifiableCredentialTriples, VerifiablePresentation,
     },
-    ElGamalCiphertext, ElGamalCiphertextExt, ElGamalPublicKey, ElGamalVerifiableEncryption,
+    ElGamalCiphertext, ElGamalPublicKey, ElGamalVerifiableEncryption,
 };
 use ark_std::rand::RngCore;
 use chrono::offset::Utc;
@@ -664,8 +664,7 @@ fn build_vp(
         vp.insert(QuadRef::new(
             &vp_proof_id,
             ENCRYPTED_UID,
-            // LiteralRef::new_simple_literal("123123123123"),
-            LiteralRef::new_simple_literal(&encrypted_uid.to_string_ext()),
+            LiteralRef::new_simple_literal(&ark_to_base64url(encrypted_uid).unwrap()),
             &vp_proof_graph_id,
         ));
     }

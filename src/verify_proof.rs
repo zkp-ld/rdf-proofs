@@ -15,7 +15,6 @@ use crate::{
     key_graph::KeyGraph,
     multibase_to_ark,
     ordered_triple::OrderedNamedOrBlankNode,
-    str_to_cipher_text,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples, VerifiablePresentation},
     verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus, ElGamalPublicKey,
 };
@@ -214,7 +213,7 @@ pub fn verify_proof<R: RngCore>(
         let params = generate_params(1);
         let cipher_text = vp.get_proof_config_literal(ENCRYPTED_UID).unwrap();
         let cipher_text = match (&cipher_text).as_ref() {
-            Some(cipher_text) => str_to_cipher_text(cipher_text),
+            Some(cipher_text) => multibase_to_ark(cipher_text),
             _ => return Err(RDFProofsError::MissingEncryptedSecret),
         }
         .unwrap();
