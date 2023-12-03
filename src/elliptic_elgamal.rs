@@ -1,6 +1,6 @@
-use crate::common::{Fr, PedersenCommitmentStmt, Statements};
+use crate::common::{get_hasher, hash_byte_to_field, Fr, PedersenCommitmentStmt, Statements};
 use crate::error::RDFProofsError;
-use crate::multibase_to_ark;
+use crate::{ark_to_base64url, multibase_to_ark};
 use ark_bls12_381::{Bls12_381, G1Affine, G1Projective};
 use ark_crypto_primitives::encryption::elgamal::{
     Ciphertext, ElGamal, Parameters, PublicKey, Randomness, SecretKey,
@@ -28,6 +28,14 @@ pub struct ElGamalVerifiableEncryption {
 pub fn str_to_secret_key(s: &str) -> Result<ElGamalSecretKey, RDFProofsError> {
     let secret = multibase_to_ark(s).unwrap();
     Ok(SecretKey::<G1Projective>(secret))
+}
+
+pub fn get_encrypted_uid(uid: &Vec<u8>, hd_hat: &G1Affine) -> Result<String, RDFProofsError> {
+    let hasher = get_hasher();
+    let uid = hash_byte_to_field(uid, &hasher).unwrap();
+    let encrypted = hd_hat.mul_bigint(uid.into_bigint());
+    let encrypted: G1Affine = encrypted.into();
+    Ok(ark_to_base64url(&encrypted).unwrap())
 }
 
 pub fn elliptic_elgamal_keygen<R: RngCore>(
@@ -129,11 +137,13 @@ pub fn verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus(
 
 #[cfg(test)]
 mod tests {
-    use crate::common::Proof;
+    use crate::common::{get_hasher, hash_byte_to_field, Proof};
     use crate::constants::BLIND_SIG_REQUEST_CONTEXT;
 
     use crate::error::RDFProofsError;
-    use crate::{ark_to_base64url, multibase_to_ark, str_to_secret_key, ElGamalPublicKey};
+    use crate::{
+        ark_to_base64url, get_encrypted_uid, multibase_to_ark, str_to_secret_key, ElGamalPublicKey,
+    };
     use crate::{
         common::{BBSPlusHash, Fr},
         elliptic_elgamal::{
@@ -147,8 +157,6 @@ mod tests {
     use ark_std::UniformRand;
     use dock_crypto_utils::hashing_utils::projective_group_elem_from_try_and_incr;
 
-    use ark_ec::AffineRepr;
-    use ark_ff::PrimeField;
     use proof_system::meta_statement::MetaStatements;
     use proof_system::proof_spec::ProofSpec;
 
@@ -218,7 +226,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0u64);
         let (pk, sk) = elliptic_elgamal_keygen(&mut rng).unwrap();
 
-        let uid: Fr = Fr::rand(&mut rng);
+        let raw_uid = b"USER-ID";
+        let hasher = get_hasher();
+        let uid = hash_byte_to_field(raw_uid, &hasher).unwrap();
         let hd_hat = G1Affine::rand(&mut rng);
 
         let res =
@@ -259,7 +269,10 @@ mod tests {
             .is_ok());
 
         let decrypted_value = elliptic_elgamal_decrypt(&sk, &res.cipher_text).unwrap();
-        assert_eq!(decrypted_value, hd_hat.mul_bigint(uid.into_bigint()));
+        assert_eq!(
+            ark_to_base64url(&decrypted_value).unwrap(),
+            get_encrypted_uid(&raw_uid.to_vec(), &hd_hat).unwrap()
+        );
     }
 
     #[test]

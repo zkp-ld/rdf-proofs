@@ -24,7 +24,7 @@ pub use derive_proof::{derive_proof, derive_proof_string};
 pub use elgamal::{elgamal_decrypt, elgamal_encrypt, elgamal_keygen};
 pub use elliptic_elgamal::{
     elliptic_elgamal_decrypt, elliptic_elgamal_encrypt, elliptic_elgamal_keygen,
-    elliptic_elgamal_verifiable_encryption_with_bbs_plus, str_to_secret_key,
+    elliptic_elgamal_verifiable_encryption_with_bbs_plus, get_encrypted_uid, str_to_secret_key,
     verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus, ElGamalCiphertext,
     ElGamalPublicKey, ElGamalSecretKey, ElGamalVerifiableEncryption,
 };
