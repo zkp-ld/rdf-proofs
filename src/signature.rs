@@ -102,7 +102,7 @@ pub(crate) fn hash(
     let delimiter = get_delimiter()?;
 
     let mut result =
-        Vec::with_capacity(transformed_document.len() + canonical_proof_config.len() + 1);
+        Vec::with_capacity(transformed_document.len() + canonical_proof_config.len() + 2);
 
     result.push(secret);
     result.append(&mut hashed_document);
