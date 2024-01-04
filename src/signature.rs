@@ -5,7 +5,7 @@ use crate::{
         get_verification_method_identifier, hash_byte_to_field, hash_terms_to_field,
         multibase_to_ark, BBSPlusSignature, Fr,
     },
-    constants::CRYPTOSUITE_SIGN,
+    constants::{CRYPTOSUITE_BOUND_SIGN, CRYPTOSUITE_SIGN},
     context::{DATA_INTEGRITY_PROOF, MULTIBASE, PROOF_VALUE},
     error::RDFProofsError,
     key_gen::generate_params,
@@ -19,8 +19,9 @@ pub fn sign<R: RngCore>(
     rng: &mut R,
     unsecured_credential: &mut VerifiableCredential,
     key_graph: &KeyGraph,
+    shared_secret: Option<&[u8]>,
 ) -> Result<(), RDFProofsError> {
-    let proof = sign_core(rng, unsecured_credential, key_graph)?;
+    let proof = sign_core(rng, unsecured_credential, key_graph, shared_secret)?;
     unsecured_credential.proof = proof;
     Ok(())
 }
@@ -30,10 +31,11 @@ pub fn sign_string<R: RngCore>(
     document: &str,
     proof_options: &str,
     key_graph: &str,
+    shared_secret: Option<&[u8]>,
 ) -> Result<String, RDFProofsError> {
     let unsecured_credential = get_vc_from_ntriples(document, proof_options)?;
     let key_graph = get_graph_from_ntriples(key_graph)?.into();
-    let proof = sign_core(rng, &unsecured_credential, &key_graph)?;
+    let proof = sign_core(rng, &unsecured_credential, &key_graph, shared_secret)?;
     let result: String = proof
         .iter()
         .map(|t| format!("{} .\n", t.to_string()))
@@ -45,15 +47,19 @@ fn sign_core<R: RngCore>(
     rng: &mut R,
     unsecured_credential: &VerifiableCredential,
     key_graph: &KeyGraph,
+    shared_secret: Option<&[u8]>,
 ) -> Result<Graph, RDFProofsError> {
     let VerifiableCredential {
         document,
         proof: proof_option,
     } = unsecured_credential;
     let transformed_data = transform(document)?;
-    let proof_config = configure_proof(&proof_option)?;
+    let proof_config = match shared_secret {
+        Some(_secret) => configure_proof_for_bound(&proof_option)?,
+        None => configure_proof(&proof_option)?,
+    };
     let canonical_proof_config = transform(&proof_config)?;
-    let hash_data = hash(None, &transformed_data, &canonical_proof_config)?;
+    let hash_data = hash(shared_secret, &transformed_data, &canonical_proof_config)?;
     let proof = serialize_proof(rng, &hash_data, &proof_config, key_graph)?;
     Ok(proof)
 }
@@ -84,6 +90,10 @@ pub(crate) fn transform(graph: &Graph) -> Result<Vec<Term>, RDFProofsError> {
 
 fn configure_proof(proof_options: &Graph) -> Result<Graph, RDFProofsError> {
     configure_proof_core(proof_options, CRYPTOSUITE_SIGN)
+}
+
+fn configure_proof_for_bound(proof_options: &Graph) -> Result<Graph, RDFProofsError> {
+    configure_proof_core(proof_options, CRYPTOSUITE_BOUND_SIGN)
 }
 
 pub(crate) fn hash(
@@ -163,6 +173,7 @@ pub(crate) fn verify_base_proof(
 #[cfg(test)]
 mod tests {
     use crate::{
+        blind_verify,
         common::{get_graph_from_ntriples, multibase_to_ark, BBSPlusSignature},
         context::PROOF_VALUE,
         error::RDFProofsError,
@@ -310,10 +321,25 @@ mod tests {
         let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
         let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        sign(&mut rng, &mut vc, &key_graph).unwrap();
+        sign(&mut rng, &mut vc, &key_graph, None).unwrap();
         println!("vc: {}", vc);
         print_signature(&vc);
         assert!(verify(&vc, &key_graph).is_ok())
+    }
+
+    #[test]
+    fn sign_with_shared_secret_and_blind_verify() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let key_graph: KeyGraph = get_graph_from_ntriples(KEY_GRAPH).unwrap().into();
+        let unsecured_document = get_graph_from_ntriples(VC_1).unwrap();
+        let proof_config = get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1).unwrap();
+        let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
+        let secret = b"SECRET";
+        sign(&mut rng, &mut vc, &key_graph, Some(secret)).unwrap();
+        println!("vc: {}", vc);
+        print_signature(&vc);
+        assert!(blind_verify(secret, &vc, &key_graph).is_ok())
     }
 
     #[test]
@@ -325,7 +351,7 @@ mod tests {
         let proof_config =
             get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_AND_DATETIME_1).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        sign(&mut rng, &mut vc, &key_graph).unwrap();
+        sign(&mut rng, &mut vc, &key_graph, None).unwrap();
         println!("vc: {}", vc);
         print_signature(&vc);
         assert!(verify(&vc, &key_graph).is_ok())
@@ -340,7 +366,7 @@ mod tests {
         let proof_config =
             get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_CRYPTOSUITE).unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        sign(&mut rng, &mut vc, &key_graph).unwrap();
+        sign(&mut rng, &mut vc, &key_graph, None).unwrap();
         assert!(verify(&vc, &key_graph).is_ok())
     }
 
@@ -354,7 +380,7 @@ mod tests {
             get_graph_from_ntriples(VC_PROOF_WITHOUT_PROOFVALUE_1_WITH_INVALID_CRYPTOSUITE)
                 .unwrap();
         let mut vc = VerifiableCredential::new(unsecured_document, proof_config);
-        let result = sign(&mut rng, &mut vc, &key_graph);
+        let result = sign(&mut rng, &mut vc, &key_graph, None);
         assert!(result.is_err())
     }
 
@@ -362,7 +388,14 @@ mod tests {
     fn sign_and_verify_string_success() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
-        let proof = sign_string(&mut rng, VC_1, VC_PROOF_WITHOUT_PROOFVALUE_1, KEY_GRAPH).unwrap();
+        let proof = sign_string(
+            &mut rng,
+            VC_1,
+            VC_PROOF_WITHOUT_PROOFVALUE_1,
+            KEY_GRAPH,
+            None,
+        )
+        .unwrap();
         assert!(verify_string(VC_1, &proof, KEY_GRAPH).is_ok())
     }
 
