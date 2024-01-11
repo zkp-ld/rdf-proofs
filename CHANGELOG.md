@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1-alpha.1] - 2024-01-11
+
+### Changed
+
+- Upgraded `oxrdf`, `oxttl`, `oxsdatatypes`, `oxiri`, and `rdf-canon` from GitHub sources to pre-release versions on crates.io
+- Published pre-release version on crates.io
+- Updated README
+
 ## [0.9.0] - 2023-10-18
 
 ### Added
