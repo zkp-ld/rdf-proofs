@@ -26,12 +26,12 @@ serde = "1.0"
 serde_cbor = "0.11"
 serde_with = "3.2"
 
-oxrdf = { git = "https://github.com/oxigraph/oxigraph.git", rev = "f10e5a4" }        # to be fixed once Oxigraph v0.4 is released
-oxttl = { git = "https://github.com/oxigraph/oxigraph.git", rev = "f10e5a4" }        # will be fixed once oxttl is published on crates.io
-oxsdatatypes = { git = "https://github.com/oxigraph/oxigraph.git", rev = "f10e5a4" } # to be fixed once Oxigraph v0.4 is released
-oxiri = "0.2"
+oxrdf = "0.2.0-alpha.1"
+oxttl = "0.1.0-alpha.1"
+oxsdatatypes = "0.2.0-alpha.1"
+oxiri = "0.2.3-alpha.1"
 
-rdf-canon = { git = "https://github.com/zkp-ld/rdf-canon.git", version = "0.14.0" }
+rdf-canon = "0.15.0-alpha.2"
 
 proof_system = { version = "0.24", default-features = false }
 bbs_plus = { version = "0.18", default-features = false }
