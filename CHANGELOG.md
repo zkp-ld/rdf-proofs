@@ -2,6 +2,10 @@
 
 ## [0.9.1-alpha.1] - 2024-01-11
 
+### Fixed
+
+- Increased the previously insufficient vector capacity in `signature::hash` function
+
 ### Changed
 
 - Upgraded `oxrdf`, `oxttl`, `oxsdatatypes`, `oxiri`, and `rdf-canon` from GitHub sources to pre-release versions on crates.io
