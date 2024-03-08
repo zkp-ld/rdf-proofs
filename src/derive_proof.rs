@@ -66,8 +66,11 @@ pub fn derive_proof<R: RngCore>(
     }
     println!("deanon map:\n{:#?}\n", deanon_map);
 
-    // either VCs or a blind sign request must be provided as input
-    if vc_pairs.is_empty() && blind_sign_request.is_none() {
+    // either VCs or a blind sign request or with_ppid must be provided as input
+    if vc_pairs.is_empty()
+        && blind_sign_request.is_none()
+        && (with_ppid.is_none() || secret.is_none())
+    {
         return Err(RDFProofsError::MissingInputToDeriveProof);
     }
 
@@ -2787,6 +2790,42 @@ _:b1 <http://schema.org/name> "ABC inc." .
             &mut rng,
             &vc_pairs,
             &deanon_map,
+            KEY_GRAPH,
+            Some(challenge),
+            Some(domain),
+            Some(secret),
+            None,
+            Some(true),
+            None,
+            None,
+        )
+        .unwrap();
+        println!("derived_proof:\n{}", derived_proof);
+
+        let verified = verify_proof_string(
+            &mut rng,
+            &derived_proof,
+            KEY_GRAPH,
+            Some(challenge),
+            Some(domain),
+            None,
+        );
+        assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_and_verify_proof_with_only_ppid_success() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let secret = b"SECRET";
+
+        let challenge = "abcde";
+        let domain = "example.org";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vec![],
+            &HashMap::new(),
             KEY_GRAPH,
             Some(challenge),
             Some(domain),
