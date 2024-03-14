@@ -3,6 +3,8 @@ mod common;
 mod constants;
 pub mod context;
 mod derive_proof;
+mod elgamal;
+mod elliptic_elgamal;
 pub mod error;
 pub mod key_gen;
 mod key_graph;
@@ -19,6 +21,13 @@ pub use blind_signature::{
 };
 pub use common::{ark_to_base64url, ark_to_multibase, multibase_to_ark};
 pub use derive_proof::{derive_proof, derive_proof_string};
+pub use elgamal::{elgamal_decrypt, elgamal_encrypt, elgamal_keygen};
+pub use elliptic_elgamal::{
+    elliptic_elgamal_decrypt, elliptic_elgamal_encrypt, elliptic_elgamal_keygen,
+    elliptic_elgamal_verifiable_encryption_with_bbs_plus, get_encrypted_uid, str_to_secret_key,
+    verify_elliptic_elgamal_verifiable_encryption_with_bbs_plus, ElGamalCiphertext,
+    ElGamalPublicKey, ElGamalSecretKey, ElGamalVerifiableEncryption,
+};
 pub use key_graph::KeyGraph;
 pub use predicate::CircuitString;
 pub use signature::{sign, sign_string, verify, verify_string};

@@ -63,3 +63,7 @@ pub const PREDICATE_VAL: NamedNodeRef =
 // http://schema.org/
 pub const SCO_DATE: NamedNodeRef = NamedNodeRef::new_unchecked("http://schema.org/Date");
 pub const SCO_DATETIME: NamedNodeRef = NamedNodeRef::new_unchecked("http://schema.org/DateTime");
+
+// sako-lab demo schema
+pub const ENCRYPTED_UID: NamedNodeRef =
+    NamedNodeRef::new_unchecked("https://sako-lab.jp/schemas#encrypted_uid");
