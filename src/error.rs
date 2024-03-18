@@ -17,7 +17,7 @@ pub enum RDFProofsError {
     Multibase(multibase::Error),
     MissingInputToDeriveProof,
     IriParse(oxiri::IriParseError),
-    TtlParse(oxttl::ParseError),
+    TtlParse(oxttl::TurtleParseError),
     TtlTermParse(String),
     InvalidDeanonMapFormat(String),
     VCWithoutProofValue,
@@ -247,8 +247,8 @@ impl From<proof_system::prelude::ProofSystemError> for RDFProofsError {
     }
 }
 
-impl From<oxttl::ParseError> for RDFProofsError {
-    fn from(e: oxttl::ParseError) -> Self {
+impl From<oxttl::TurtleParseError> for RDFProofsError {
+    fn from(e: oxttl::TurtleParseError) -> Self {
         Self::TtlParse(e)
     }
 }
