@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.1-alpha.3] - 2024-03-18
+
+### Changed
+
+- Upgraded `oxrdf`, `oxttl`, and `rdf-canon` dependencies
+
 ## [0.9.1-alpha.2] - 2024-03-18
 
 ### Changed
