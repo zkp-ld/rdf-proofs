@@ -225,15 +225,28 @@ pub fn verify_proof<R: RngCore>(
             .ok_or(RDFProofsError::InvalidPredicate)?;
         let TermRef::NamedNode(predicate_circuit) = predicate_graph
             .object_for_subject_predicate(predicate_subject, CIRCUIT)
-            .ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+            .ok_or(RDFProofsError::InvalidPredicate)?
+        else {
+            return Err(RDFProofsError::InvalidPredicate);
+        };
 
         let mut privates = vec![];
-        let TermRef::BlankNode(predicate_private) = predicate_graph.object_for_subject_predicate(predicate_subject, PRIVATE).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        let TermRef::BlankNode(predicate_private) = predicate_graph
+            .object_for_subject_predicate(predicate_subject, PRIVATE)
+            .ok_or(RDFProofsError::InvalidPredicate)?
+        else {
+            return Err(RDFProofsError::InvalidPredicate);
+        };
         read_private_var_list(predicate_private, &mut privates, &predicate_graph)?;
         predicate_privates.push(privates);
 
         let mut publics = vec![];
-        let TermRef::BlankNode(predicate_public) = predicate_graph.object_for_subject_predicate(predicate_subject, PUBLIC).ok_or(RDFProofsError::InvalidPredicate)? else { return Err(RDFProofsError::InvalidPredicate);};
+        let TermRef::BlankNode(predicate_public) = predicate_graph
+            .object_for_subject_predicate(predicate_subject, PUBLIC)
+            .ok_or(RDFProofsError::InvalidPredicate)?
+        else {
+            return Err(RDFProofsError::InvalidPredicate);
+        };
         read_public_var_list(predicate_public, &mut publics, &predicate_graph)?;
         predicate_publics.push(publics.clone());
 
