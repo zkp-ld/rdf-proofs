@@ -69,7 +69,11 @@ pub fn derive_proof<R: RngCore>(
     // either VCs or a blind sign request or with_ppid must be provided as input
     if vc_pairs.is_empty()
         && blind_sign_request.is_none()
-        && (with_ppid.is_none() || secret.is_none())
+        && (with_ppid.is_none()
+            || with_ppid.is_some_and(|x| x == false)
+            || secret.is_none()
+            || domain.is_none()
+            || domain.is_some_and(|x| x == ""))
     {
         return Err(RDFProofsError::MissingInputToDeriveProof);
     }
@@ -2827,7 +2831,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
     }
 
     #[test]
-    fn derive_and_verify_proof_with_only_ppid_success() {
+    fn derive_and_verify_proof_without_vcs_but_ppid_success() {
         let mut rng = StdRng::seed_from_u64(0u64);
 
         let secret = b"SECRET";
@@ -2860,6 +2864,32 @@ _:b1 <http://schema.org/name> "ABC inc." .
             None,
         );
         assert!(verified.is_ok(), "{:?}", verified)
+    }
+
+    #[test]
+    fn derive_proof_without_vcs_nor_ppid_failure() {
+        let mut rng = StdRng::seed_from_u64(0u64);
+
+        let secret = b"SECRET";
+
+        let challenge = "abcde";
+        let domain = "example.org";
+
+        let derived_proof = derive_proof_string(
+            &mut rng,
+            &vec![],
+            &HashMap::new(),
+            KEY_GRAPH,
+            Some(challenge),
+            Some(domain),
+            Some(secret),
+            None,
+            Some(false),
+            None,
+            None,
+        );
+
+        assert!(derived_proof.is_err())
     }
 
     #[test]
