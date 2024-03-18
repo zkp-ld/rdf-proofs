@@ -314,6 +314,11 @@ pub fn verify_proof<R: RngCore>(
         }
     }
 
+    // require at least one statement to be proved
+    if statements.is_empty() {
+        return Err(RDFProofsError::NoStatementsToVerify);
+    }
+
     // build proof spec
     let context = generate_proof_spec_context(&canonicalized_vp, &index_map)?;
     let proof_spec = ProofSpec::new(statements, meta_statements, vec![], Some(context));

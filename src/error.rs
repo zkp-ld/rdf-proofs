@@ -57,6 +57,7 @@ pub enum RDFProofsError {
     Circom(legogroth16::circom::CircomError),
     IO(std::io::Error),
     Legogroth16(legogroth16::error::Error),
+    NoStatementsToVerify,
     Other(String),
 }
 
@@ -186,6 +187,9 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::Circom(e) => write!(f, "circom error: {:?}", e),
             RDFProofsError::IO(e) => write!(f, "IO error: {}", e),
             RDFProofsError::Legogroth16(e) => write!(f, "legogroth16 error: {:?}", e),
+            RDFProofsError::NoStatementsToVerify => {
+                write!(f, "no statements to verify")
+            }
             RDFProofsError::Other(msg) => write!(f, "other error: {}", msg),
         }
     }
