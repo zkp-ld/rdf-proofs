@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1-alpha.4] - 2024-03-18
+
+### Changed
+
+- Adjusted the input conditions for `derive_proof` to correctly exclude invalid input patterns
+- Added verification rule for rejecting VP with empty statements
+- Improved formatting
+
 ## [0.9.1-alpha.3] - 2024-03-18
 
 ### Changed
