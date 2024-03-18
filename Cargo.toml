@@ -1,6 +1,6 @@
 [package]
 name = "rdf-proofs"
-version = "0.9.1-alpha.1"
+version = "0.9.1-alpha.2"
 edition = "2021"
 authors = ["yamdan"]
 license = "MIT"

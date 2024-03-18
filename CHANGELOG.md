@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.1-alpha.2] - 2024-03-18
+
+### Changed
+
+- Relax the input conditions for `derive_proof` to allow deriving VP without VCs but only with PPID
+
 ## [0.9.1-alpha.1] - 2024-01-11
 
 ### Fixed
