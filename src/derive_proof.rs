@@ -2958,18 +2958,27 @@ _:b1 <http://schema.org/name> "ABC inc." .
         // serialize
         let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
         let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+        let snark_proving_key_string = ark_to_base64url(&snark_proving_key).unwrap();
+        let snark_verifying_key_string = ark_to_base64url(&snark_proving_key.vk).unwrap();
 
         // TODO: serde_json
-        let circuit_json = format!(
+        let circuit_json_for_prover = format!(
             r#"{{
   "id": "{circuit_id}",
   "r1cs": "{circuit_r1cs}",
   "wasm": "{circuit_wasm}",
-  "provingKey": "{snark_proving_key}"
+  "provingKey": "{snark_proving_key_string}"
 }}"#
         );
-        println!("{}", circuit_json);
+        println!("{}", circuit_json_for_prover);
+
+        let circuit_json_for_verifier = format!(
+            r#"{{
+  "id": "{circuit_id}",
+  "verifyingKey": "{snark_verifying_key_string}"
+}}"#
+        );
+        println!("{}", circuit_json_for_verifier);
     }
 
     #[test]
@@ -3017,7 +3026,8 @@ _:b1 <http://schema.org/name> "ABC inc." .
         // serialize to multibase
         let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
         let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
+        let snark_proving_key_string = ark_to_base64url(&snark_proving_key).unwrap();
+        let snark_verifying_key_string = ark_to_base64url(&snark_proving_key.vk).unwrap();
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
@@ -3025,7 +3035,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
-                snark_proving_key: snark_proving_key.clone(),
+                snark_proving_key: snark_proving_key_string.clone(),
             },
         )]);
 
@@ -3047,7 +3057,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let snark_verifying_keys = HashMap::from([(
             "https://zkp-ld.org/circuit/lessThanPrvPub".to_string(),
-            snark_proving_key.clone(),
+            snark_verifying_key_string.clone(),
         )]);
 
         let verified = verify_proof_string(
@@ -3154,11 +3164,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // serialize to multibase
         let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
-        println!("\"r1cs\": \"{}\",", circuit_r1cs);
         let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-        println!("\"wasm\": \"{}\",", circuit_wasm);
-        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
-        println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
+        let snark_proving_key_string = ark_to_base64url(&snark_proving_key).unwrap();
+        let snark_verifying_key_string = ark_to_base64url(&snark_proving_key.vk).unwrap();
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
@@ -3166,7 +3174,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
-                snark_proving_key: snark_proving_key.clone(),
+                snark_proving_key: snark_proving_key_string.clone(),
             },
         )]);
 
@@ -3188,7 +3196,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let snark_verifying_keys = HashMap::from([(
             "https://zkp-ld.org/circuit/lessThanEqPrvPub".to_string(),
-            snark_proving_key.clone(),
+            snark_verifying_key_string.clone(),
         )]);
 
         let verified = verify_proof_string(
@@ -3347,11 +3355,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // serialize to multibase
         let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
-        println!("\"r1cs\": \"{}\",", circuit_r1cs);
         let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-        println!("\"wasm\": \"{}\",", circuit_wasm);
-        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
-        println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
+        let snark_proving_key_string = ark_to_base64url(&snark_proving_key).unwrap();
+        let snark_verifying_key_string = ark_to_base64url(&snark_proving_key.vk).unwrap();
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
@@ -3359,7 +3365,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
-                snark_proving_key: snark_proving_key.clone(),
+                snark_proving_key: snark_proving_key_string.clone(),
             },
         )]);
 
@@ -3381,7 +3387,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let snark_verifying_keys = HashMap::from([(
             "https://zkp-ld.org/circuit/lessThanPrvPub".to_string(),
-            snark_proving_key.clone(),
+            snark_verifying_key_string.clone(),
         )]);
 
         let verified = verify_proof_string(
@@ -3536,11 +3542,9 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         // serialize to multibase
         let circuit_r1cs = ark_to_base64url(&circuit_r1cs).unwrap();
-        println!("\"r1cs\": \"{}\",", circuit_r1cs);
         let circuit_wasm = multibase::encode(Base::Base64Url, circuit_wasm);
-        println!("\"wasm\": \"{}\",", circuit_wasm);
-        let snark_proving_key = ark_to_base64url(&snark_proving_key).unwrap();
-        println!("\"snarkProvingKey\": \"{}\"", snark_proving_key);
+        let snark_proving_key_string = ark_to_base64url(&snark_proving_key).unwrap();
+        let snark_verifying_key_string = ark_to_base64url(&snark_proving_key.vk).unwrap();
 
         // generate SNARK proving key (by Verifier)
         let circuit = HashMap::from([(
@@ -3548,7 +3552,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
             CircuitString {
                 circuit_r1cs: circuit_r1cs.clone(),
                 circuit_wasm: circuit_wasm.clone(),
-                snark_proving_key: snark_proving_key.clone(),
+                snark_proving_key: snark_proving_key_string.clone(),
             },
         )]);
 
@@ -3570,7 +3574,7 @@ _:b1 <http://schema.org/name> "ABC inc." .
 
         let snark_verifying_keys = HashMap::from([(
             "https://zkp-ld.org/circuit/lessThanPrvPub".to_string(),
-            snark_proving_key.clone(),
+            snark_verifying_key_string.clone(),
         )]);
 
         let verified = verify_proof_string(
