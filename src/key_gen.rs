@@ -1,10 +1,11 @@
 use crate::{
     common::{get_hasher, hash_byte_to_field, BBSPlusHash, BBSPlusKeypair, BBSPlusParams},
-    constants::{GENERATOR_SEED, PPID_SEED},
+    constants::{GENERATOR_SEED, PPID_PREFIX, PPID_SEED},
     error::RDFProofsError,
+    multibase_to_ark,
 };
 use ark_bls12_381::G1Affine;
-use ark_ec::Group;
+use ark_ec::AffineRepr;
 use ark_ff::PrimeField;
 use ark_std::rand::RngCore;
 use dock_crypto_utils::{concat_slices, hashing_utils::projective_group_elem_from_try_and_incr};
@@ -22,36 +23,52 @@ pub fn generate_keypair<R: RngCore>(rng: &mut R) -> Result<BBSPlusKeypair, RDFPr
     Ok(BBSPlusKeypair::generate_using_rng(rng, &base_params))
 }
 
+#[derive(Debug)]
 pub struct PPID {
     pub ppid: G1Affine,
+    pub domain: String,
     pub base: G1Affine,
 }
 
-pub fn generate_ppid_base(domain: &str) -> Result<G1Affine, RDFProofsError> {
-    // H(domain)
-    let base = projective_group_elem_from_try_and_incr::<G1Affine, BBSPlusHash>(&concat_slices!(
-        PPID_SEED,
-        domain.as_bytes()
-    ));
-    Ok(base.into())
-}
+impl PPID {
+    pub fn new(secret: &[u8], domain: &str) -> Result<Self, RDFProofsError> {
+        // secret
+        let hasher = get_hasher();
+        let secret_int = hash_byte_to_field(secret, &hasher)?;
 
-pub fn generate_ppid(domain: &str, secret: &[u8]) -> Result<PPID, RDFProofsError> {
-    // secret
-    let hasher = get_hasher();
-    let secret_int = hash_byte_to_field(secret, &hasher)?;
+        // base = H(domain)
+        let base = Self::generate_base(domain)?;
 
-    // H(domain)
-    let base = projective_group_elem_from_try_and_incr::<G1Affine, BBSPlusHash>(&concat_slices!(
-        PPID_SEED,
-        domain.as_bytes()
-    ));
+        // ppid = H(domain)^secret
+        let ppid = base.mul_bigint(secret_int.into_bigint());
 
-    // H(domain)^secret
-    Ok(PPID {
-        ppid: base.mul_bigint(secret_int.into_bigint()).into(),
-        base: base.into(),
-    })
+        Ok(Self {
+            ppid: ppid.into(),
+            domain: domain.to_string(),
+            base: base.into(),
+        })
+    }
+
+    pub fn try_from_multibase(multibase: &str, domain: &str) -> Result<Self, RDFProofsError> {
+        let ppid_multibase = multibase
+            .strip_prefix(PPID_PREFIX)
+            .ok_or(RDFProofsError::InvalidPPID)?;
+        let ppid = multibase_to_ark(ppid_multibase)?;
+        let base = Self::generate_base(domain)?;
+
+        Ok(Self {
+            ppid,
+            domain: domain.to_string(),
+            base: base.into(),
+        })
+    }
+
+    fn generate_base(domain: &str) -> Result<G1Affine, RDFProofsError> {
+        let base = projective_group_elem_from_try_and_incr::<G1Affine, BBSPlusHash>(
+            &concat_slices!(PPID_SEED, domain.as_bytes()),
+        );
+        Ok(base.into())
+    }
 }
 
 #[cfg(test)]

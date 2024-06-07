@@ -5,13 +5,12 @@ use crate::{
         read_public_var_list, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, Fr,
         PedersenCommitmentStmt, PoKBBSPlusStmt, ProofWithIndexMap, Statements, VerifyingKey,
     },
-    constants::PPID_PREFIX,
     context::{
         CHALLENGE, CIRCUIT, DOMAIN, HOLDER, PREDICATE_TYPE, PRIVATE, PROOF_VALUE, PUBLIC,
         SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
-    key_gen::{generate_params, generate_ppid_base},
+    key_gen::{generate_params, PPID},
     key_graph::KeyGraph,
     multibase_to_ark,
     ordered_triple::OrderedNamedOrBlankNode,
@@ -103,7 +102,11 @@ pub fn verify_proof<R: RngCore>(
     } = (&canonicalized_vp).try_into()?;
 
     // get PPID
-    let ppid = get_ppid(&vp_metadata)?;
+    let ppid = if let Some(domain) = domain {
+        get_ppid(&vp_metadata, domain)?
+    } else {
+        None
+    };
     println!("PPID: {:#?}", ppid);
 
     // get secret commitment
@@ -197,14 +200,11 @@ pub fn verify_proof<R: RngCore>(
     // statement for PPID
     let mut ppid_index = None;
     if let Some(ppid) = ppid {
-        if let Some(domain) = domain {
-            let base = generate_ppid_base(domain)?;
-            statements.add(PedersenCommitmentStmt::new_statement_from_params(
-                vec![base],
-                ppid,
-            ));
-            ppid_index = Some(statements.len() - 1);
-        }
+        statements.add(PedersenCommitmentStmt::new_statement_from_params(
+            vec![ppid.base],
+            ppid.ppid,
+        ));
+        ppid_index = Some(statements.len() - 1);
     }
     // statement for secret commitment
     let mut secret_commitment_index = None;
@@ -355,7 +355,7 @@ pub fn verify_proof_string<R: RngCore>(
     verify_proof(rng, &vp, &key_graph, challenge, domain, snark_verifying_key)
 }
 
-fn get_ppid(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {
+fn get_ppid(metadata: &GraphView, domain: &str) -> Result<Option<PPID>, RDFProofsError> {
     let vp_subject = metadata
         .subject_for_predicate_object(TYPE, VERIFIABLE_PRESENTATION_TYPE)
         .ok_or(RDFProofsError::InvalidVP)?;
@@ -363,10 +363,8 @@ fn get_ppid(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {
         Some(TermRef::NamedNode(n)) => n.as_str(),
         _ => return Ok(None),
     };
-    let ppid_multibase = holder_subject
-        .strip_prefix(PPID_PREFIX)
-        .ok_or(RDFProofsError::InvalidPPID)?;
-    Ok(Some(multibase_to_ark(ppid_multibase)?))
+    let ppid = PPID::try_from_multibase(holder_subject, domain)?;
+    Ok(Some(ppid))
 }
 
 fn get_secret_commitment(metadata: &GraphView) -> Result<Option<G1Affine>, RDFProofsError> {

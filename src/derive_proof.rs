@@ -19,7 +19,7 @@ use crate::{
         VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     error::RDFProofsError,
-    key_gen::{generate_params, generate_ppid, PPID},
+    key_gen::{generate_params, PPID},
     key_graph::KeyGraph,
     ordered_triple::{
         OrderedGraphViews, OrderedNamedOrBlankNode, OrderedVerifiableCredentialGraphViews,
@@ -380,7 +380,7 @@ fn get_ppid(
     }
 
     if let (Some(domain), Some(secret)) = (domain, secret) {
-        Ok(Some(generate_ppid(domain, secret)?))
+        Ok(Some(PPID::new(secret, domain)?))
     } else {
         Err(RDFProofsError::MissingSecretOrDomain)
     }
