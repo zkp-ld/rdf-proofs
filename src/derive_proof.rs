@@ -11,7 +11,6 @@ use crate::{
         BBSPlusSignature, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt, PoKBBSPlusWit, Proof,
         ProofWithIndexMap, R1CSCircomWitness, StatementIndexMap, Statements,
     },
-    constants::PPID_PREFIX,
     context::{
         AUTHENTICATION, CHALLENGE, CIRCUIT, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN,
         HOLDER, MULTIBASE, PREDICATE, PREDICATE_TYPE, PRIVATE, PROOF, PROOF_PURPOSE, PROOF_VALUE,
@@ -609,8 +608,7 @@ fn build_vp(
             ));
         }
         (Some(ppid), _) => {
-            let nym_multibase = ark_to_base64url(&ppid.ppid)?;
-            let vp_holder_id = NamedNode::new(format!("{}{}", PPID_PREFIX, nym_multibase))?;
+            let vp_holder_id = NamedNode::new(ppid.try_into_multibase()?)?;
             vp.insert(QuadRef::new(
                 &vp_id,
                 HOLDER,

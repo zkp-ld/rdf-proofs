@@ -1,4 +1,5 @@
 use crate::{
+    ark_to_base64url,
     common::{get_hasher, hash_byte_to_field, BBSPlusHash, BBSPlusKeypair, BBSPlusParams},
     constants::{GENERATOR_SEED, PPID_PREFIX, PPID_SEED},
     error::RDFProofsError,
@@ -61,6 +62,11 @@ impl PPID {
             domain: domain.to_string(),
             base: base.into(),
         })
+    }
+
+    pub fn try_into_multibase(&self) -> Result<String, RDFProofsError> {
+        let ppid_multibase = ark_to_base64url(&self.ppid)?;
+        Ok(format!("{}{}", PPID_PREFIX, ppid_multibase))
     }
 
     fn generate_base(domain: &str) -> Result<G1Affine, RDFProofsError> {
