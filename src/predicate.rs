@@ -13,9 +13,9 @@ pub struct Circuit {
 
 impl Circuit {
     pub fn new(r1cs: &str, wasm: &str, proving_key: &str) -> Result<Self, RDFProofsError> {
-        let r1cs: R1CS = multibase_to_ark(r1cs)?;
+        let r1cs = multibase_to_ark(r1cs)?;
         let (_, wasm) = multibase::decode(wasm)?;
-        let proving_key: ProvingKey = multibase_to_ark(proving_key)?;
+        let proving_key = multibase_to_ark(proving_key)?;
         Ok(Self {
             r1cs,
             wasm,

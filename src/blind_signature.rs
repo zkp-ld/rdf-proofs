@@ -298,7 +298,7 @@ pub fn unblind_string(
     proof: &str,
     blinding: &str,
 ) -> Result<String, RDFProofsError> {
-    let blinding: Fr = multibase_to_ark(blinding)?;
+    let blinding = multibase_to_ark(blinding)?;
     let mut blinded_credential = get_vc_from_ntriples(document, proof)?;
     let proof_value = unblind_core(&blinded_credential, &blinding)?;
     blinded_credential.replace_proof_value(proof_value)?;
