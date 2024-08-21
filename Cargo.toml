@@ -21,6 +21,7 @@ wasmer-sys = ["proof_system/wasmer-sys"]
 chrono = "0.4"
 regex = "1.9"
 multibase = "0.9"
+unsigned-varint = "0.8"
 
 serde = "1.0"
 serde_cbor = "0.11"

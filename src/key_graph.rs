@@ -1,5 +1,5 @@
 use crate::{
-    common::{multibase_to_ark, BBSPlusPublicKey, BBSPlusSecretKey},
+    common::{multibase_with_codec_to_ark, BBSPlusPublicKey, BBSPlusSecretKey},
     context::{PUBLIC_KEY_MULTIBASE, SECRET_KEY_MULTIBASE},
     error::RDFProofsError,
 };
@@ -49,7 +49,9 @@ impl KeyGraph {
             TermRef::Literal(v) => v.value(),
             _ => return Err(RDFProofsError::InvalidVerificationMethod),
         };
-        let secret_key = multibase_to_ark(secret_key_multibase)?;
+        let (_codec, secret_key) = multibase_with_codec_to_ark(secret_key_multibase)?;
+        // TODO: check codec
+
         Ok(secret_key)
     }
 
@@ -67,7 +69,9 @@ impl KeyGraph {
             TermRef::Literal(v) => v.value(),
             _ => return Err(RDFProofsError::InvalidVerificationMethod),
         };
-        let public_key = multibase_to_ark(public_key_multibase)?;
+        let (_codec, public_key) = multibase_with_codec_to_ark(public_key_multibase)?;
+        // TODO: check codec
+
         Ok(public_key)
     }
 

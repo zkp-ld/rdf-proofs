@@ -1,9 +1,10 @@
 use crate::{
-    ark_to_base64url,
-    common::{get_hasher, hash_byte_to_field, BBSPlusHash, BBSPlusKeypair, BBSPlusParams},
+    common::{
+        ark_to_base64url_with_codec, get_hasher, hash_byte_to_field, multibase_with_codec_to_ark,
+        BBSPlusHash, BBSPlusKeypair, BBSPlusParams, Multicodec,
+    },
     constants::{GENERATOR_SEED, PPID_PREFIX, PPID_SEED},
     error::RDFProofsError,
-    multibase_to_ark,
 };
 use ark_bls12_381::G1Affine;
 use ark_ec::AffineRepr;
@@ -54,7 +55,7 @@ impl PPID {
         let ppid_multibase = multibase
             .strip_prefix(PPID_PREFIX)
             .ok_or(RDFProofsError::InvalidPPID)?;
-        let ppid = multibase_to_ark(ppid_multibase)?;
+        let (_, ppid) = multibase_with_codec_to_ark(ppid_multibase)?;
         let base = Self::generate_base(domain)?;
 
         Ok(Self {
@@ -65,8 +66,8 @@ impl PPID {
     }
 
     pub fn try_into_multibase(&self) -> Result<String, RDFProofsError> {
-        let ppid_multibase = ark_to_base64url(&self.ppid)?;
-        Ok(format!("{}{}", PPID_PREFIX, ppid_multibase))
+        let ppid_base64url = ark_to_base64url_with_codec(&self.ppid, Multicodec::Bls12381G1Pub)?;
+        Ok(format!("{}{}", PPID_PREFIX, ppid_base64url))
     }
 
     fn generate_base(domain: &str) -> Result<G1Affine, RDFProofsError> {
@@ -80,7 +81,10 @@ impl PPID {
 #[cfg(test)]
 mod tests {
     use super::generate_keypair;
-    use crate::{common::ark_to_base64url, key_gen::generate_params};
+    use crate::{
+        common::{ark_to_base58btc_with_codec, ark_to_base64url, Multicodec},
+        key_gen::generate_params,
+    };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
 
     #[test]
@@ -94,14 +98,29 @@ mod tests {
     }
 
     #[test]
-    fn key_gen_simple() -> () {
+    fn key_gen_base64url() -> () {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
         let keypair = generate_keypair(&mut rng).unwrap();
-        let secret_key_multibase = ark_to_base64url(&keypair.secret_key).unwrap();
-        let public_key_multibase = ark_to_base64url(&keypair.public_key).unwrap();
-        println!("secret_key: {}", secret_key_multibase);
-        println!("public_key: {}", public_key_multibase);
+        let secret_key = ark_to_base64url(&keypair.secret_key).unwrap();
+        let public_key = ark_to_base64url(&keypair.public_key).unwrap();
+        println!("secret_key: {}", secret_key);
+        println!("public_key: {}", public_key);
+
+        assert!(true);
+    }
+
+    #[test]
+    fn key_gen_base58btc() -> () {
+        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+
+        let keypair = generate_keypair(&mut rng).unwrap();
+        let secret_key =
+            ark_to_base58btc_with_codec(&keypair.secret_key, Multicodec::Bls12381G2Priv).unwrap();
+        let public_key =
+            ark_to_base58btc_with_codec(&keypair.public_key, Multicodec::Bls12381G2Pub).unwrap();
+        println!("secret_key: {}", secret_key);
+        println!("public_key: {}", public_key);
 
         assert!(true);
     }

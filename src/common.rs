@@ -50,6 +50,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     str::FromStr,
 };
+use unsigned_varint;
 
 pub type Fr = <Bls12_381 as Pairing>::ScalarField;
 pub type Proof = ProofOrig<Bls12_381, G1Affine>;
@@ -68,6 +69,36 @@ pub type ProvingKey = ProvingKeyOrig<Bls12_381>;
 pub type VerifyingKey = VerifyingKeyOrig<Bls12_381>;
 pub type R1CS = R1CSOrig<Bls12_381>;
 pub type R1CSCircomWitness = R1CSCircomWitnessOrig<Bls12_381>;
+
+#[derive(Clone, Debug)]
+pub enum Multicodec {
+    Identity = 0x00,
+    Bls12381G1Pub = 0xea,
+    Bls12381G2Pub = 0xeb,
+    Bls12381G1Priv = 0x1309,
+    Bls12381G2Priv = 0x130a,
+}
+
+impl TryFrom<u64> for Multicodec {
+    type Error = ();
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(Multicodec::Identity),
+            0xea => Ok(Multicodec::Bls12381G1Pub),
+            0xeb => Ok(Multicodec::Bls12381G2Pub),
+            0x1309 => Ok(Multicodec::Bls12381G1Priv),
+            0x130a => Ok(Multicodec::Bls12381G2Priv),
+            _ => Err(()),
+        }
+    }
+}
+
+impl From<Multicodec> for u64 {
+    fn from(codec: Multicodec) -> Self {
+        codec as u64
+    }
+}
 
 pub fn serialize_ark<S: serde::Serializer, A: CanonicalSerialize>(
     ark: &A,
@@ -95,14 +126,77 @@ pub fn ark_to_multibase<A: CanonicalSerialize>(
     Ok(multibase::encode(base, bytes))
 }
 
+pub fn bytes_to_multibase_with_codec(
+    base: Base,
+    codec: Option<Multicodec>,
+    bytes: &[u8],
+) -> String {
+    let codec = codec.unwrap_or(Multicodec::Identity);
+    let mut codec_bytes = unsigned_varint::encode::u64_buffer();
+    let codec_len = unsigned_varint::encode::u64(codec.into(), &mut codec_bytes);
+
+    let mut buf = Vec::with_capacity(codec_len.len() + bytes.len());
+    buf.extend_from_slice(codec_len);
+    buf.extend_from_slice(bytes);
+
+    multibase::encode(base, buf)
+}
+
+pub fn ark_to_multibase_with_codec<A: CanonicalSerialize>(
+    base: Base,
+    codec: Option<Multicodec>,
+    ark: &A,
+) -> Result<String, RDFProofsError> {
+    let mut bytes = vec![];
+    ark.serialize_compressed(&mut bytes)?;
+
+    Ok(bytes_to_multibase_with_codec(base, codec, &bytes))
+}
+
 pub fn ark_to_base64url<A: CanonicalSerialize>(ark: &A) -> Result<String, RDFProofsError> {
     ark_to_multibase(Base::Base64Url, ark)
+}
+
+pub fn ark_to_base64url_with_codec<A: CanonicalSerialize>(
+    ark: &A,
+    codec: Multicodec,
+) -> Result<String, RDFProofsError> {
+    ark_to_multibase_with_codec(Base::Base64Url, Some(codec), ark)
+}
+
+pub fn ark_to_base58btc_with_codec<A: CanonicalSerialize>(
+    ark: &A,
+    codec: Multicodec,
+) -> Result<String, RDFProofsError> {
+    ark_to_multibase_with_codec(Base::Base58Btc, Some(codec), ark)
 }
 
 pub fn multibase_to_ark<A: CanonicalDeserialize>(s: &str) -> Result<A, RDFProofsError> {
     let (_, bytes) = multibase::decode(s)?;
     let ark = A::deserialize_compressed(&*bytes)?;
+
     Ok(ark)
+}
+
+pub fn multibase_with_codec_to_bytes(s: &str) -> Result<(Multicodec, Vec<u8>), RDFProofsError> {
+    let (_, bytes) = multibase::decode(s)?;
+    let (codec, bytes) =
+        unsigned_varint::decode::u64(&bytes).map_err(|_| RDFProofsError::InvalidMulticodec)?;
+    let codec = codec
+        .try_into()
+        .map_err(|_| RDFProofsError::UnsupportedMulticodec(codec))?;
+
+    Ok((codec, bytes.to_vec()))
+}
+
+pub fn multibase_with_codec_to_ark<A: CanonicalDeserialize>(
+    s: &str,
+) -> Result<(Multicodec, A), RDFProofsError> {
+    let (codec, bytes) = multibase_with_codec_to_bytes(s)?;
+
+    // TODO: use codec to determine the type of the ark deserialization
+    let ark = A::deserialize_compressed(&*bytes)?;
+    Ok((codec, ark))
 }
 
 #[derive(Serialize)]
@@ -501,11 +595,14 @@ pub(crate) fn read_private_var_list(
     result: &mut Vec<(String, NamedOrBlankNode)>,
     graph: &GraphView,
 ) -> Result<(), RDFProofsError> {
-    let Some(TermRef::BlankNode(var_and_val)) = graph.object_for_subject_predicate(node, FIRST) else {
-        return Err(RDFProofsError::InvalidPredicate)
+    let Some(TermRef::BlankNode(var_and_val)) = graph.object_for_subject_predicate(node, FIRST)
+    else {
+        return Err(RDFProofsError::InvalidPredicate);
     };
-    let Some(TermRef::Literal(var)) = graph.object_for_subject_predicate(var_and_val, PREDICATE_VAR) else {
-        return Err(RDFProofsError::InvalidPredicate)
+    let Some(TermRef::Literal(var)) =
+        graph.object_for_subject_predicate(var_and_val, PREDICATE_VAR)
+    else {
+        return Err(RDFProofsError::InvalidPredicate);
     };
     let val: NamedOrBlankNode =
         if let Some(val) = graph.object_for_subject_predicate(var_and_val, PREDICATE_VAL) {
@@ -531,14 +628,17 @@ pub(crate) fn read_public_var_list(
     result: &mut Vec<(String, Term)>,
     graph: &GraphView,
 ) -> Result<(), RDFProofsError> {
-    let Some(TermRef::BlankNode(var_and_val)) = graph.object_for_subject_predicate(node, FIRST) else {
-        return Err(RDFProofsError::InvalidPredicate)
+    let Some(TermRef::BlankNode(var_and_val)) = graph.object_for_subject_predicate(node, FIRST)
+    else {
+        return Err(RDFProofsError::InvalidPredicate);
     };
-    let Some(TermRef::Literal(var)) = graph.object_for_subject_predicate(var_and_val, PREDICATE_VAR) else {
-        return Err(RDFProofsError::InvalidPredicate)
+    let Some(TermRef::Literal(var)) =
+        graph.object_for_subject_predicate(var_and_val, PREDICATE_VAR)
+    else {
+        return Err(RDFProofsError::InvalidPredicate);
     };
     let Some(val) = graph.object_for_subject_predicate(var_and_val, PREDICATE_VAL) else {
-        return Err(RDFProofsError::InvalidPredicate)
+        return Err(RDFProofsError::InvalidPredicate);
     };
     result.push((var.value().to_string(), val.into()));
 
