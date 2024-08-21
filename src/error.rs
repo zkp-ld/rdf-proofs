@@ -15,6 +15,8 @@ pub enum RDFProofsError {
     InvalidVerificationMethod,
     MalformedProof,
     Multibase(multibase::Error),
+    InvalidMulticodec,
+    UnsupportedMulticodec(u64),
     MissingInputToDeriveProof,
     IriParse(oxiri::IriParseError),
     TtlParse(oxttl::TurtleParseError),
@@ -83,6 +85,10 @@ impl std::fmt::Display for RDFProofsError {
             }
             RDFProofsError::MalformedProof => write!(f, "malformed proof error"),
             RDFProofsError::Multibase(_) => write!(f, "multibase error"),
+            RDFProofsError::InvalidMulticodec => write!(f, "invalid multicodec error"),
+            RDFProofsError::UnsupportedMulticodec(codec) => {
+                write!(f, "unsupported multicodec error: {}", codec)
+            }
             RDFProofsError::MissingInputToDeriveProof => {
                 write!(
                     f,
