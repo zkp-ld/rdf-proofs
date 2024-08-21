@@ -1,9 +1,10 @@
 use crate::{
     common::{
         generate_proof_spec_context, get_dataset_from_nquads, get_delimiter,
-        get_graph_from_ntriples, get_hasher, hash_term_to_field, is_nym, read_private_var_list,
-        read_public_var_list, reorder_vc_triples, BBSPlusHash, BBSPlusPublicKey, Fr,
-        PedersenCommitmentStmt, PoKBBSPlusStmt, ProofWithIndexMap, Statements, VerifyingKey,
+        get_graph_from_ntriples, get_hasher, hash_term_to_field, is_nym, multibase_to_ark,
+        read_private_var_list, read_public_var_list, reorder_vc_triples, BBSPlusHash,
+        BBSPlusPublicKey, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt, ProofWithIndexMap,
+        Statements, VerifyingKey,
     },
     context::{
         CHALLENGE, CIRCUIT, DOMAIN, HOLDER, PREDICATE_TYPE, PRIVATE, PROOF_VALUE, PUBLIC,
@@ -12,7 +13,6 @@ use crate::{
     error::RDFProofsError,
     key_gen::{generate_params, PPID},
     key_graph::KeyGraph,
-    multibase_to_ark,
     ordered_triple::OrderedNamedOrBlankNode,
     vc::{DisclosedVerifiableCredential, VerifiableCredentialTriples, VerifiablePresentation},
 };
