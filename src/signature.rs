@@ -292,6 +292,28 @@ mod tests {
     _:b0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
     _:b0 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bls12_381-g2-pub001> .
     "#;
+    const _VC_4: &str = r#"
+    <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+    <did:example:john> <http://schema.org/name> "John Smith" .
+    <did:example:john> <http://example.org/vocab/isPatientOf> _:b0 .
+    _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> .
+    _:b0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://schema.org/DateTime> . # use schema.org instead of xsd
+    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
+    const _VC_5: &str = r#"
+    <urn:example:prod1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Product> .
+    <urn:example:prod1> <http://schema.org/name> "Awesome Product" .
+    <urn:example:prod1> <http://schema.org/price> "300"^^<http://www.w3.org/2001/XMLSchema#integer> .
+    <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <urn:example:prod1> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+    "#;
 
     fn print_signature(vc: &VerifiableCredential) {
         let proof_value_triple = vc.proof.triples_for_predicate(PROOF_VALUE).next().unwrap();
