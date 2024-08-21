@@ -1,11 +1,10 @@
 use super::constants::CRYPTOSUITE_PROOF;
 use crate::{
-    ark_to_base64url,
     blind_signature::{blind_verify, BlindSignRequest, BlindSignRequestString},
     common::{
-        canonicalize_graph, generate_proof_spec_context, get_delimiter, get_graph_from_ntriples,
-        get_hasher, get_term_from_string, get_vc_from_ntriples, hash_byte_to_field,
-        hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes,
+        ark_to_base64url, canonicalize_graph, generate_proof_spec_context, get_delimiter,
+        get_graph_from_ntriples, get_hasher, get_term_from_string, get_vc_from_ntriples,
+        hash_byte_to_field, hash_term_to_field, is_nym, multibase_to_ark, randomize_bnodes,
         randomize_bnodes_in_vc_pairs, read_private_var_list, read_public_var_list,
         reorder_vc_triples, BBSPlusDefaultFieldHasher, BBSPlusHash, BBSPlusPublicKey,
         BBSPlusSignature, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt, PoKBBSPlusWit, Proof,

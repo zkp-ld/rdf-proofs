@@ -1,7 +1,6 @@
 use crate::{
-    common::{ProvingKey, R1CS},
+    common::{multibase_to_ark, ProvingKey, R1CS},
     error::RDFProofsError,
-    multibase_to_ark,
 };
 use serde::{Deserialize, Serialize};
 
