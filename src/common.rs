@@ -311,7 +311,7 @@ pub fn hash_term_to_field(
             let datetime = date
                 .and_hms_opt(0, 0, 0)
                 .ok_or(RDFProofsError::InvalidDateTime(v.value().to_string()))?;
-            let timestamp = datetime.timestamp();
+            let timestamp = datetime.and_utc().timestamp();
             Fr::try_from(timestamp)
                 .map_err(|_| RDFProofsError::InvalidDateTime(v.value().to_string()))
         }
