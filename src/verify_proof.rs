@@ -3,7 +3,7 @@ use crate::{
         generate_proof_spec_context, get_dataset_from_nquads, get_delimiter,
         get_graph_from_ntriples, get_hasher, hash_term_to_field, is_nym, multibase_to_ark,
         read_private_var_list, read_public_var_list, reorder_vc_triples, BBSPlusHash,
-        BBSPlusPublicKey, Fr, PedersenCommitmentStmt, PoKBBSPlusStmt, ProofWithIndexMap,
+        BBSPlusPublicKey, Fr, PedersenCommitmentStmt, PoKBBSPlusStmtVerifier, ProofWithIndexMap,
         Statements, VerifyingKey,
     },
     context::{
@@ -191,7 +191,7 @@ pub fn verify_proof<R: RngCore>(
     for (DisclosedTerms { disclosed, .. }, (params, public_key)) in
         disclosed_terms.iter().zip(params_and_pks)
     {
-        statements.add(PoKBBSPlusStmt::new_statement_from_params(
+        statements.add(PoKBBSPlusStmtVerifier::new_statement_from_params(
             params,
             public_key,
             disclosed.clone(),
