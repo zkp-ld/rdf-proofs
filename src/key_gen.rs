@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        ark_to_base64url_with_codec, get_hasher, hash_byte_to_field, multibase_with_codec_to_ark,
-        BBSPlusHash, BBSPlusKeypair, BBSPlusParams, Multicodec,
+        ark_to_base58btc_with_codec, ark_to_base64url_with_codec, get_hasher, hash_byte_to_field,
+        multibase_with_codec_to_ark, BBSPlusHash, BBSPlusKeypair, BBSPlusParams, Multicodec,
     },
     constants::{GENERATOR_SEED, PPID_PREFIX, PPID_SEED},
     error::RDFProofsError,

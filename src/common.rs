@@ -36,7 +36,7 @@ use proof_system::{
     prelude::R1CSCircomWitness as R1CSCircomWitnessOrig,
     proof::Proof as ProofOrig,
     statement::{
-        bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
+        bbs_plus::{PoKBBSSignatureG1Prover, PoKBBSSignatureG1Verifier},
         ped_comm::PedersenCommitment,
         r1cs_legogroth16::{ProvingKey as ProvingKeyOrig, VerifyingKey as VerifyingKeyOrig},
         Statements as StatementsOrig,
@@ -53,8 +53,8 @@ use std::{
 use unsigned_varint;
 
 pub type Fr = <Bls12_381 as Pairing>::ScalarField;
-pub type Proof = ProofOrig<Bls12_381, G1Affine>;
-pub type Statements = StatementsOrig<Bls12_381, <Bls12_381 as Pairing>::G1Affine>;
+pub type Proof = ProofOrig<Bls12_381>;
+pub type Statements = StatementsOrig<Bls12_381>;
 pub type BBSPlusHash = Blake2b512;
 pub type BBSPlusDefaultFieldHasher = DefaultFieldHasher<BBSPlusHash>;
 pub type BBSPlusParams = SignatureParamsG1<Bls12_381>;
@@ -62,7 +62,8 @@ pub type BBSPlusKeypair = KeypairG2<Bls12_381>;
 pub type BBSPlusSecretKey = SecretKey<Fr>;
 pub type BBSPlusPublicKey = PublicKeyG2<Bls12_381>;
 pub type BBSPlusSignature = SignatureG1<Bls12_381>;
-pub type PoKBBSPlusStmt<E> = PoKBBSSignatureG1Stmt<E>;
+pub type PoKBBSPlusStmtProver<E> = PoKBBSSignatureG1Prover<E>;
+pub type PoKBBSPlusStmtVerifier<E> = PoKBBSSignatureG1Verifier<E>;
 pub type PoKBBSPlusWit<E> = PoKBBSSignatureG1Wit<E>;
 pub type PedersenCommitmentStmt = PedersenCommitment<G1Affine>;
 pub type ProvingKey = ProvingKeyOrig<Bls12_381>;
