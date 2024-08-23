@@ -27,12 +27,12 @@ serde = "1.0"
 serde_cbor = "0.11"
 serde_with = "3.9"
 
-oxrdf = "0.2.0-alpha.3"
-oxttl = "0.1.0-alpha.3"
+oxrdf = "0.2.0-alpha.6"
+oxttl = "0.1.0-alpha.7"
 oxsdatatypes = "0.2.0-alpha.1"
 oxiri = "0.2.3-alpha.1"
 
-rdf-canon = "0.15.0-alpha.5"
+rdf-canon = "0.15.0-alpha.6"
 
 proof_system = { version = "0.31", default-features = false }
 bbs_plus = { version = "0.22", default-features = false }
