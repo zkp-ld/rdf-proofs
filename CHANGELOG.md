@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0-alpha.0] - 2024-08-23
+
+### Changed
+
+- **BREAKING** Changed key encoding format from `base64url` to `base58btc` + `multicodecs`
+- **BREAKING** Replaced PPID representation with `did:key` instead of `ppid:`
+- **BREAKING** Upgraded `docknetwork/crypto` libraries (`proof_system`, `bbs_plus`, `dock_crypto_utils`, `legogroth16`) resulting in breaking changes in several cryptographic objects
+- Updated `oxrdf`, `oxttl`, `rdf-canon`, and other dependencies
+
+### Fixed
+
+- Separated zk-SNARK proving keys and verifying keys in several test cases
+
 ## [0.9.1-alpha.4] - 2024-03-18
 
 ### Changed
