@@ -607,7 +607,7 @@ fn build_vp(
             ));
         }
         (Some(ppid), _) => {
-            let vp_holder_id = NamedNode::new(ppid.try_into_multibase()?)?;
+            let vp_holder_id = NamedNode::new(ppid.try_into_did_key()?)?;
             vp.insert(QuadRef::new(
                 &vp_id,
                 HOLDER,

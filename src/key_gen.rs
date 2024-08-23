@@ -1,9 +1,9 @@
 use crate::{
     common::{
-        ark_to_base58btc_with_codec, ark_to_base64url_with_codec, get_hasher, hash_byte_to_field,
-        multibase_with_codec_to_ark, BBSPlusHash, BBSPlusKeypair, BBSPlusParams, Multicodec,
+        ark_to_base58btc, get_hasher, hash_byte_to_field, multibase_with_codec_to_ark,
+        BBSPlusHash, BBSPlusKeypair, BBSPlusParams, Multicodec,
     },
-    constants::{GENERATOR_SEED, PPID_PREFIX, PPID_SEED},
+    constants::{DID_KEY_PREFIX, GENERATOR_SEED, PPID_SEED},
     error::RDFProofsError,
 };
 use ark_bls12_381::G1Affine;
@@ -51,9 +51,9 @@ impl PPID {
         })
     }
 
-    pub fn try_from_multibase(multibase: &str, domain: &str) -> Result<Self, RDFProofsError> {
-        let ppid_multibase = multibase
-            .strip_prefix(PPID_PREFIX)
+    pub fn try_from_did_key(did_key: &str, domain: &str) -> Result<Self, RDFProofsError> {
+        let ppid_multibase = did_key
+            .strip_prefix(DID_KEY_PREFIX)
             .ok_or(RDFProofsError::InvalidPPID)?;
         let (_, ppid) = multibase_with_codec_to_ark(ppid_multibase)?;
         let base = Self::generate_base(domain)?;
@@ -65,9 +65,9 @@ impl PPID {
         })
     }
 
-    pub fn try_into_multibase(&self) -> Result<String, RDFProofsError> {
-        let ppid_base64url = ark_to_base64url_with_codec(&self.ppid, Multicodec::Bls12381G1Pub)?;
-        Ok(format!("{}{}", PPID_PREFIX, ppid_base64url))
+    pub fn try_into_did_key(&self) -> Result<String, RDFProofsError> {
+        let ppid_base58btc = ark_to_base58btc(&self.ppid, Multicodec::Bls12381G1Pub)?;
+        Ok(format!("{}{}", DID_KEY_PREFIX, ppid_base58btc))
     }
 
     fn generate_base(domain: &str) -> Result<G1Affine, RDFProofsError> {
@@ -82,7 +82,7 @@ impl PPID {
 mod tests {
     use super::generate_keypair;
     use crate::{
-        common::{ark_to_base58btc_with_codec, ark_to_base64url, Multicodec},
+        common::{ark_to_base58btc, ark_to_base64url, Multicodec},
         key_gen::generate_params,
     };
     use ark_std::rand::{rngs::StdRng, SeedableRng};
@@ -116,9 +116,9 @@ mod tests {
 
         let keypair = generate_keypair(&mut rng).unwrap();
         let secret_key =
-            ark_to_base58btc_with_codec(&keypair.secret_key, Multicodec::Bls12381G2Priv).unwrap();
+            ark_to_base58btc(&keypair.secret_key, Multicodec::Bls12381G2Priv).unwrap();
         let public_key =
-            ark_to_base58btc_with_codec(&keypair.public_key, Multicodec::Bls12381G2Pub).unwrap();
+            ark_to_base58btc(&keypair.public_key, Multicodec::Bls12381G2Pub).unwrap();
         println!("secret_key: {}", secret_key);
         println!("public_key: {}", public_key);
 

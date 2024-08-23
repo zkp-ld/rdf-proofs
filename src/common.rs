@@ -158,14 +158,7 @@ pub fn ark_to_base64url<A: CanonicalSerialize>(ark: &A) -> Result<String, RDFPro
     ark_to_multibase(Base::Base64Url, ark)
 }
 
-pub fn ark_to_base64url_with_codec<A: CanonicalSerialize>(
-    ark: &A,
-    codec: Multicodec,
-) -> Result<String, RDFProofsError> {
-    ark_to_multibase_with_codec(Base::Base64Url, Some(codec), ark)
-}
-
-pub fn ark_to_base58btc_with_codec<A: CanonicalSerialize>(
+pub fn ark_to_base58btc<A: CanonicalSerialize>(
     ark: &A,
     codec: Multicodec,
 ) -> Result<String, RDFProofsError> {

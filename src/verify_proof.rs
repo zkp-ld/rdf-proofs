@@ -363,7 +363,7 @@ fn get_ppid(metadata: &GraphView, domain: &str) -> Result<Option<PPID>, RDFProof
         Some(TermRef::NamedNode(n)) => n.as_str(),
         _ => return Ok(None),
     };
-    let ppid = PPID::try_from_multibase(holder_subject, domain)?;
+    let ppid = PPID::try_from_did_key(holder_subject, domain)?;
     Ok(Some(ppid))
 }
 
