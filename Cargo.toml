@@ -29,8 +29,8 @@ serde_with = "3.9"
 
 oxrdf = "0.2.0-alpha.6"
 oxttl = "0.1.0-alpha.7"
-oxsdatatypes = "0.2.0-alpha.1"
-oxiri = "0.2.3-alpha.1"
+oxsdatatypes = "0.2.0-alpha.2"
+oxiri = "0.2.4"
 
 rdf-canon = "0.15.0-alpha.6"
 
