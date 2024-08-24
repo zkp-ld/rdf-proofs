@@ -19,6 +19,7 @@ pub use blind_signature::{
 };
 pub use common::{ark_to_base64url, ark_to_multibase, multibase_to_ark};
 pub use derive_proof::{derive_proof, derive_proof_string};
+pub use key_gen::KeyPairBase58Btc;
 pub use key_graph::KeyGraph;
 pub use predicate::CircuitString;
 pub use signature::{sign, sign_string, verify, verify_string};
