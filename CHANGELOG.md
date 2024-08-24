@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0-alpha.1] - 2024-08-24
+
+### Changed
+
+- Added `KeyPairBase58Btc` to generate base58btc-encoded keypairs
+- Upgraded `oxsdatatypes` and `oxiri` dependencies
+
 ## [0.10.0-alpha.0] - 2024-08-23
 
 ### Changed
