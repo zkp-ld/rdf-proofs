@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        ark_to_base58btc, get_hasher, hash_byte_to_field, multibase_with_codec_to_ark,
-        BBSPlusHash, BBSPlusKeypair, BBSPlusParams, Multicodec,
+        ark_to_base58btc, get_hasher, hash_byte_to_field, multibase_with_codec_to_ark, BBSPlusHash,
+        BBSPlusKeypair, BBSPlusParams, Multicodec,
     },
     constants::{DID_KEY_PREFIX, GENERATOR_SEED, PPID_SEED},
     error::RDFProofsError,
@@ -23,6 +23,25 @@ pub fn generate_keypair<R: RngCore>(rng: &mut R) -> Result<BBSPlusKeypair, RDFPr
     let base_params = generate_params(1);
 
     Ok(BBSPlusKeypair::generate_using_rng(rng, &base_params))
+}
+
+#[derive(Debug)]
+pub struct KeyPairBase58Btc {
+    pub secret_key: String,
+    pub public_key: String,
+}
+
+impl KeyPairBase58Btc {
+    pub fn new<R: RngCore>(rng: &mut R) -> Result<Self, RDFProofsError> {
+        let keypair = generate_keypair(rng)?;
+        let secret_key = ark_to_base58btc(&keypair.secret_key, Multicodec::Bls12381G2Priv)?;
+        let public_key = ark_to_base58btc(&keypair.public_key, Multicodec::Bls12381G2Pub)?;
+
+        Ok(Self {
+            secret_key,
+            public_key,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -81,10 +100,7 @@ impl PPID {
 #[cfg(test)]
 mod tests {
     use super::generate_keypair;
-    use crate::{
-        common::{ark_to_base58btc, ark_to_base64url, Multicodec},
-        key_gen::generate_params,
-    };
+    use crate::{key_gen::generate_params, KeyPairBase58Btc};
     use ark_std::rand::{rngs::StdRng, SeedableRng};
 
     #[test]
@@ -98,29 +114,12 @@ mod tests {
     }
 
     #[test]
-    fn key_gen_base64url() -> () {
-        let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
-
-        let keypair = generate_keypair(&mut rng).unwrap();
-        let secret_key = ark_to_base64url(&keypair.secret_key).unwrap();
-        let public_key = ark_to_base64url(&keypair.public_key).unwrap();
-        println!("secret_key: {}", secret_key);
-        println!("public_key: {}", public_key);
-
-        assert!(true);
-    }
-
-    #[test]
     fn key_gen_base58btc() -> () {
         let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
 
-        let keypair = generate_keypair(&mut rng).unwrap();
-        let secret_key =
-            ark_to_base58btc(&keypair.secret_key, Multicodec::Bls12381G2Priv).unwrap();
-        let public_key =
-            ark_to_base58btc(&keypair.public_key, Multicodec::Bls12381G2Pub).unwrap();
-        println!("secret_key: {}", secret_key);
-        println!("public_key: {}", public_key);
+        let keypair = KeyPairBase58Btc::new(&mut rng).unwrap();
+        println!("secret_key: {}", keypair.secret_key);
+        println!("public_key: {}", keypair.public_key);
 
         assert!(true);
     }

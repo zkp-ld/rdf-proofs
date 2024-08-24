@@ -1392,8 +1392,8 @@ fn build_disclosed_and_undisclosed_terms(
 mod tests {
     use super::CircuitString;
     use crate::{
-        ark_to_base64url, blind_sign_string, blind_verify_string,
-        common::{get_dataset_from_nquads, get_graph_from_ntriples, R1CS},
+        blind_sign_string, blind_verify_string,
+        common::{ark_to_base64url, get_dataset_from_nquads, get_graph_from_ntriples, R1CS},
         derive_proof,
         derive_proof::get_deanon_map_from_string,
         derive_proof_string,
