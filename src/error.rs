@@ -12,7 +12,10 @@ pub enum RDFProofsError {
     InvalidProofDatetime,
     ProofGeneration,
     InvalidVerificationMethodURL,
-    InvalidVerificationMethod,
+    InvalidVerificationMethodKey,
+    InvalidVerificationMethodKeyCodec,
+    VerificationMethodNotFound,
+    VerificationMethodNotFoundInProof,
     MalformedProof,
     Multibase(multibase::Error),
     InvalidMulticodec,
@@ -80,8 +83,17 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::InvalidVerificationMethodURL => {
                 write!(f, "invalid verification method URL error")
             }
-            RDFProofsError::InvalidVerificationMethod => {
-                write!(f, "invalid verification method error")
+            RDFProofsError::InvalidVerificationMethodKey => {
+                write!(f, "invalid verification method key error")
+            }
+            RDFProofsError::InvalidVerificationMethodKeyCodec => {
+                write!(f, "invalid verification method key codec error")
+            }
+            RDFProofsError::VerificationMethodNotFound => {
+                write!(f, "verification method not found error")
+            }
+            RDFProofsError::VerificationMethodNotFoundInProof => {
+                write!(f, "verification method not found in proof error")
             }
             RDFProofsError::MalformedProof => write!(f, "malformed proof error"),
             RDFProofsError::Multibase(_) => write!(f, "multibase error"),

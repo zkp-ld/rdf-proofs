@@ -14,7 +14,7 @@ use crate::{
         AUTHENTICATION, CHALLENGE, CIRCUIT, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, DOMAIN,
         HOLDER, MULTIBASE, PREDICATE, PREDICATE_TYPE, PRIVATE, PROOF, PROOF_PURPOSE, PROOF_VALUE,
         PUBLIC, SECRET_COMMITMENT, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
-        VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
+        VERIFIABLE_PRESENTATION_TYPE,
     },
     error::RDFProofsError,
     key_gen::{generate_params, PPID},
@@ -82,7 +82,7 @@ pub fn derive_proof<R: RngCore>(
     // get issuer public keys
     let public_keys = vc_pairs
         .iter()
-        .map(|VcPair { original: vc, .. }| get_public_keys(&vc.proof, key_graph))
+        .map(|VcPair { original: vc, .. }| key_graph.get_public_key_from_proof_graph(&vc.proof))
         .collect::<Result<Vec<_>, _>>()?;
     println!("public keys:\n{:#?}\n", public_keys);
 
@@ -399,21 +399,6 @@ fn get_deanon_map_from_string(
             Ok((key, value))
         })
         .collect()
-}
-
-fn get_public_keys(
-    proof_graph: &Graph,
-    key_graph: &KeyGraph,
-) -> Result<BBSPlusPublicKey, RDFProofsError> {
-    let vm_triple = proof_graph
-        .triples_for_predicate(VERIFICATION_METHOD)
-        .next()
-        .ok_or(RDFProofsError::InvalidVerificationMethod)?;
-    let vm = match vm_triple.object {
-        TermRef::NamedNode(v) => Ok(v),
-        _ => Err(RDFProofsError::InvalidVerificationMethodURL),
-    }?;
-    key_graph.get_public_key(vm)
 }
 
 fn deanonymize_subject(
