@@ -2,13 +2,13 @@ use crate::{
     common::{
         generate_proof_spec_context, get_dataset_from_nquads, get_delimiter,
         get_graph_from_ntriples, get_hasher, hash_term_to_field, is_nym, multibase_to_ark,
-        read_private_var_list, read_public_var_list, reorder_vc_triples, BBSPlusHash,
-        BBSPlusPublicKey, Fr, PedersenCommitmentStmt, PoKBBSPlusStmtVerifier, ProofWithIndexMap,
-        Statements, VerifyingKey,
+        read_private_var_list, read_public_var_list, reorder_vc_triples, BBSPlusHash, Fr,
+        PedersenCommitmentStmt, PoKBBSPlusStmtVerifier, ProofWithIndexMap, Statements,
+        VerifyingKey,
     },
     context::{
         CHALLENGE, CIRCUIT, DOMAIN, HOLDER, PREDICATE_TYPE, PRIVATE, PROOF_VALUE, PUBLIC,
-        SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
+        SECRET_COMMITMENT, VERIFIABLE_PRESENTATION_TYPE,
     },
     error::RDFProofsError,
     key_gen::{generate_params, PPID},
@@ -116,7 +116,7 @@ pub fn verify_proof<R: RngCore>(
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
         .iter()
-        .map(|(_, vc)| get_public_keys_from_graphview(&vc.proof, key_graph))
+        .map(|(_, vc)| key_graph.get_public_key_from_proof_graph_view(&vc.proof))
         .collect::<Result<Vec<_>, _>>()?;
     println!("public_keys:\n{:#?}\n", public_keys);
 
@@ -519,20 +519,4 @@ fn build_disclosed_terms(
         None => {}
     };
     Ok(())
-}
-
-// TODO: to be integrated with `get_public_keys`
-fn get_public_keys_from_graphview(
-    proof_graph: &GraphView,
-    key_graph: &KeyGraph,
-) -> Result<BBSPlusPublicKey, RDFProofsError> {
-    let vm_triple = proof_graph
-        .triples_for_predicate(VERIFICATION_METHOD)
-        .next()
-        .ok_or(RDFProofsError::InvalidVerificationMethod)?;
-    let vm = match vm_triple.object {
-        TermRef::NamedNode(v) => Ok(v),
-        _ => Err(RDFProofsError::InvalidVerificationMethodURL),
-    }?;
-    key_graph.get_public_key(vm)
 }
