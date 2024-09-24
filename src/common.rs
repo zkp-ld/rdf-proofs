@@ -482,14 +482,14 @@ pub fn reorder_vc_triples(
 
 pub fn get_graph_from_ntriples(ntriples: &str) -> Result<Graph, RDFProofsError> {
     let iter = NTriplesParser::new()
-        .parse_read(ntriples.as_bytes())
+        .for_reader(ntriples.as_bytes())
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Graph::from_iter(iter))
 }
 
 pub fn get_dataset_from_nquads(nquads: &str) -> Result<Dataset, RDFProofsError> {
     let iter = NQuadsParser::new()
-        .parse_read(nquads.as_bytes())
+        .for_reader(nquads.as_bytes())
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Dataset::from_iter(iter))
 }
