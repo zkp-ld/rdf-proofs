@@ -1201,7 +1201,8 @@ fn serialize_proof_with_index_map(
         proof,
         index_map: index_map.clone(),
     };
-    let proof_with_index_map_cbor = serde_cbor::to_vec(&proof_with_index_map)?;
+    let mut proof_with_index_map_cbor = Vec::new();
+    ciborium::ser::into_writer(&proof_with_index_map, &mut proof_with_index_map_cbor)?;
     let proof_with_index_map_multibase =
         multibase::encode(Base::Base64Url, proof_with_index_map_cbor);
     Ok(proof_with_index_map_multibase)
