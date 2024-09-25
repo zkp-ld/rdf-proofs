@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0] - 2024-09-25
+
+### Added
+
+- Added more detailed errors related to verification methods
+
+### Changed
+
+- Upgraded `oxrdf`, `oxttl`, `oxsdatatypes`, and `rdf-canon` dependencies, allowing us to remove the `alpha` tag from the version
+- Upgraded `serde_cbor` to `ciborium` for CBOR serialization to resolve [RUSTSEC-2021-0127](https://rustsec.org/advisories/RUSTSEC-2021-0127)
+- Refactored `KeyGraph` struct
+
 ## [0.10.0-alpha.1] - 2024-08-24
 
 ### Changed
