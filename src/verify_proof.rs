@@ -134,7 +134,9 @@ pub fn verify_proof<R: RngCore>(
 
     // deserialize proof value into proof and index_map
     let (_, proof_value_bytes) = multibase::decode(proof_value_encoded)?;
-    let ProofWithIndexMap { proof, index_map } = serde_cbor::from_slice(&proof_value_bytes)?;
+    //let cursor = Cursor::new(proof_value_bytes);
+    let ProofWithIndexMap { proof, index_map } =
+        ciborium::de::from_reader(proof_value_bytes.as_slice())?;
     println!("proof:\n{:#?}\n", proof);
     println!("index_map:\n{:#?}\n", index_map);
 

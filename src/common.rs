@@ -114,8 +114,8 @@ pub fn serialize_ark<S: serde::Serializer, A: CanonicalSerialize>(
 pub fn deserialize_ark<'de, D: serde::Deserializer<'de>, A: CanonicalDeserialize>(
     de: D,
 ) -> Result<A, D::Error> {
-    let s: &[u8] = serde::Deserialize::deserialize(de)?;
-    A::deserialize_compressed(s).map_err(serde::de::Error::custom)
+    let s: Vec<u8> = serde::Deserialize::deserialize(de)?;
+    A::deserialize_compressed(s.as_slice()).map_err(serde::de::Error::custom)
 }
 
 pub fn ark_to_multibase<A: CanonicalSerialize>(
@@ -202,7 +202,9 @@ pub(crate) fn generate_proof_spec_context(
 ) -> Result<Vec<u8>, RDFProofsError> {
     let serialized_vp = rdf_canon::serialize(&vp);
     let serialized_vp_with_index_map = ProofSpecContext(serialized_vp, statement_index_map.clone());
-    Ok(serde_cbor::to_vec(&serialized_vp_with_index_map)?) // TODO: CBOR is overkill as we do not need deserialization
+    let mut buf = Vec::new();
+    ciborium::ser::into_writer(&serialized_vp_with_index_map, &mut buf)?;
+    Ok(buf) // TODO: CBOR is overkill as we do not need deserialization
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

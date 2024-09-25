@@ -6,7 +6,8 @@ pub enum RDFProofsError {
     BBSPlus(bbs_plus::prelude::BBSPlusError),
     HashToField,
     ArkSerialization(ark_serialize::SerializationError),
-    CBORSerialization(serde_cbor::Error),
+    CBORSerialization(ciborium::ser::Error<std::io::Error>),
+    CBORDeserialization(ciborium::de::Error<std::io::Error>),
     ProofTransformation,
     InvalidProofConfiguration,
     InvalidProofDatetime,
@@ -74,6 +75,7 @@ impl std::fmt::Display for RDFProofsError {
             RDFProofsError::HashToField => write!(f, "hash to field is failed"),
             RDFProofsError::ArkSerialization(_) => write!(f, "arkworks serialization error"),
             RDFProofsError::CBORSerialization(_) => write!(f, "CBOR serialization error"),
+            RDFProofsError::CBORDeserialization(_) => write!(f, "CBOR deserialization error"),
             RDFProofsError::ProofTransformation => write!(f, "proof transformation error"),
             RDFProofsError::InvalidProofConfiguration => {
                 write!(f, "invalid proof configuration error")
@@ -233,9 +235,15 @@ impl From<ark_serialize::SerializationError> for RDFProofsError {
     }
 }
 
-impl From<serde_cbor::Error> for RDFProofsError {
-    fn from(e: serde_cbor::Error) -> Self {
+impl From<ciborium::ser::Error<std::io::Error>> for RDFProofsError {
+    fn from(e: ciborium::ser::Error<std::io::Error>) -> Self {
         Self::CBORSerialization(e)
+    }
+}
+
+impl From<ciborium::de::Error<std::io::Error>> for RDFProofsError {
+    fn from(e: ciborium::de::Error<std::io::Error>) -> Self {
+        Self::CBORDeserialization(e)
     }
 }
 
