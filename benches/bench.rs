@@ -21,12 +21,82 @@ fn verify_proof_bench(c: &mut Criterion) {
     c.bench_function("verify_proof", |b| b.iter(|| verify_proof_bench_fn()));
 }
 
+fn derive_proof_group_bench(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(0u64);
+
+    let mut group = c.benchmark_group("derive_multiple_proofs");
+
+    for &num_hidden_triples in &[0, 3, 33, 333, 3333, 33333] {
+        // original_vc: (24 + 3n) terms ((8 + n) triples)
+        let vc_template = r#"
+        <http://example.org/credentials/person/0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        <http://example.org/credentials/person/0> <https://www.w3.org/2018/credentials#credentialSubject> _:b2 .
+        <http://example.org/credentials/person/0> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+        <http://example.org/credentials/person/0> <https://www.w3.org/2018/credentials#issuanceDate> "2023-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        <http://example.org/credentials/person/0> <https://www.w3.org/2018/credentials#expirationDate> "2026-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        _:b2 <http://schema.org/givenName> "John" .
+        _:b2 <http://schema.org/familyName> "Smith" .
+        "#;
+        let mut original_vc = String::from(vc_template);
+        for i in 1..=num_hidden_triples {
+            let line = format!("_:b2 <http://schema.org/children> \"{}\" .\n", i);
+            original_vc.push_str(&line);
+        }
+
+        // original_proof: 15 terms (5 triples)
+        let proof_template = r#"
+        _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b1 <http://purl.org/dc/terms/created> "2024-12-10T02:52:36.725Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b1 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+        _:b1 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b1 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        "#;
+        let original_proof =
+            sign_string(&mut rng, &original_vc, &proof_template, KEY_GRAPH).unwrap();
+
+        // disclosed_vc: 24 terms (8 triples)
+        let disclosed_vc = r#"
+        <http://example.org/credentials/person/0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+        <http://example.org/credentials/person/0> <https://www.w3.org/2018/credentials#credentialSubject> _:b2 .
+        <http://example.org/credentials/person/0> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> .
+        <http://example.org/credentials/person/0> <https://www.w3.org/2018/credentials#issuanceDate> "2023-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        <http://example.org/credentials/person/0> <https://www.w3.org/2018/credentials#expirationDate> "2026-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .
+        _:b2 <http://schema.org/givenName> "John" .
+        _:b2 <http://schema.org/familyName> "Smith" .
+        "#;
+
+        // disclosed_proof: 15 terms (5 triples)
+        let disclosed_proof = r#"
+        _:b1 <http://purl.org/dc/terms/created> "2024-12-10T02:52:36.725Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+        _:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+        _:b1 <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" .
+        _:b1 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+        _:b1 <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> .
+        "#;
+
+        // original: (3n + 39) terms == disclosed: 39 terms + hidden: 3n terms
+        group.bench_with_input(
+            format!("num_hidden_attrs_{}", num_hidden_triples * 3),
+            &(
+                original_vc.as_str(),
+                original_proof.as_str(),
+                disclosed_vc,
+                disclosed_proof,
+            ),
+            |b, input| b.iter(|| derive_proof_group_bench_fn(input)),
+        );
+    }
+}
+
 criterion_group!(
     benches,
     sign_bench,
     verify_bench,
     derive_proof_bench,
-    verify_proof_bench
+    verify_proof_bench,
+    derive_proof_group_bench,
 );
 criterion_main!(benches);
 
@@ -310,4 +380,32 @@ _:c14n9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vo
     let nonce = "abcde";
     let verified = verify_proof_string(&mut rng, &vp_nquads, KEY_GRAPH, Some(nonce), None, None);
     assert!(verified.is_ok(), "{:?}", verified)
+}
+
+fn derive_proof_group_bench_fn(input: &(&str, &str, &str, &str)) {
+    let mut rng = StdRng::seed_from_u64(0u64); // TODO: to be fixed
+    let (vc_ntriples, vc_proof_ntriples, disclosed_vc_ntriples, disclosed_vc_proof_ntriples) =
+        input;
+    let vc_pairs = vec![VcPairString::new(
+        vc_ntriples,
+        vc_proof_ntriples,
+        disclosed_vc_ntriples,
+        disclosed_vc_proof_ntriples,
+    )];
+    let deanon_map = get_deanon_map(vec![]);
+    let nonce = "abcde";
+    let derived_proof = derive_proof_string(
+        &mut rng,
+        &vc_pairs,
+        &deanon_map,
+        KEY_GRAPH,
+        Some(nonce),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(derived_proof.is_ok())
 }
