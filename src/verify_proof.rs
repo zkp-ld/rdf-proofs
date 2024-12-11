@@ -40,8 +40,6 @@ pub fn verify_proof<R: RngCore>(
 ) -> Result<(), RDFProofsError> {
     let hasher = get_hasher();
 
-    println!("VP:\n{}", rdf_canon::serialize(vp_dataset));
-
     // decompose VP into graphs
     let vp: VerifiablePresentation = vp_dataset.try_into()?;
 
@@ -87,10 +85,6 @@ pub fn verify_proof<R: RngCore>(
     // canonicalize VP
     let c14n_map_for_disclosed = rdf_canon::issue(&vp_without_proof_value)?;
     let canonicalized_vp = rdf_canon::relabel(&vp_without_proof_value, &c14n_map_for_disclosed)?;
-    println!(
-        "canonicalized VP:\n{}",
-        rdf_canon::serialize(&canonicalized_vp)
-    );
 
     // decompose canonicalized VP into graphs
     let VerifiablePresentation {
@@ -107,18 +101,15 @@ pub fn verify_proof<R: RngCore>(
     } else {
         None
     };
-    println!("PPID: {:#?}", ppid);
 
     // get secret commitment
     let secret_commitment = get_secret_commitment(&vp_metadata)?;
-    println!("secret_commitment: {:#?}", secret_commitment);
 
     // get issuer public keys
     let public_keys = c14n_disclosed_vc_graphs
         .iter()
         .map(|(_, vc)| key_graph.get_public_key_from_proof_graph_view(&vc.proof))
         .collect::<Result<Vec<_>, _>>()?;
-    println!("public_keys:\n{:#?}\n", public_keys);
 
     // if the VC is bound to secret or not
     let is_bounds = c14n_disclosed_vc_graphs
@@ -137,15 +128,9 @@ pub fn verify_proof<R: RngCore>(
     //let cursor = Cursor::new(proof_value_bytes);
     let ProofWithIndexMap { proof, index_map } =
         ciborium::de::from_reader(proof_value_bytes.as_slice())?;
-    println!("proof:\n{:#?}\n", proof);
-    println!("index_map:\n{:#?}\n", index_map);
 
     // reorder statements according to index map
     let reordered_vc_triples = reorder_vc_triples(&disclosed_vec, &index_map)?;
-    println!(
-        "reordered_disclosed_vc_triples:\n{:#?}\n",
-        reordered_vc_triples
-    );
 
     // identify disclosed terms
     let disclosed_terms = reordered_vc_triples
@@ -156,7 +141,6 @@ pub fn verify_proof<R: RngCore>(
             get_disclosed_terms(disclosed_vc_triples, i, is_bound)
         })
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
-    println!("disclosed_terms:\n{:#?}\n", disclosed_terms);
 
     let term_counts = disclosed_terms
         .iter()
@@ -268,7 +252,6 @@ pub fn verify_proof<R: RngCore>(
         )?);
         predicate_indexes.push(statements.len() - 1);
     }
-    println!("statements: {:?}", statements);
 
     // build meta statements
     let mut meta_statements = MetaStatements::new();
@@ -310,7 +293,6 @@ pub fn verify_proof<R: RngCore>(
                 equiv_set.insert((*predicate_index, idx_in_predicate));
             }
         }
-        println!("equiv_set: {:?}", equiv_set);
         if equiv_set.len() > 1 {
             meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
         }

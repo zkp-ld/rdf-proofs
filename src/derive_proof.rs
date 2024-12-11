@@ -59,11 +59,6 @@ pub fn derive_proof<R: RngCore>(
     predicates: Vec<Graph>,
     circuits: HashMap<NamedNode, Circuit>,
 ) -> Result<Dataset, RDFProofsError> {
-    for vc in vc_pairs {
-        println!("{}", vc.to_string());
-    }
-    println!("deanon map:\n{:#?}\n", deanon_map);
-
     // either VCs or a blind sign request or with_ppid must be provided as input
     if vc_pairs.is_empty()
         && blind_sign_request.is_none()
@@ -84,7 +79,6 @@ pub fn derive_proof<R: RngCore>(
         .iter()
         .map(|VcPair { original: vc, .. }| key_graph.get_public_key_from_proof_graph(&vc.proof))
         .collect::<Result<Vec<_>, _>>()?;
-    println!("public keys:\n{:#?}\n", public_keys);
 
     // verify VCs
     vc_pairs
@@ -119,9 +113,6 @@ pub fn derive_proof<R: RngCore>(
             },
         )
         .collect::<Vec<_>>();
-    for vc in &randomized_vc_pairs {
-        println!("randomized vc: {}", vc.to_string());
-    }
 
     // randomize blank node identifiers in predicate graphs
     // except for user-defined blank node identifiers in `deanon_map`
@@ -183,19 +174,9 @@ pub fn derive_proof<R: RngCore>(
     let (canonicalized_original_vcs, original_vcs_bnode_map) =
         canonicalize_vcs(&original_vcs_without_proof_value)?;
 
-    for v in &canonicalized_original_vcs {
-        println!("canonicalized_original_vcs: {}", v);
-    }
-    println!("original vcs bnode map: {:#?}", original_vcs_bnode_map);
-
     // construct extended deanonymization map
     let extended_deanon_map =
         extend_deanon_map(deanon_map, &vp_draft_bnode_map, &original_vcs_bnode_map)?;
-    println!("extended deanon map:");
-    for (f, t) in &extended_deanon_map {
-        println!("{}: {}", f.to_string(), t.to_string());
-    }
-    println!("");
 
     // reorder the original VC graphs and proof values
     // according to the order of canonicalized graph names of disclosed VCs
@@ -207,48 +188,8 @@ pub fn derive_proof<R: RngCore>(
         &vc_document_graph_names,
     )?;
 
-    println!("canonicalized original VC (sorted):");
-    for VerifiableCredentialTriples { document, proof } in &original_vc_vec {
-        println!(
-            "document:\n{}",
-            document
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "proof:\n{}",
-            proof
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
-    println!("canonicalized disclosed VC (sorted):");
-    for VerifiableCredentialTriples { document, proof } in &disclosed_vc_vec {
-        println!(
-            "document:\n{}",
-            document
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "proof:\n{}",
-            proof
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
-
     // generate index map
     let index_map = gen_index_map(&original_vc_vec, &disclosed_vc_vec, &extended_deanon_map)?;
-    println!("index_map:\n{:#?}\n", index_map);
 
     // derive proof value
     let derived_proof_value = derive_proof_value(
@@ -690,13 +631,9 @@ fn build_vp(
         vp.extend(disclosed_vc_quad);
     }
 
-    println!("vp draft (before canonicalization):\n{}\n", vp.to_string());
-
     // canonicalize VP draft
     let canonicalized_vp_bnode_map = rdf_canon::issue(&vp)?;
     let canonicalized_vp = rdf_canon::relabel(&vp, &canonicalized_vp_bnode_map)?;
-    println!("VP draft bnode map:\n{:#?}\n", canonicalized_vp_bnode_map);
-    println!("VP draft:\n{}", rdf_canon::serialize(&canonicalized_vp));
 
     Ok((
         canonicalized_vp,
@@ -839,25 +776,6 @@ fn gen_index_map(
             deanonymize_term(extended_deanon_map, &mut triple.object)?;
         }
     }
-    println!("deanonymized canonicalized disclosed VC graphs:");
-    for VerifiableCredentialTriples { document, proof } in &disclosed_vc_triples_cloned {
-        println!(
-            "document:\n{}",
-            document
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "proof:\n{}",
-            proof
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
 
     // calculate index mapping
     let index_map = disclosed_vc_triples_cloned
@@ -928,10 +846,6 @@ fn derive_proof_value<R: RngCore>(
 
     // reorder disclosed VC triples according to index map
     let reordered_disclosed_vc_triples = reorder_vc_triples(&disclosed_vc_triples, &index_map)?;
-    println!(
-        "reordered_disclosed_vc_triples:\n{:#?}\n",
-        reordered_disclosed_vc_triples
-    );
 
     // identify disclosed and undisclosed terms
     let disclosed_and_undisclosed_terms = reordered_disclosed_vc_triples
@@ -956,11 +870,6 @@ fn derive_proof_value<R: RngCore>(
             },
         )
         .collect::<Result<Vec<_>, RDFProofsError>>()?;
-    println!(
-        "disclosed_and_undisclosed:\n{:#?}\n",
-        disclosed_and_undisclosed_terms
-    );
-    println!("proof values: {:?}", proof_values);
 
     let term_counts = disclosed_and_undisclosed_terms
         .iter()
@@ -1105,12 +1014,10 @@ fn derive_proof_value<R: RngCore>(
                 equiv_set.insert((*predicate_index, idx_in_predicate));
             }
         }
-        println!("equiv_set: {:?}", equiv_set);
         if equiv_set.len() > 1 {
             meta_statements.add_witness_equality(EqualWitnesses(equiv_set));
         }
     }
-    println!("meta_statements: {:?}", meta_statements);
 
     // build proof spec
     let context = generate_proof_spec_context(&canonicalized_vp, &index_map)?;
@@ -1155,7 +1062,6 @@ fn derive_proof_value<R: RngCore>(
         let mut r1cs_wit = R1CSCircomWitness::new();
         // private
         for (var, val) in private {
-            println!("{}", val);
             let val = extended_deanon_map
                 .get(val)
                 .ok_or(RDFProofsError::InvalidPredicate)?;
@@ -1166,7 +1072,6 @@ fn derive_proof_value<R: RngCore>(
         }
         // public
         for (var, val) in public {
-            println!("{}", val);
             r1cs_wit.set_public(
                 var.to_string(),
                 vec![hash_term_to_field(val.into(), &hasher)?],
@@ -1174,7 +1079,6 @@ fn derive_proof_value<R: RngCore>(
         }
         witnesses.add(Witness::R1CSLegoGroth16(r1cs_wit));
     }
-    println!("witnesses:\n{:#?}\n", witnesses);
 
     // build proof
     let proof = Proof::new::<R, BBSPlusHash>(
@@ -1185,7 +1089,6 @@ fn derive_proof_value<R: RngCore>(
         Default::default(),
     )?
     .0;
-    println!("proof:\n{:#?}\n", proof);
 
     // serialize proof and index_map
     serialize_proof_with_index_map(proof, &index_map)
