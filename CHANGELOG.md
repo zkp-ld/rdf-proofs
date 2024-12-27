@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.0] - 2024-12-27
+
+### Changed
+
+- Updated the minimum required Rust version to 1.81. This change is due to multiple dependencies of this crate now requiring Rust 1.81 or later
+- Upgraded `proof_system`, `bbs_plus`, `dock_crypto_utils`, and `legogroth16` dependencies
+- Upgraded `oxrdf`, `oxttl`, `oxsdatatypes`, `oxiri`, and `rdf-canon` dependencies
+- Upgraded other dependencies
+
 ## [0.10.0] - 2024-09-25
 
 ### Added
