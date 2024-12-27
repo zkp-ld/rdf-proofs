@@ -6,6 +6,7 @@ authors = ["yamdan"]
 license = "MIT"
 repository = "https://github.com/zkp-ld/rdf-proofs"
 description = "BBS+ signatures and zero-knowledge proofs for Linked Data"
+rust-version = "1.81"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -19,25 +20,25 @@ wasmer-sys = ["proof_system/wasmer-sys"]
 
 [dependencies]
 chrono = "0.4"
-regex = "1.10"
+regex = "1.11"
 multibase = "0.9"
 unsigned-varint = "0.8"
 
 serde = "1.0"
 ciborium = "0.2"
-serde_with = "3.9"
+serde_with = "3.12"
 
-oxrdf = "0.2.0"
-oxttl = "0.1.0"
-oxsdatatypes = "0.2.0"
-oxiri = "0.2.4"
+oxrdf = "0.2.3"
+oxttl = "0.1.4"
+oxsdatatypes = "0.2.1"
+oxiri = "0.2.9"
 
-rdf-canon = "0.15.0"
+rdf-canon = "0.15.1"
 
-proof_system = { version = "0.31", default-features = false }
-bbs_plus = { version = "0.22", default-features = false }
-dock_crypto_utils = { version = "0.20", default-features = false }
-legogroth16 = { version = "0.15", default-features = false, features = [
+proof_system = { version = "0.32", default-features = false }
+bbs_plus = { version = "0.23", default-features = false }
+dock_crypto_utils = { version = "0.21", default-features = false }
+legogroth16 = { version = "0.16", default-features = false, features = [
     "circom",
 ] }
 ark-ff = { version = "0.4", default-features = false }
