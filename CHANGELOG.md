@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1] - 2025-06-06
+
+### Changed
+
+- Upgraded `proof_system`, `bbs_plus`, `dock_crypto_utils`, and `legogroth16` dependencies
+- Upgraded `oxrdf`, `oxttl`, `oxsdatatypes`, `oxiri`, and `rdf-canon` dependencies
+
 ## [0.11.0] - 2024-12-27
 
 ### Changed
