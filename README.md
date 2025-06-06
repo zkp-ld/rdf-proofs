@@ -43,19 +43,6 @@ or
 cargo test --release
 ```
 
-**Note**: Some tests may fail with a stack overflow error, such as:
-
-```
-thread 'blind_signature::tests::blind_sign_and_unblind_and_verify_with_invalid_secret_failure' has overflowed its stack
-fatal runtime error: stack overflow
-```
-
-To prevent this, you can increase the stack size. For example, setting it to 8MB, as suggested in the [docknetwork/crypto README](https://github.com/docknetwork/crypto#test), works in most cases:
-
-```shell
-RUST_MIN_STACK=8388608 cargo test
-```
-
 ## Examples
 
 TBD
