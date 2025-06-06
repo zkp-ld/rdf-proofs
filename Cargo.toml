@@ -33,7 +33,7 @@ oxttl = "0.1.8"
 oxsdatatypes = "0.2.2"
 oxiri = "0.2.11"
 
-rdf-canon = "0.15.1"
+rdf-canon = "0.15.2"
 
 proof_system = { version = "0.33", default-features = false }
 bbs_plus = { version = "0.24", default-features = false }
