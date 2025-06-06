@@ -28,17 +28,17 @@ serde = "1.0"
 ciborium = "0.2"
 serde_with = "3.12"
 
-oxrdf = "0.2.3"
-oxttl = "0.1.4"
-oxsdatatypes = "0.2.1"
-oxiri = "0.2.9"
+oxrdf = "0.2.4"
+oxttl = "0.1.8"
+oxsdatatypes = "0.2.2"
+oxiri = "0.2.11"
 
 rdf-canon = "0.15.1"
 
-proof_system = { version = "0.32", default-features = false }
-bbs_plus = { version = "0.23", default-features = false }
-dock_crypto_utils = { version = "0.21", default-features = false }
-legogroth16 = { version = "0.16", default-features = false, features = [
+proof_system = { version = "0.33", default-features = false }
+bbs_plus = { version = "0.24", default-features = false }
+dock_crypto_utils = { version = "0.22", default-features = false }
+legogroth16 = { version = "0.17", default-features = false, features = [
     "circom",
 ] }
 ark-ff = { version = "0.4", default-features = false }
