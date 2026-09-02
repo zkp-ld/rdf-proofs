@@ -57,6 +57,9 @@ pub enum RDFProofsError {
     MissingPredicateCircuit,
     MissingSnarkVK(String),
     InvalidInteger(String),
+    InvalidHexString(String),
+    InvalidBase64String(String),
+    Base64ValueTooLarge(String),
     InvalidDateTime(String),
     DateTimeParse(chrono::ParseError),
     ParseInt(std::num::ParseIntError),
@@ -201,6 +204,11 @@ impl std::fmt::Display for RDFProofsError {
                     "invalid date time (cannot convert to UNIX timestamp): {}",
                     v
                 )
+            }
+            RDFProofsError::InvalidHexString(e) => write!(f, "hex parse error: {}", e),
+            RDFProofsError::InvalidBase64String(e) => write!(f, "base64 parse error: {}", e),
+            RDFProofsError::Base64ValueTooLarge(e) => {
+                write!(f, "base64 value does not fit in the scalar field: {}", e)
             }
             RDFProofsError::DateTimeParse(e) => write!(f, "date time parse error: {}", e),
             RDFProofsError::ParseInt(e) => write!(f, "parse int error: {}", e),

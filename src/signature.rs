@@ -78,7 +78,7 @@ pub fn verify_string(document: &str, proof: &str, key_graph: &str) -> Result<(),
     verify(&vc, &key_graph)
 }
 
-pub(crate) fn transform(graph: &Graph) -> Result<Vec<Term>, RDFProofsError> {
+pub fn transform(graph: &Graph) -> Result<Vec<Term>, RDFProofsError> {
     canonicalize_graph_into_terms(graph)
 }
 

@@ -23,7 +23,7 @@ use oxrdf::{
     NamedOrBlankNodeRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
-    prelude::{EqualWitnesses, MetaStatements},
+    prelude::{EqualWitnesses, MetaStatement, MetaStatements},
     proof_spec::ProofSpec,
     statement::r1cs_legogroth16::R1CSCircomVerifier,
 };
@@ -37,6 +37,8 @@ pub fn verify_proof<R: RngCore>(
     challenge: Option<&str>,
     domain: Option<&str>,
     snark_verifying_keys: HashMap<NamedNode, VerifyingKey>,
+    statements_pass: Option<Statements>,
+    meta_statements_pass: Option<MetaStatements>,
 ) -> Result<(), RDFProofsError> {
     let hasher = get_hasher();
 
@@ -186,9 +188,8 @@ pub fn verify_proof<R: RngCore>(
                 .extend(v.clone());
         }
     }
-
-    // build statements
     let mut statements = Statements::new();
+
     // statements for BBS+ signatures
     for (DisclosedTerms { disclosed, .. }, (params, public_key)) in
         disclosed_terms.iter().zip(params_and_pks)
@@ -199,6 +200,7 @@ pub fn verify_proof<R: RngCore>(
             disclosed.clone(),
         ));
     }
+    let num_sigs = statements.len();
     // statement for PPID
     let mut ppid_index = None;
     if let Some(ppid) = ppid {
@@ -321,6 +323,44 @@ pub fn verify_proof<R: RngCore>(
         return Err(RDFProofsError::NoStatementsToVerify);
     }
 
+    // add the passed parameters
+    if let Some(meta_statements_pass) = meta_statements_pass {
+        meta_statements.0.extend_from_slice(
+            &meta_statements_pass
+                .0
+                .iter()
+                .cloned()
+                .map(|m| match m {
+                    MetaStatement::WitnessEquality(eq) => {
+                        MetaStatement::WitnessEquality(EqualWitnesses(
+                            eq.0.iter()
+                                .cloned()
+                                // "shift" the index by the amount of other statements that are added.
+                                // This is statements.len() - 1 as the pok_sig statement is always
+                                // added and already accounted for.
+                                //
+                                // Statement index 0 is reserved for pok_sig
+                                .map(|(s, w)| {
+                                    (
+                                        if s < num_sigs {
+                                            s
+                                        } else {
+                                            s + statements.len() - num_sigs
+                                        },
+                                        w,
+                                    )
+                                })
+                                .collect(),
+                        ))
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    if let Some(statements_pass) = statements_pass {
+        statements.0.extend_from_slice(&statements_pass.0);
+    }
+
     // build proof spec
     let context = generate_proof_spec_context(&canonicalized_vp, &index_map)?;
     let proof_spec = ProofSpec::new(statements, meta_statements, vec![], Some(context));
@@ -342,6 +382,8 @@ pub fn verify_proof_string<R: RngCore>(
     challenge: Option<&str>,
     domain: Option<&str>,
     snark_verifying_keys: Option<HashMap<String, String>>,
+    statements: Option<Statements>,
+    meta_statements: Option<MetaStatements>,
 ) -> Result<(), RDFProofsError> {
     // construct input for `verify_proof` from string-based input
     let vp = get_dataset_from_nquads(vp)?;
@@ -354,7 +396,16 @@ pub fn verify_proof_string<R: RngCore>(
             .collect::<Result<HashMap<_, VerifyingKey>, RDFProofsError>>()?,
     };
 
-    verify_proof(rng, &vp, &key_graph, challenge, domain, snark_verifying_key)
+    verify_proof(
+        rng,
+        &vp,
+        &key_graph,
+        challenge,
+        domain,
+        snark_verifying_key,
+        statements,
+        meta_statements,
+    )
 }
 
 fn get_ppid(metadata: &GraphView, domain: &str) -> Result<Option<PPID>, RDFProofsError> {
